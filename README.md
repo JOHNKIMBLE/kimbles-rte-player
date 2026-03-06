@@ -1,9 +1,9 @@
-# Kimble's RTÉ Player
+# Kimble's RTE Player
 
-Desktop app + optional Docker API for downloading RTÉ radio episodes as MP3.
+Desktop app + optional Docker API for downloading RTï¿½ radio episodes as MP3.
 
 ## Features
-- Quick download from an RTÉ episode URL
+- Quick download from an RTE episode URL
 - Program explorer + per-episode download
 - Live station panel
 - Scheduler for auto-downloading new episodes
@@ -51,14 +51,14 @@ Unraid template:
 - `unraid/kimbles-rte-player.xml`
 
 ## Vendored Binaries
-Install/bootstrap downloads platform binaries into:
+Install/bootstrap downloads binaries for the current build OS into:
 - `vendor/yt-dlp/bin/<platform-arch>/...`
 - `vendor/ffmpeg/bin/<platform-arch>/...`
 
 Examples:
-- `win32-x64`, `win32-arm64`
-- `darwin-x64`, `darwin-arm64`
-- `linux-x64`, `linux-arm64`
+- Windows build machine -> `win32-*`
+- macOS build machine -> `darwin-*`
+- Docker/Linux build machine -> `linux-*`
 
 ## Third-Party Licenses
 This project redistributes third-party binaries. Ensure compliance when distributing.

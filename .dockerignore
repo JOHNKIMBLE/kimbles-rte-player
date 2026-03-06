@@ -22,3 +22,4 @@ temp
 .vscode
 .idea
 vendor/yt-dlp/.git
+.probe
