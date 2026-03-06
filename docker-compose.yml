@@ -1,0 +1,15 @@
+services:
+  kimbles-rte-player:
+    build: .
+    container_name: kimbles-rte-player
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DATA_DIR=/data
+      - DOWNLOAD_DIR=/downloads
+      - TZ=Europe/Dublin
+    volumes:
+      - ./data:/data
+      - ./downloads:/downloads
+    restart: unless-stopped

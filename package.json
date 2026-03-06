@@ -1,0 +1,66 @@
+{
+  "name": "rte-ytdlp-electron",
+  "version": "0.6.7",
+  "description": "Electron app to download RTE radio episodes via yt-dlp",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:server": "node src/server.js",
+    "postinstall": "node scripts/bootstrap-yt-dlp.js",
+    "test:extract": "node scripts/test-extract.js",
+    "generate:icon": "node scripts/generate-icon.js",
+    "prepack:win": "npm run generate:icon",
+    "pack:win": "electron-builder --win portable",
+    "pack:mac": "electron-builder --mac dmg zip",
+    "pack:mac:dir": "electron-builder --mac dir"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.34.4"
+  },
+  "build": {
+    "appId": "com.conno.rteytdlp",
+    "productName": "Kimble's RTE Player",
+    "icon": "build/icon.png",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "build/icon.ico",
+      "vendor/yt-dlp/**/*",
+      "vendor/ffmpeg/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "afterPack": "scripts/after-pack-prune-vendor-binaries.js",
+    "asarUnpack": [
+      "vendor/yt-dlp/**",
+      "vendor/ffmpeg/**"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        "portable"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
+  }
+}
