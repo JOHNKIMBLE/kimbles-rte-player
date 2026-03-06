@@ -86,6 +86,11 @@ const ffmpegTargets = [
   }
 ];
 
+function filterTargetsForCurrentPlatform(targets) {
+  const prefix = `${process.platform}-`;
+  return targets.filter((target) => target.id.startsWith(prefix));
+}
+
 function commandExists(cmd, args = ["--version"]) {
   const result = spawnSync(cmd, args, { stdio: "ignore", shell: false });
   return result.status === 0;
@@ -175,8 +180,9 @@ async function ensureFfmpegTarget(target) {
 }
 
 async function ensureAllStandaloneBinaries() {
+  const selectedTargets = filterTargetsForCurrentPlatform(binaryTargets);
   const failures = [];
-  for (const target of binaryTargets) {
+  for (const target of selectedTargets) {
     try {
       await ensureBinaryTarget(target);
     } catch (error) {
@@ -185,14 +191,15 @@ async function ensureAllStandaloneBinaries() {
     }
   }
 
-  if (failures.length === binaryTargets.length) {
+  if (selectedTargets.length > 0 && failures.length === selectedTargets.length) {
     throw new Error("no yt-dlp binaries could be downloaded");
   }
 }
 
 async function ensureAllFfmpegBinaries() {
+  const selectedTargets = filterTargetsForCurrentPlatform(ffmpegTargets);
   const failures = [];
-  for (const target of ffmpegTargets) {
+  for (const target of selectedTargets) {
     try {
       await ensureFfmpegTarget(target);
     } catch (error) {
@@ -201,7 +208,7 @@ async function ensureAllFfmpegBinaries() {
     }
   }
 
-  if (failures.length === ffmpegTargets.length) {
+  if (selectedTargets.length > 0 && failures.length === selectedTargets.length) {
     throw new Error("no ffmpeg binaries could be downloaded");
   }
 }
