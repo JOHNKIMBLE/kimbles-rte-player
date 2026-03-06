@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Kimble's RTE Player</Name>
+  <Repository>ghcr.io/your-github-user/kimbles-rte-player:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/JOHNKIMBLE/kimbles-rte-player</Support>
+  <Project>https://github.com/JOHNKIMBLE/kimbles-rte-player</Project>
+  <Overview>REST API + scheduler for RTÉ radio downloads using yt-dlp. Includes program search, episodes, live station metadata, playlist parsing, and auto-download scheduling.</Overview>
+  <Category>MediaApp:Video MediaApp:Music Downloaders:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://github.com/JOHNKIMBLE/kimbles-rte-player/build/icon.ico</Icon>
+  <Config Name="WebUI Port" Target="6531" Default="6531" Mode="tcp" Description="HTTP API port" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/kimbles-rte-player" Mode="rw" Description="Scheduler state and metadata storage" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/kimbles-rte-player</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/downloads/rte-ytdlp" Mode="rw" Description="Output folder for downloaded media files" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads/rte-ytdlp</Config>
+</Container>
