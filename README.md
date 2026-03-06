@@ -38,7 +38,7 @@ npm run pack:mac
 Output is written to `dist/`.
 
 ## Docker / Unraid
-Run API + scheduler in Docker:
+Run UI + API + scheduler in Docker:
 ```bash
 docker compose up -d --build
 ```
@@ -49,6 +49,10 @@ Container paths:
 
 Unraid template:
 - `unraid/kimbles-rte-player.xml`
+
+Open:
+- `http://<host>:<port>/` for the web UI
+- `http://<host>:<port>/api/*` for API endpoints
 
 ## Vendored Binaries
 Install/bootstrap downloads binaries for the current build OS into:

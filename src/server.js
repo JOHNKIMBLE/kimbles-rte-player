@@ -17,6 +17,8 @@ const { createSchedulerStore } = require("./lib/scheduler");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+const rendererDir = path.join(__dirname, "renderer");
+app.use(express.static(rendererDir));
 
 const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
@@ -193,10 +195,7 @@ app.delete("/api/scheduler/:id", (req, res) => {
 });
 
 app.get("/", (_req, res) => {
-  res.type("text/plain").send(
-    "Kimble's RTE Player API is running.\n" +
-      "Use /health and /api/* endpoints."
-  );
+  res.sendFile(path.join(rendererDir, "index.html"));
 });
 
 scheduler.start();
