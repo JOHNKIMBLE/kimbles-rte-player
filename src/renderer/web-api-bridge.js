@@ -73,7 +73,8 @@
     timeFormat: "24h",
     rteDownloadDir: "/downloads/RTE",
     bbcDownloadDir: "/downloads/BBC",
-    episodeNameMode: "date-only"
+    episodeNameMode: "date-only",
+    cueAutoGenerate: false
   };
 
   function loadWebSettings() {
@@ -93,7 +94,8 @@
         bbcDownloadDir: typeof parsed.bbcDownloadDir === "string" && parsed.bbcDownloadDir.trim()
           ? parsed.bbcDownloadDir.trim()
           : defaultSettings.bbcDownloadDir,
-        episodeNameMode: parsed.episodeNameMode === "full-title" ? "full-title" : "date-only"
+        episodeNameMode: parsed.episodeNameMode === "full-title" ? "full-title" : "date-only",
+        cueAutoGenerate: Boolean(parsed.cueAutoGenerate)
       };
     } catch {
       return { ...defaultSettings };
@@ -114,19 +116,20 @@
       bbcDownloadDir: typeof next.bbcDownloadDir === "string" && next.bbcDownloadDir.trim()
         ? next.bbcDownloadDir.trim()
         : defaultSettings.bbcDownloadDir,
-      episodeNameMode: next.episodeNameMode === "full-title" ? "full-title" : "date-only"
+      episodeNameMode: next.episodeNameMode === "full-title" ? "full-title" : "date-only",
+      cueAutoGenerate: Boolean(next.cueAutoGenerate)
     };
     localStorage.setItem("rte_web_settings", JSON.stringify(normalized));
     return normalized;
   }
 
   window.rteDownloader = {
-    downloadFromPageUrl: async (pageUrl, progressToken) => {
+    downloadFromPageUrl: async (pageUrl, progressToken, options = {}) => {
       if (progressToken) {
         openProgressStream(progressToken);
       }
       try {
-        return await API.sendJson("/api/download/url", "POST", { pageUrl, progressToken });
+        return await API.sendJson("/api/download/url", "POST", { pageUrl, progressToken, ...(options || {}) });
       } finally {
         if (progressToken) {
           setTimeout(() => closeProgressStream(progressToken), 1500);
@@ -204,8 +207,24 @@
       API.sendJson(`/api/bbc/scheduler/${encodeURIComponent(scheduleId)}`, "PATCH", { enabled }),
     runBbcScheduleNow: (scheduleId) => API.sendJson(`/api/bbc/scheduler/${encodeURIComponent(scheduleId)}/run`, "POST", {}),
 
-    getSettings: async () => loadWebSettings(),
-    saveSettings: async (payload) => saveWebSettings(payload),
+    getSettings: async () => {
+      try {
+        const remote = await API.getJson("/api/settings");
+        const merged = saveWebSettings(remote);
+        return merged;
+      } catch {
+        return loadWebSettings();
+      }
+    },
+    saveSettings: async (payload) => {
+      const local = saveWebSettings(payload);
+      try {
+        return await API.sendJson("/api/settings", "POST", local);
+      } catch {
+        return local;
+      }
+    },
+    generateCue: async (payload) => API.sendJson("/api/cue/generate", "POST", payload || {}),
     pickDownloadDirectory: async () => ""
   };
 })();

@@ -1,7 +1,8 @@
 ﻿const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("rteDownloader", {
-  downloadFromPageUrl: (pageUrl, progressToken) => ipcRenderer.invoke("download-rte-url", { pageUrl, progressToken }),
+  downloadFromPageUrl: (pageUrl, progressToken, options = {}) =>
+    ipcRenderer.invoke("download-rte-url", { pageUrl, progressToken, ...(options || {}) }),
   downloadFromBbcUrl: (pageUrl, progressToken, options = {}) =>
     ipcRenderer.invoke("download-bbc-url", { pageUrl, progressToken, ...(options || {}) }),
   downloadEpisode: (payload) => ipcRenderer.invoke("download-rte-episode", payload),
@@ -39,6 +40,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   setBbcScheduleEnabled: (scheduleId, enabled) =>
     ipcRenderer.invoke("bbc-scheduler-set-enabled", { scheduleId, enabled }),
   runBbcScheduleNow: (scheduleId) => ipcRenderer.invoke("bbc-scheduler-check-one", { scheduleId }),
+  generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
   getSettings: () => ipcRenderer.invoke("settings-get"),
   saveSettings: (payload) => ipcRenderer.invoke("settings-save", payload || {}),
   pickDownloadDirectory: (sourceType = "rte") => ipcRenderer.invoke("settings-pick-download-dir", { sourceType })

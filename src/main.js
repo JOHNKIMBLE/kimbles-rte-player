@@ -21,6 +21,7 @@ const {
   searchBbcPrograms
 } = require("./lib/bbc");
 const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
+const { generateCueForAudio } = require("./lib/cue");
 const { createSchedulerStore } = require("./lib/scheduler");
 
 let scheduler;
@@ -60,7 +61,8 @@ function getDefaultSettings() {
     timeFormat: "24h",
     rteDownloadDir: getDefaultDownloadDir("rte"),
     bbcDownloadDir: getDefaultDownloadDir("bbc"),
-    episodeNameMode: "date-only"
+    episodeNameMode: "date-only",
+    cueAutoGenerate: false
   };
 }
 
@@ -73,6 +75,7 @@ function normalizeSettings(input) {
   const raw = input && typeof input === "object" ? input : {};
   const timeFormat = raw.timeFormat === "12h" ? "12h" : "24h";
   const episodeNameMode = raw.episodeNameMode === "full-title" ? "full-title" : "date-only";
+  const cueAutoGenerate = Boolean(raw.cueAutoGenerate);
   const legacyDownloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
     ? raw.downloadDir.trim()
     : "";
@@ -94,7 +97,8 @@ function normalizeSettings(input) {
     timeFormat,
     rteDownloadDir,
     bbcDownloadDir,
-    episodeNameMode
+    episodeNameMode,
+    cueAutoGenerate
   };
 }
 
@@ -255,7 +259,7 @@ function buildEpisodeFileTitle({ episodeTitle, programTitle, clipId }) {
   return safeEpisodeTitle || (safeProgramTitle ? `${safeProgramTitle} ${clipId}` : `rte-episode-${clipId}`);
 }
 
-async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitle, onProgress, sourceType = "rte" }) {
+async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitle, onProgress, sourceType = "rte", forceDownload = false }) {
   const baseOutputDir = ensureOutputDir(sourceType);
   const programFolder = sanitizeDirName(programTitle) || "misc";
   const outputDir = path.join(baseOutputDir, programFolder);
@@ -265,7 +269,8 @@ async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitl
     sourceUrl,
     title,
     outputDir,
-    onProgress
+    onProgress,
+    forceDownload
   });
 
   return {
@@ -274,7 +279,44 @@ async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitl
   };
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, onProgress }) {
+async function maybeGenerateCue({
+  downloadResult,
+  sourceType,
+  episodeUrl,
+  episodeTitle,
+  programTitle,
+  tracklistUrl = "",
+  force = false
+}) {
+  const settings = readSettings();
+  if (!force && !settings.cueAutoGenerate) {
+    return null;
+  }
+
+  const outputDir = String(downloadResult?.outputDir || "");
+  const fileName = String(downloadResult?.fileName || "");
+  if (!outputDir || !fileName) {
+    return null;
+  }
+
+  const audioPath = path.join(outputDir, fileName);
+  try {
+    return await generateCueForAudio({
+      audioPath,
+      sourceType,
+      episodeUrl,
+      episodeTitle,
+      programTitle,
+      tracklistUrl,
+      getRteTracks: getEpisodePlaylist,
+      getBbcTracks: getBbcEpisodePlaylist
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, onProgress, forceDownload = false }) {
   if (!clipId) {
     throw new Error("clipId is required.");
   }
@@ -290,7 +332,15 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     title: resolvedTitle,
     programTitle,
     onProgress,
-    sourceType: "rte"
+    sourceType: "rte",
+    forceDownload
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "rte",
+    episodeUrl,
+    episodeTitle: resolvedTitle,
+    programTitle
   });
 
   return {
@@ -299,11 +349,12 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     title: resolvedTitle,
     playlistApiUrl: playlist.apiUrl,
     m3u8Url: playlist.m3u8Url,
+    cue,
     ...download
   };
 }
 
-async function downloadBbcEpisode({ episodeUrl, title, programTitle, onProgress }) {
+async function downloadBbcEpisode({ episodeUrl, title, programTitle, onProgress, forceDownload = false }) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) {
     throw new Error("episodeUrl is required.");
@@ -316,18 +367,27 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, onProgress 
     title: resolvedTitle,
     programTitle: programTitle || "BBC",
     onProgress,
-    sourceType: "bbc"
+    sourceType: "bbc",
+    forceDownload
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "bbc",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle
   });
 
   return {
     episodeUrl: sourceUrl,
     title: resolvedTitle,
     clipId: inferTitleFromUrl(sourceUrl, resolvedTitle).replace(/\s+/g, "-").toLowerCase(),
+    cue,
     ...download
   };
 }
 
-ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken }) => {
+ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid RTE page URL is required.");
   }
@@ -345,16 +405,25 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken }) => 
         token: progressToken,
         ...progress
       });
-    }
+    },
+    forceDownload: Boolean(forceDownload)
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "rte",
+    episodeUrl: pageUrl,
+    episodeTitle: info.title,
+    programTitle: inferProgramNameFromUrl(pageUrl)
   });
 
   return {
     ...info,
+    cue,
     ...download
   };
 });
 
-ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle }) => {
+ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid BBC page URL is required.");
   }
@@ -385,7 +454,8 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
             token: progressToken,
             ...progress
           });
-        }
+        },
+        forceDownload: Boolean(forceDownload)
       });
       usedUrl = candidate;
       break;
@@ -401,11 +471,19 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
   if (!download) {
     throw lastError || new Error("BBC download failed.");
   }
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "bbc",
+    episodeUrl: usedUrl,
+    episodeTitle: inferredTitle,
+    programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC"
+  });
 
   return {
     pageUrl,
     sourceUrlUsed: usedUrl,
     title: inferredTitle,
+    cue,
     ...download
   };
 });
@@ -414,6 +492,7 @@ ipcMain.handle("download-rte-episode", async (event, payload) => {
   const safePayload = payload || {};
   return downloadEpisodeByClip({
     ...safePayload,
+    forceDownload: Boolean(safePayload.forceDownload),
     onProgress: (progress) => {
       if (!safePayload.progressToken) {
         return;
@@ -530,6 +609,32 @@ ipcMain.handle("settings-save", async (_event, payload) => {
     ...current,
     ...(payload || {})
   });
+});
+
+ipcMain.handle("cue-generate", async (_event, payload = {}) => {
+  const sourceType = String(payload.sourceType || "rte").toLowerCase() === "bbc" ? "bbc" : "rte";
+  const episodeUrl = String(payload.episodeUrl || "").trim();
+  const episodeTitle = String(payload.title || "").trim();
+  const programTitle = String(payload.programTitle || "").trim();
+  const outputDir = String(payload.outputDir || "").trim();
+  const fileName = String(payload.fileName || "").trim();
+  const tracklistUrl = String(payload.tracklistUrl || "").trim();
+  if (!outputDir || !fileName) {
+    throw new Error("Download the episode first so an audio file exists.");
+  }
+  const cue = await maybeGenerateCue({
+    force: true,
+    sourceType,
+    episodeUrl,
+    episodeTitle,
+    programTitle,
+    tracklistUrl,
+    downloadResult: { outputDir, fileName }
+  });
+  if (!cue) {
+    throw new Error("Unable to generate CUE/chapters for this episode.");
+  }
+  return cue;
 });
 
 ipcMain.handle("settings-pick-download-dir", async (event, payload = {}) => {

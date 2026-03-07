@@ -123,6 +123,14 @@ select {
   font-size: 0.98rem;
 }
 
+input[type="checkbox"] {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+}
+
 label {
   font-weight: 700;
   color: var(--muted);

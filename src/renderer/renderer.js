@@ -49,6 +49,7 @@ const scheduleList = document.getElementById("scheduleList");
 const timeFormatSelect = document.getElementById("timeFormatSelect");
 const downloadDirInput = document.getElementById("downloadDirInput");
 const episodeNameModeSelect = document.getElementById("episodeNameModeSelect");
+const cueAutoGenerateCheckbox = document.getElementById("cueAutoGenerateCheckbox");
 const chooseDownloadDirBtn = document.getElementById("chooseDownloadDirBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const settingsStatus = document.getElementById("settingsStatus");
@@ -78,8 +79,11 @@ const state = {
   rteDownloadDir: "",
   bbcDownloadDir: "",
   episodeNameMode: "date-only",
+  cueAutoGenerate: false,
   activeTab: "rte",
-  lastSourceTab: "rte"
+  lastSourceTab: "rte",
+  rteDownloadedAudioByClip: {},
+  bbcDownloadedAudioByEpisode: {}
 };
 const PROGRAM_EPISODES_PER_PAGE = 10;
 const BBC_EPISODES_PER_PAGE = 10;
@@ -491,6 +495,28 @@ function renderPlaylistTracks(tracks) {
   `;
 }
 
+function renderChapters(chapters) {
+  const rows = Array.isArray(chapters) ? chapters : [];
+  if (!rows.length) {
+    return `<div class="playlist-note">No chapters generated.</div>`;
+  }
+  return `
+    <div class="playlist-grid compact-playlist-grid">
+      ${rows
+        .map((chapter) => `
+          <div class="playlist-track">
+            <div>${escapeHtml(chapter.start || "00:00")}</div>
+            <div>
+              <div class="item-title">${escapeHtml(chapter.title || "")}</div>
+              <div class="item-meta">${escapeHtml(chapter.artist || "")}</div>
+            </div>
+          </div>
+        `)
+        .join("")}
+    </div>
+  `;
+}
+
 function setEpisodeStatus(clipId, text, isError = false) {
   const statusNode = document.querySelector(`[data-episode-status="${clipId}"]`);
   if (!statusNode) {
@@ -513,6 +539,23 @@ function setBbcEpisodeStatus(episodeUrl, text, isError = false) {
   statusNode.textContent = safeText;
   statusNode.style.display = safeText ? "block" : "none";
   statusNode.className = `item-meta episode-status ${isError ? "episode-status-error" : ""}`;
+}
+
+function setEpisodeChapters(clipId, chapters) {
+  const node = document.querySelector(`[data-episode-chapters="${clipId}"]`);
+  if (!node) {
+    return;
+  }
+  node.innerHTML = renderChapters(chapters);
+}
+
+function setBbcEpisodeChapters(episodeUrl, chapters) {
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const node = document.querySelector(`[data-bbc-episode-chapters="${key}"]`);
+  if (!node) {
+    return;
+  }
+  node.innerHTML = renderChapters(chapters);
 }
 
 function formatDurationFromSeconds(seconds) {
@@ -630,8 +673,10 @@ function renderEpisodes(payload) {
           </div>
           <div class="item-actions">
             <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}">Download</button>
+            <button class="secondary" data-generate-cue-clip="${escapeHtml(clipId)}" data-generate-cue-title="${escapeHtml(episode.title)}" data-generate-cue-program-title="${escapeHtml(payload.title || "")}" data-generate-cue-url="${escapeHtml(episode.episodeUrl || "")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-episode-status="${escapeHtml(clipId)}" style="display:none;"></div>
+          <div class="episode-inline-playlist" data-episode-chapters="${escapeHtml(clipId)}"></div>
           <div class="episode-inline-playlist" data-episode-playlist="${escapeHtml(clipId)}">
             <div class="playlist-note">Queued playlist load...</div>
           </div>
@@ -674,8 +719,10 @@ function renderBbcEpisodes(payload) {
           ${description ? `<div class="item-meta">${escapeHtml(description)}</div>` : ""}
           <div class="item-actions">
             <button data-bbc-episode-url="${escapeHtml(episodeUrl)}" data-bbc-download-url="${escapeHtml(downloadUrl)}" data-bbc-episode-title="${escapeHtml(episode.title)}" data-bbc-program-title="${escapeHtml(payload.title || "BBC")}">Download</button>
+            <button class="secondary" data-bbc-generate-cue-url="${escapeHtml(episodeUrl)}" data-bbc-generate-cue-title="${escapeHtml(episode.title)}" data-bbc-generate-cue-program-title="${escapeHtml(payload.title || "BBC")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-bbc-episode-status="${episodeStatusKey}" style="display:none;"></div>
+          <div class="episode-inline-playlist" data-bbc-episode-chapters="${episodeStatusKey}"></div>
           <div class="episode-inline-playlist" data-bbc-episode-playlist="${episodeStatusKey}">
             <div class="playlist-note">Music Played: loading...</div>
           </div>
@@ -801,9 +848,11 @@ async function loadSettings() {
   state.rteDownloadDir = String(settings?.rteDownloadDir || settings?.downloadDir || "");
   state.bbcDownloadDir = String(settings?.bbcDownloadDir || "");
   state.episodeNameMode = settings?.episodeNameMode === "full-title" ? "full-title" : "date-only";
+  state.cueAutoGenerate = Boolean(settings?.cueAutoGenerate);
   timeFormatSelect.value = state.timeFormat;
   downloadDirInput.value = getActiveDownloadDir();
   episodeNameModeSelect.value = state.episodeNameMode;
+  cueAutoGenerateCheckbox.checked = state.cueAutoGenerate;
   updateDownloadDirSourceLabel();
 }
 
@@ -825,17 +874,29 @@ quickDownloadBtn.addEventListener("click", async () => {
     return;
   }
 
+  const forceDownload = quickDownloadBtn.dataset.forceNext === "1";
+  if (forceDownload) {
+    delete quickDownloadBtn.dataset.forceNext;
+  }
   setButtonBusy(quickDownloadBtn, true, "Download");
   quickLog.textContent = "";
-  setQuickStatus("Resolving title and stream...");
+  setQuickStatus(forceDownload ? "Forcing re-download..." : "Resolving title and stream...");
   const progressToken = createProgressToken("quick");
   const detachProgress = attachDownloadProgress(progressToken, (progress) => {
     setQuickStatus(formatProgressText(progress, "Downloading..."));
   });
 
   try {
-    const data = await window.rteDownloader.downloadFromPageUrl(pageUrl, progressToken);
-    setQuickStatus(`Saved: ${data.outputDir}\\${data.fileName}`);
+    const data = await window.rteDownloader.downloadFromPageUrl(pageUrl, progressToken, { forceDownload });
+    const cueText = data?.cue?.cuePath ? " + CUE/chapters generated" : "";
+    const statusPrefix = data?.existing ? "Already downloaded" : "Saved";
+    const hintText = data?.existing ? " (click Download again to force re-download)" : "";
+    setQuickStatus(`${statusPrefix}: ${data.outputDir}\\${data.fileName}${cueText}${hintText}`);
+    if (data?.existing) {
+      quickDownloadBtn.dataset.forceNext = "1";
+    } else {
+      delete quickDownloadBtn.dataset.forceNext;
+    }
     quickLog.textContent = data.log || "Done.";
   } catch (error) {
     setQuickStatus(error.message, true);
@@ -863,17 +924,29 @@ bbcDownloadBtn.addEventListener("click", async () => {
     return;
   }
 
+  const forceDownload = bbcDownloadBtn.dataset.forceNext === "1";
+  if (forceDownload) {
+    delete bbcDownloadBtn.dataset.forceNext;
+  }
   setButtonBusy(bbcDownloadBtn, true, "Download");
   bbcLog.textContent = "";
-  setBbcStatus("Resolving stream...");
+  setBbcStatus(forceDownload ? "Forcing re-download..." : "Resolving stream...");
   const progressToken = createProgressToken("bbc");
   const detachProgress = attachDownloadProgress(progressToken, (progress) => {
     setBbcStatus(formatProgressText(progress, "Downloading..."));
   });
 
   try {
-    const data = await window.rteDownloader.downloadFromBbcUrl(pageUrl, progressToken);
-    setBbcStatus(`Saved: ${data.outputDir}\\${data.fileName}`);
+    const data = await window.rteDownloader.downloadFromBbcUrl(pageUrl, progressToken, { forceDownload });
+    const cueText = data?.cue?.cuePath ? " + CUE/chapters generated" : "";
+    const statusPrefix = data?.existing ? "Already downloaded" : "Saved";
+    const hintText = data?.existing ? " (click Download again to force re-download)" : "";
+    setBbcStatus(`${statusPrefix}: ${data.outputDir}\\${data.fileName}${cueText}${hintText}`);
+    if (data?.existing) {
+      bbcDownloadBtn.dataset.forceNext = "1";
+    } else {
+      delete bbcDownloadBtn.dataset.forceNext;
+    }
     bbcLog.textContent = data.log || "Done.";
   } catch (error) {
     setBbcStatus(error.message, true);
@@ -1229,6 +1302,7 @@ saveSettingsBtn.addEventListener("click", async () => {
   const activeDownloadDir = downloadDirInput.value.trim();
   const timeFormat = timeFormatSelect.value === "12h" ? "12h" : "24h";
   const episodeNameMode = episodeNameModeSelect.value === "full-title" ? "full-title" : "date-only";
+  const cueAutoGenerate = Boolean(cueAutoGenerateCheckbox.checked);
 
   if (!activeDownloadDir) {
     setSettingsStatus("Choose a download directory first.", true);
@@ -1242,15 +1316,18 @@ saveSettingsBtn.addEventListener("click", async () => {
       timeFormat,
       rteDownloadDir: state.rteDownloadDir,
       bbcDownloadDir: state.bbcDownloadDir,
-      episodeNameMode
+      episodeNameMode,
+      cueAutoGenerate
     });
     state.timeFormat = saved.timeFormat === "12h" ? "12h" : "24h";
     state.rteDownloadDir = String(saved.rteDownloadDir || saved.downloadDir || "");
     state.bbcDownloadDir = String(saved.bbcDownloadDir || "");
     state.episodeNameMode = saved.episodeNameMode === "full-title" ? "full-title" : "date-only";
+    state.cueAutoGenerate = Boolean(saved.cueAutoGenerate);
     timeFormatSelect.value = state.timeFormat;
     downloadDirInput.value = getActiveDownloadDir();
     episodeNameModeSelect.value = state.episodeNameMode;
+    cueAutoGenerateCheckbox.checked = state.cueAutoGenerate;
     updateDownloadDirSourceLabel();
     setSettingsStatus("Settings saved.");
     await refreshTimeBasedUi();
@@ -1308,6 +1385,37 @@ bbcAddScheduleBtn.addEventListener("click", async () => {
 episodesResult.addEventListener("click", async (event) => {
   const downloadBtn = event.target.closest("button[data-download-clip]");
   if (!downloadBtn) {
+    const cueBtn = event.target.closest("button[data-generate-cue-clip]");
+    if (!cueBtn) {
+      return;
+    }
+    const clipIdCue = cueBtn.getAttribute("data-generate-cue-clip") || "";
+    const titleCue = cueBtn.getAttribute("data-generate-cue-title") || "rte-episode";
+    const programTitleCue = cueBtn.getAttribute("data-generate-cue-program-title") || "";
+    const episodeUrlCue = cueBtn.getAttribute("data-generate-cue-url") || "";
+    const saved = state.rteDownloadedAudioByClip[clipIdCue];
+    if (!saved) {
+      setEpisodeStatus(clipIdCue, "Download episode first, then generate CUE.", true);
+      return;
+    }
+    setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+    setEpisodeStatus(clipIdCue, "Generating CUE/chapters...");
+    try {
+      const cue = await window.rteDownloader.generateCue({
+        sourceType: "rte",
+        episodeUrl: episodeUrlCue,
+        title: titleCue,
+        programTitle: programTitleCue,
+        outputDir: saved.outputDir,
+        fileName: saved.fileName
+      });
+      setEpisodeChapters(clipIdCue, cue.chapters || []);
+      setEpisodeStatus(clipIdCue, `CUE ready: ${cue.cuePath}`);
+    } catch (error) {
+      setEpisodeStatus(clipIdCue, `CUE failed: ${error.message}`, true);
+    } finally {
+      setButtonBusy(cueBtn, false, "Generate CUE");
+    }
     return;
   }
 
@@ -1320,7 +1428,11 @@ episodesResult.addEventListener("click", async (event) => {
     return;
   }
 
-  setEpisodeStatus(clipId, "Starting download...");
+  const forceDownload = downloadBtn.dataset.forceNext === "1";
+  if (forceDownload) {
+    delete downloadBtn.dataset.forceNext;
+  }
+  setEpisodeStatus(clipId, forceDownload ? "Forcing re-download..." : "Starting download...");
   setButtonBusy(downloadBtn, true, "Download", "Downloading...");
   const progressToken = createProgressToken(`episode-${clipId}`);
   const detachProgress = attachDownloadProgress(progressToken, (progress) => {
@@ -1328,8 +1440,26 @@ episodesResult.addEventListener("click", async (event) => {
   });
 
   try {
-    const data = await window.rteDownloader.downloadEpisode({ clipId, title, programTitle, episodeUrl, progressToken });
-    setEpisodeStatus(clipId, `Downloaded: ${data.fileName}`);
+    const data = await window.rteDownloader.downloadEpisode({ clipId, title, programTitle, episodeUrl, progressToken, forceDownload });
+    state.rteDownloadedAudioByClip[String(clipId)] = {
+      outputDir: data.outputDir,
+      fileName: data.fileName,
+      episodeUrl,
+      title,
+      programTitle
+    };
+    if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
+      setEpisodeChapters(clipId, data.cue.chapters);
+    }
+    const cueText = data?.cue?.cuePath ? " + CUE ready" : "";
+    const statusPrefix = data?.existing ? "Already downloaded" : "Downloaded";
+    const hintText = data?.existing ? " (click Download again to force re-download)" : "";
+    setEpisodeStatus(clipId, `${statusPrefix}: ${data.fileName}${cueText}${hintText}`);
+    if (data?.existing) {
+      downloadBtn.dataset.forceNext = "1";
+    } else {
+      delete downloadBtn.dataset.forceNext;
+    }
   } catch (error) {
     setEpisodeStatus(clipId, `Download failed: ${error.message}`, true);
   } finally {
@@ -1341,6 +1471,36 @@ episodesResult.addEventListener("click", async (event) => {
 bbcEpisodesResult.addEventListener("click", async (event) => {
   const downloadBtn = event.target.closest("button[data-bbc-episode-url]");
   if (!downloadBtn) {
+    const cueBtn = event.target.closest("button[data-bbc-generate-cue-url]");
+    if (!cueBtn) {
+      return;
+    }
+    const episodeUrlCue = cueBtn.getAttribute("data-bbc-generate-cue-url") || "";
+    const titleCue = cueBtn.getAttribute("data-bbc-generate-cue-title") || "bbc-episode";
+    const programTitleCue = cueBtn.getAttribute("data-bbc-generate-cue-program-title") || "BBC";
+    const saved = state.bbcDownloadedAudioByEpisode[episodeUrlCue];
+    if (!saved) {
+      setBbcEpisodeStatus(episodeUrlCue, "Download episode first, then generate CUE.", true);
+      return;
+    }
+    setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+    setBbcEpisodeStatus(episodeUrlCue, "Generating CUE/chapters...");
+    try {
+      const cue = await window.rteDownloader.generateCue({
+        sourceType: "bbc",
+        episodeUrl: episodeUrlCue,
+        title: titleCue,
+        programTitle: programTitleCue,
+        outputDir: saved.outputDir,
+        fileName: saved.fileName
+      });
+      setBbcEpisodeChapters(episodeUrlCue, cue.chapters || []);
+      setBbcEpisodeStatus(episodeUrlCue, `CUE ready: ${cue.cuePath}`);
+    } catch (error) {
+      setBbcEpisodeStatus(episodeUrlCue, `CUE failed: ${error.message}`, true);
+    } finally {
+      setButtonBusy(cueBtn, false, "Generate CUE");
+    }
     return;
   }
 
@@ -1352,7 +1512,11 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
     return;
   }
 
-  setBbcEpisodeStatus(episodeUrl, "Starting download...");
+  const forceDownload = downloadBtn.dataset.forceNext === "1";
+  if (forceDownload) {
+    delete downloadBtn.dataset.forceNext;
+  }
+  setBbcEpisodeStatus(episodeUrl, forceDownload ? "Forcing re-download..." : "Starting download...");
   setButtonBusy(downloadBtn, true, "Download", "Downloading...");
   const progressToken = createProgressToken("bbc-episode");
   const detachProgress = attachDownloadProgress(progressToken, (progress) => {
@@ -1360,9 +1524,28 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   });
 
   try {
-    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle });
-    setBbcEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
-    setBbcStatus(`Saved: ${data.outputDir}\\${data.fileName}`);
+    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle, forceDownload });
+    state.bbcDownloadedAudioByEpisode[episodeUrl] = {
+      outputDir: data.outputDir,
+      fileName: data.fileName,
+      episodeUrl,
+      title,
+      programTitle
+    };
+    if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
+      setBbcEpisodeChapters(episodeUrl, data.cue.chapters);
+    }
+    const cueText = data?.cue?.cuePath ? " + CUE ready" : "";
+    const statusPrefix = data?.existing ? "Already downloaded" : "Downloaded";
+    const panelPrefix = data?.existing ? "Already downloaded" : "Saved";
+    const hintText = data?.existing ? " (click Download again to force re-download)" : "";
+    setBbcEpisodeStatus(episodeUrl, `${statusPrefix}: ${data.fileName}${cueText}${hintText}`);
+    setBbcStatus(`${panelPrefix}: ${data.outputDir}\\${data.fileName}${cueText}`);
+    if (data?.existing) {
+      downloadBtn.dataset.forceNext = "1";
+    } else {
+      delete downloadBtn.dataset.forceNext;
+    }
   } catch (error) {
     setBbcEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
   } finally {

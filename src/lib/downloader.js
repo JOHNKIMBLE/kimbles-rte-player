@@ -68,6 +68,20 @@ function pickFinalMediaFile(tempDir) {
   return files[0]?.filePath || null;
 }
 
+function pickExistingMp3(outputDir, preferredBaseName) {
+  const preferred = path.join(outputDir, `${preferredBaseName}.mp3`);
+  if (fs.existsSync(preferred)) {
+    return preferred;
+  }
+
+  const files = walkFiles(outputDir)
+    .filter((filePath) => path.extname(filePath).toLowerCase() === ".mp3")
+    .map((filePath) => ({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return files[0]?.filePath || null;
+}
+
 function makeUniquePath(baseDir, baseName, ext) {
   let index = 0;
   while (true) {
@@ -377,16 +391,25 @@ function parseProgressLine(line) {
   };
 }
 
-function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress }) {
+function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress, forceDownload = false }) {
   const inputUrl = String(sourceUrl || manifestUrl || "").trim();
   if (!inputUrl) {
     throw new Error("No source URL provided to yt-dlp download.");
   }
 
   const safeTitle = sanitizeFilename(title) || "rte-audio";
+  const existingTarget = path.join(outputDir, `${safeTitle}.mp3`);
+  if (!forceDownload && fs.existsSync(existingTarget)) {
+    return Promise.resolve({
+      fileName: path.basename(existingTarget),
+      existing: true,
+      log: `Skipped download; file already exists: ${existingTarget}`
+    });
+  }
   const tempDir = path.join(outputDir, `.ytmp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
   fs.mkdirSync(tempDir, { recursive: true });
   const outputTemplate = path.join(tempDir, "%(title).180B.%(ext)s");
+  const archivePath = path.join(outputDir, ".yt-dlp-archive.txt");
   const targetAudioQuality = process.env.RTE_AUDIO_QUALITY || "128K";
 
   const runner = resolveYtDlpCommand();
@@ -417,6 +440,9 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
     shellSafeOutputTemplate,
     inputUrl
   ];
+  if (!forceDownload) {
+    args.splice(args.indexOf("--ffmpeg-location"), 0, "--download-archive", archivePath);
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawn(runner.command, args, {
@@ -485,6 +511,17 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
       }
 
       if (!downloadedFile) {
+        const archiveSkip = /has already been recorded in the archive/i.test(log);
+        if (!forceDownload && archiveSkip) {
+          const existingFile = pickExistingMp3(outputDir, safeTitle);
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          resolve({
+            fileName: existingFile ? path.basename(existingFile) : `${safeTitle}.mp3`,
+            existing: true,
+            log: log.trim() || `Skipped download; URL already in archive: ${inputUrl}`
+          });
+          return;
+        }
         reject(new Error("yt-dlp finished but no output media file was found."));
         return;
       }
@@ -556,6 +593,7 @@ function runYtDlpJson({ url, args = [] }) {
 }
 
 module.exports = {
+  resolveBundledFfmpegDir,
   runYtDlpDownload,
   runYtDlpJson
 };
