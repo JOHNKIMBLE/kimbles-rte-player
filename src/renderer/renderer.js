@@ -2,11 +2,34 @@ const quickUrlInput = document.getElementById("quickUrlInput");
 const quickDownloadBtn = document.getElementById("quickDownloadBtn");
 const quickResult = document.getElementById("quickResult");
 const quickLog = document.getElementById("quickLog");
+const bbcUrlInput = document.getElementById("bbcUrlInput");
+const bbcDownloadBtn = document.getElementById("bbcDownloadBtn");
+const bbcResult = document.getElementById("bbcResult");
+const bbcLog = document.getElementById("bbcLog");
+const bbcProgramUrlInput = document.getElementById("bbcProgramUrlInput");
+const bbcLoadProgramBtn = document.getElementById("bbcLoadProgramBtn");
+const bbcProgramMeta = document.getElementById("bbcProgramMeta");
+const bbcPrevPageBtn = document.getElementById("bbcPrevPageBtn");
+const bbcNextPageBtn = document.getElementById("bbcNextPageBtn");
+const bbcEpisodesResult = document.getElementById("bbcEpisodesResult");
+const bbcProgramSearchInput = document.getElementById("bbcProgramSearchInput");
+const bbcProgramSearchBtn = document.getElementById("bbcProgramSearchBtn");
+const bbcProgramSearchResult = document.getElementById("bbcProgramSearchResult");
+const bbcAddScheduleBtn = document.getElementById("bbcAddScheduleBtn");
+const bbcScheduleBackfillMode = document.getElementById("bbcScheduleBackfillMode");
+const bbcScheduleBackfillCount = document.getElementById("bbcScheduleBackfillCount");
+const bbcScheduleList = document.getElementById("bbcScheduleList");
+const bbcStationSelect = document.getElementById("bbcStationSelect");
+const bbcRefreshLiveBtn = document.getElementById("bbcRefreshLiveBtn");
+const bbcLiveNow = document.getElementById("bbcLiveNow");
+const bbcLivePlayerFrame = document.getElementById("bbcLivePlayerFrame");
+const bbcLiveOverlayPlayBtn = document.getElementById("bbcLiveOverlayPlayBtn");
 
 const stationSelect = document.getElementById("stationSelect");
 const refreshLiveBtn = document.getElementById("refreshLiveBtn");
 const liveNow = document.getElementById("liveNow");
 const livePlayerFrame = document.getElementById("livePlayerFrame");
+const liveOverlayPlayBtn = document.getElementById("liveOverlayPlayBtn");
 
 const programSearchInput = document.getElementById("programSearchInput");
 const programSearchBtn = document.getElementById("programSearchBtn");
@@ -29,21 +52,39 @@ const episodeNameModeSelect = document.getElementById("episodeNameModeSelect");
 const chooseDownloadDirBtn = document.getElementById("chooseDownloadDirBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const settingsStatus = document.getElementById("settingsStatus");
+const downloadDirSourceLabel = document.getElementById("downloadDirSourceLabel");
+const tabRteBtn = document.getElementById("tabRteBtn");
+const tabBbcBtn = document.getElementById("tabBbcBtn");
+const tabSettingsBtn = document.getElementById("tabSettingsBtn");
+const rteTabContent = document.getElementById("rteTabContent");
+const bbcTabContent = document.getElementById("bbcTabContent");
+const settingsTabContent = document.getElementById("settingsTabContent");
 
 const state = {
   liveStations: [],
+  bbcLiveStations: [],
   currentProgramUrl: "",
   currentProgramPage: 1,
   currentMaxPages: 1,
   currentEpisodes: null,
+  bbcProgramUrl: "",
+  bbcProgramPage: 1,
+  bbcProgramMaxPages: 1,
+  bbcEpisodesPayload: null,
+  hasLoadedBbcProgramCatalog: false,
   theme: "dark",
   hasLoadedProgramCatalog: false,
   timeFormat: "24h",
-  downloadDir: "",
-  episodeNameMode: "date-only"
+  rteDownloadDir: "",
+  bbcDownloadDir: "",
+  episodeNameMode: "date-only",
+  activeTab: "rte",
+  lastSourceTab: "rte"
 };
 const PROGRAM_EPISODES_PER_PAGE = 10;
+const BBC_EPISODES_PER_PAGE = 10;
 let searchDebounceTimer = null;
+let bbcSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
 
 window.rteDownloader.onDownloadProgress((payload) => {
@@ -111,6 +152,11 @@ function setQuickStatus(text, isError = false) {
   quickResult.textContent = text;
 }
 
+function setBbcStatus(text, isError = false) {
+  bbcResult.className = `status ${isError ? "" : "muted"}`;
+  bbcResult.textContent = text;
+}
+
 function setButtonBusy(button, busy, normalLabel, busyLabel = "Working...") {
   button.disabled = busy;
   button.textContent = busy ? busyLabel : normalLabel;
@@ -119,6 +165,54 @@ function setButtonBusy(button, busy, normalLabel, busyLabel = "Working...") {
 function setSettingsStatus(text, isError = false) {
   settingsStatus.className = `status ${isError ? "" : "muted"}`;
   settingsStatus.textContent = text;
+}
+
+function getActiveSourceType() {
+  if (state.activeTab === "bbc") {
+    return "bbc";
+  }
+  if (state.activeTab === "rte") {
+    return "rte";
+  }
+  return state.lastSourceTab === "bbc" ? "bbc" : "rte";
+}
+
+function getActiveDownloadDir() {
+  return getActiveSourceType() === "bbc" ? state.bbcDownloadDir : state.rteDownloadDir;
+}
+
+function updateDownloadDirSourceLabel() {
+  if (!downloadDirSourceLabel) {
+    return;
+  }
+  const source = getActiveSourceType() === "bbc" ? "BBC" : "RTE";
+  downloadDirSourceLabel.textContent = `Editing folder for: ${source}`;
+}
+
+function setActiveDownloadDir(dir) {
+  if (getActiveSourceType() === "bbc") {
+    state.bbcDownloadDir = dir;
+    return;
+  }
+  state.rteDownloadDir = dir;
+}
+
+function setActiveTab(tabName) {
+  state.activeTab = tabName === "bbc" || tabName === "settings" ? tabName : "rte";
+  if (state.activeTab === "rte" || state.activeTab === "bbc") {
+    state.lastSourceTab = state.activeTab;
+  }
+  const isRte = state.activeTab === "rte";
+  const isBbc = state.activeTab === "bbc";
+  const isSettings = state.activeTab === "settings";
+  rteTabContent.classList.toggle("hidden", !isRte);
+  bbcTabContent.classList.toggle("hidden", !isBbc);
+  settingsTabContent.classList.toggle("hidden", !isSettings);
+  tabRteBtn.classList.toggle("active-tab", isRte);
+  tabBbcBtn.classList.toggle("active-tab", isBbc);
+  tabSettingsBtn.classList.toggle("active-tab", isSettings);
+  downloadDirInput.value = getActiveDownloadDir();
+  updateDownloadDirSourceLabel();
 }
 
 function parseOffsetToMinutes(offsetText) {
@@ -187,6 +281,38 @@ function applyTheme(theme) {
   localStorage.setItem("kimble_theme", state.theme);
 }
 
+function setUrlParam(inputUrl, key, value) {
+  try {
+    const url = new URL(inputUrl);
+    url.searchParams.set(key, value);
+    return url.toString();
+  } catch {
+    const glue = String(inputUrl).includes("?") ? "&" : "?";
+    return `${inputUrl}${glue}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
+function setLiveOverlayTarget(button, src) {
+  if (!button) {
+    return;
+  }
+  button.dataset.autoplaySrc = String(src || "");
+  button.classList.toggle("hidden", !src);
+}
+
+function buildBbcAutoplayCandidates(stationUrl) {
+  const base = String(stationUrl || "").trim();
+  if (!base) {
+    return [];
+  }
+  const variants = [
+    `${setUrlParam(setUrlParam(setUrlParam(base, "autoplay", "1"), "autostart", "true"), "play", "1")}#play`,
+    `${setUrlParam(setUrlParam(setUrlParam(base, "autoplay", "true"), "autostart", "true"), "play", "true")}#play`,
+    `${setUrlParam(setUrlParam(base, "play", "1"), "autostart", "true")}#play`
+  ];
+  return Array.from(new Set(variants));
+}
+
 async function refreshLivePanel() {
   const selectedId = Number(stationSelect.value);
   if (!Number.isFinite(selectedId)) {
@@ -195,7 +321,9 @@ async function refreshLivePanel() {
 
   const info = await window.rteDownloader.getLiveNow(selectedId);
   liveNow.innerHTML = `<strong>${escapeHtml(info.stationName)}</strong> - ${escapeHtml(info.programmeName)}<br>${escapeHtml(info.description)}`;
-  livePlayerFrame.src = `https://www.rte.ie/bosco/components/player/iframe.html?radioUI=true&autostart=true&app_name=rnn&clipid=${selectedId}`;
+  const baseSrc = `https://www.rte.ie/bosco/components/player/iframe.html?radioUI=true&autostart=false&app_name=rnn&clipid=${selectedId}`;
+  livePlayerFrame.src = baseSrc;
+  setLiveOverlayTarget(liveOverlayPlayBtn, setUrlParam(baseSrc, "autostart", "true"));
 }
 
 async function loadLiveStations() {
@@ -205,6 +333,39 @@ async function loadLiveStations() {
     .join("");
 
   await refreshLivePanel();
+}
+
+async function refreshBbcLivePanel() {
+  const selectedId = String(bbcStationSelect.value || "").trim();
+  if (!selectedId) {
+    bbcLiveNow.textContent = "No BBC station selected.";
+    bbcLivePlayerFrame.src = "";
+    setLiveOverlayTarget(bbcLiveOverlayPlayBtn, "");
+    return;
+  }
+
+  const station = (state.bbcLiveStations || []).find((item) => String(item.id) === selectedId);
+  if (!station) {
+    bbcLiveNow.textContent = "Station not found.";
+    bbcLivePlayerFrame.src = "";
+    setLiveOverlayTarget(bbcLiveOverlayPlayBtn, "");
+    return;
+  }
+
+  bbcLiveNow.innerHTML = `<strong>${escapeHtml(station.name)}</strong> - <a href="${escapeHtml(station.liveUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(station.liveUrl)}</a>`;
+  const baseSrc = `${setUrlParam(setUrlParam(setUrlParam(station.liveUrl, "autoplay", "0"), "autostart", "false"), "play", "1")}#play`;
+  const autoplaySrc = buildBbcAutoplayCandidates(station.liveUrl)[0] || "";
+  bbcLivePlayerFrame.src = baseSrc;
+  bbcLiveOverlayPlayBtn.dataset.stationUrl = station.liveUrl;
+  setLiveOverlayTarget(bbcLiveOverlayPlayBtn, autoplaySrc);
+}
+
+async function loadBbcLiveStations() {
+  state.bbcLiveStations = await window.rteDownloader.getBbcLiveStations();
+  bbcStationSelect.innerHTML = state.bbcLiveStations
+    .map((station) => `<option value="${escapeHtml(station.id)}">${escapeHtml(station.name)}</option>`)
+    .join("");
+  await refreshBbcLivePanel();
 }
 
 function renderSearchPrograms(items) {
@@ -241,6 +402,10 @@ function hideSearchDropdown() {
   programSearchResult.classList.add("hidden");
 }
 
+function hideBbcSearchDropdown() {
+  bbcProgramSearchResult.classList.add("hidden");
+}
+
 async function runProgramSearch(query) {
   setButtonBusy(programSearchBtn, true, "Search");
   programSearchResult.classList.remove("hidden");
@@ -253,6 +418,52 @@ async function runProgramSearch(query) {
     programSearchResult.innerHTML = `<div class="item">${escapeHtml(error.message)}</div>`;
   } finally {
     setButtonBusy(programSearchBtn, false, "Search");
+  }
+}
+
+async function runBbcProgramSearch(query) {
+  const q = String(query || "").trim();
+  if (q.length < 2) {
+    bbcProgramSearchResult.classList.remove("hidden");
+    bbcProgramSearchResult.innerHTML = `<div class="item">Type at least 2 characters to search BBC programs.</div>`;
+    return;
+  }
+
+  setButtonBusy(bbcProgramSearchBtn, true, "Search");
+  bbcProgramSearchResult.classList.remove("hidden");
+  bbcProgramSearchResult.innerHTML = `<div class="item">Searching...</div>`;
+
+  try {
+    const items = await window.rteDownloader.searchBbcPrograms(q);
+    if (!items.length) {
+      bbcProgramSearchResult.innerHTML = `<div class="item">No BBC programs found.</div>`;
+      return;
+    }
+
+    bbcProgramSearchResult.innerHTML = items
+      .map((item) => {
+        const imageHtml = item.image
+          ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || "BBC Program")}" loading="lazy" />`
+          : `<img alt="No artwork" loading="lazy" />`;
+
+        return `
+        <div class="item clickable" data-load-bbc-program-url="${escapeHtml(item.programUrl)}">
+          <div class="search-card">
+            <div>${imageHtml}</div>
+            <div>
+              <div class="item-title">${escapeHtml(item.title || "BBC Program")}</div>
+              ${item.description ? `<div class="item-meta">${escapeHtml(item.description)}</div>` : ""}
+              <div class="item-meta">${escapeHtml(item.programUrl)}</div>
+            </div>
+          </div>
+        </div>
+      `;
+      })
+      .join("");
+  } catch (error) {
+    bbcProgramSearchResult.innerHTML = `<div class="item">${escapeHtml(error.message)}</div>`;
+  } finally {
+    setButtonBusy(bbcProgramSearchBtn, false, "Search");
   }
 }
 
@@ -292,6 +503,32 @@ function setEpisodeStatus(clipId, text, isError = false) {
   statusNode.className = `item-meta episode-status ${isError ? "episode-status-error" : ""}`;
 }
 
+function setBbcEpisodeStatus(episodeUrl, text, isError = false) {
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const statusNode = document.querySelector(`[data-bbc-episode-status="${key}"]`);
+  if (!statusNode) {
+    return;
+  }
+  const safeText = String(text || "");
+  statusNode.textContent = safeText;
+  statusNode.style.display = safeText ? "block" : "none";
+  statusNode.className = `item-meta episode-status ${isError ? "episode-status-error" : ""}`;
+}
+
+function formatDurationFromSeconds(seconds) {
+  const total = Math.max(0, Number(seconds) || 0);
+  if (!total) {
+    return "";
+  }
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
+}
+
 async function loadEpisodePlaylistInto(episodeUrl, clipId) {
   const container = document.querySelector(`[data-episode-playlist="${clipId}"]`);
   if (!container) {
@@ -313,6 +550,28 @@ async function loadEpisodePlaylistInto(episodeUrl, clipId) {
   }
 }
 
+async function loadBbcEpisodePlaylistInto(episodeUrl) {
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const container = document.querySelector(`[data-bbc-episode-playlist="${key}"]`);
+  if (!container) {
+    return;
+  }
+
+  if (!episodeUrl) {
+    container.innerHTML = `<div class="playlist-note">No episode URL for music lookup.</div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="playlist-note">Loading music played...</div>`;
+
+  try {
+    const payload = await window.rteDownloader.getBbcEpisodePlaylist(episodeUrl);
+    container.innerHTML = renderPlaylistTracks(payload.tracks || []);
+  } catch (error) {
+    container.innerHTML = `<div class="playlist-note">Music load failed: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 async function autoLoadVisiblePlaylists(episodes) {
   const queue = (episodes || []).filter((episode) => episode.clipId && episode.episodeUrl);
   const concurrency = 3;
@@ -323,6 +582,22 @@ async function autoLoadVisiblePlaylists(episodes) {
       const next = queue[index];
       index += 1;
       await loadEpisodePlaylistInto(next.episodeUrl, String(next.clipId));
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()));
+}
+
+async function autoLoadVisibleBbcPlaylists(episodes) {
+  const queue = (episodes || []).filter((episode) => episode.episodeUrl);
+  const concurrency = 2;
+  let index = 0;
+
+  async function worker() {
+    while (index < queue.length) {
+      const next = queue[index];
+      index += 1;
+      await loadBbcEpisodePlaylistInto(next.episodeUrl);
     }
   }
 
@@ -366,6 +641,75 @@ function renderEpisodes(payload) {
     .join("");
 
   autoLoadVisiblePlaylists(visibleRows).catch(() => {});
+}
+
+function renderBbcEpisodes(payload) {
+  const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
+  const totalPages = Math.max(1, Math.ceil(rows.length / BBC_EPISODES_PER_PAGE));
+  const currentPage = Math.max(1, Math.min(totalPages, Number(state.bbcProgramPage || 1)));
+  const start = (currentPage - 1) * BBC_EPISODES_PER_PAGE;
+  const visibleRows = rows.slice(start, start + BBC_EPISODES_PER_PAGE);
+
+  if (!rows.length) {
+    bbcEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
+    return;
+  }
+
+  bbcEpisodesResult.innerHTML = visibleRows
+    .map((episode) => {
+      const episodeUrl = String(episode.episodeUrl || "").trim();
+      const downloadUrl = String(episode.downloadUrl || episodeUrl).trim();
+      const episodeStatusKey = encodeURIComponent(episodeUrl);
+      const duration = formatDurationFromSeconds(episode.durationSeconds);
+      const published = String(episode.publishedTime || "").trim();
+      const description = String(episode.description || "").trim();
+
+      return `
+        <div class="item">
+          <div class="item-title">${escapeHtml(episode.title)}</div>
+          <div class="item-meta">
+            ${published ? escapeHtml(published) : "Date unknown"}
+            ${duration ? ` - ${escapeHtml(duration)}` : ""}
+          </div>
+          ${description ? `<div class="item-meta">${escapeHtml(description)}</div>` : ""}
+          <div class="item-actions">
+            <button data-bbc-episode-url="${escapeHtml(episodeUrl)}" data-bbc-download-url="${escapeHtml(downloadUrl)}" data-bbc-episode-title="${escapeHtml(episode.title)}" data-bbc-program-title="${escapeHtml(payload.title || "BBC")}">Download</button>
+          </div>
+          <div class="item-meta episode-status" data-bbc-episode-status="${episodeStatusKey}" style="display:none;"></div>
+          <div class="episode-inline-playlist" data-bbc-episode-playlist="${episodeStatusKey}">
+            <div class="playlist-note">Music Played: loading...</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  autoLoadVisibleBbcPlaylists(visibleRows).catch(() => {});
+}
+
+async function loadBbcProgram(programUrl, page = 1) {
+  const payload = await window.rteDownloader.getBbcProgramEpisodes(programUrl, 1);
+  const totalRows = Number(payload?.episodes?.length || 0);
+  const totalPages = Math.max(1, Math.ceil(totalRows / BBC_EPISODES_PER_PAGE));
+  const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
+
+  state.bbcProgramUrl = payload.programUrl;
+  state.bbcProgramPage = targetPage;
+  state.bbcProgramMaxPages = totalPages;
+  state.bbcEpisodesPayload = payload;
+
+  bbcProgramUrlInput.value = payload.programUrl;
+  bbcProgramMeta.innerHTML = `
+    <strong>${escapeHtml(payload.title || "BBC Program")}</strong><br>
+    ${escapeHtml(payload.description || "")}<br>
+    ${payload.runSchedule ? `${escapeHtml(addLocalTimeHint(payload.runSchedule))}<br>` : ""}
+    ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(payload.nextBroadcastAt)}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
+    Cadence guess: <strong>${escapeHtml(payload.cadence || "unknown")}</strong>
+    ${payload.averageDaysBetween ? ` (${escapeHtml(payload.averageDaysBetween)} day average)` : ""}<br>
+    Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
+  `;
+
+  renderBbcEpisodes(payload);
 }
 
 async function loadProgram(programUrl, page = 1) {
@@ -421,20 +765,56 @@ async function refreshSchedules() {
     .join("");
 }
 
+async function refreshBbcSchedules() {
+  const schedules = await window.rteDownloader.listBbcSchedules();
+  if (!schedules.length) {
+    bbcScheduleList.innerHTML = `<div class="item">No BBC schedules yet.</div>`;
+    return;
+  }
+
+  bbcScheduleList.innerHTML = schedules
+    .map(
+      (s) => `
+        <div class="item">
+          <div class="item-title">${escapeHtml(s.title)}</div>
+          <div class="item-meta">
+            ${s.runSchedule ? `Runs: ${escapeHtml(addLocalTimeHint(s.runSchedule))}<br>` : ""}
+            ${s.nextBroadcastAt ? `Next show: ${escapeHtml(s.nextBroadcastAt)}${s.nextBroadcastTitle ? ` - ${escapeHtml(s.nextBroadcastTitle)}` : ""}<br>` : ""}
+            Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
+            Backfill setting: ${s.initialBackfillCount ? `latest ${escapeHtml(s.initialBackfillCount)} on create` : "new episodes only"}<br>
+            Last checked: ${escapeHtml(s.lastCheckedAt || "never")} - Last run: ${escapeHtml(s.lastRunAt || "never")}
+          </div>
+          <div class="item-actions">
+            <button class="secondary" data-bbc-schedule-toggle="${escapeHtml(s.id)}" data-enabled="${s.enabled ? "1" : "0"}">${s.enabled ? "Pause" : "Enable"}</button>
+            <button class="secondary" data-bbc-schedule-run="${escapeHtml(s.id)}">Run Now</button>
+            <button class="secondary" data-bbc-schedule-remove="${escapeHtml(s.id)}">Remove</button>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+}
+
 async function loadSettings() {
   const settings = await window.rteDownloader.getSettings();
   state.timeFormat = settings?.timeFormat === "12h" ? "12h" : "24h";
-  state.downloadDir = String(settings?.downloadDir || "");
+  state.rteDownloadDir = String(settings?.rteDownloadDir || settings?.downloadDir || "");
+  state.bbcDownloadDir = String(settings?.bbcDownloadDir || "");
   state.episodeNameMode = settings?.episodeNameMode === "full-title" ? "full-title" : "date-only";
   timeFormatSelect.value = state.timeFormat;
-  downloadDirInput.value = state.downloadDir;
+  downloadDirInput.value = getActiveDownloadDir();
   episodeNameModeSelect.value = state.episodeNameMode;
+  updateDownloadDirSourceLabel();
 }
 
 async function refreshTimeBasedUi() {
   await refreshSchedules();
+  await refreshBbcSchedules();
   if (state.currentProgramUrl) {
     await loadProgram(state.currentProgramUrl, state.currentProgramPage);
+  }
+  if (state.bbcProgramUrl) {
+    await loadBbcProgram(state.bbcProgramUrl, state.bbcProgramPage);
   }
 }
 
@@ -476,6 +856,44 @@ quickUrlInput.addEventListener("keydown", (event) => {
   }
 });
 
+bbcDownloadBtn.addEventListener("click", async () => {
+  const pageUrl = bbcUrlInput.value.trim();
+  if (!pageUrl) {
+    setBbcStatus("Enter a BBC URL.", true);
+    return;
+  }
+
+  setButtonBusy(bbcDownloadBtn, true, "Download");
+  bbcLog.textContent = "";
+  setBbcStatus("Resolving stream...");
+  const progressToken = createProgressToken("bbc");
+  const detachProgress = attachDownloadProgress(progressToken, (progress) => {
+    setBbcStatus(formatProgressText(progress, "Downloading..."));
+  });
+
+  try {
+    const data = await window.rteDownloader.downloadFromBbcUrl(pageUrl, progressToken);
+    setBbcStatus(`Saved: ${data.outputDir}\\${data.fileName}`);
+    bbcLog.textContent = data.log || "Done.";
+  } catch (error) {
+    setBbcStatus(error.message, true);
+  } finally {
+    detachProgress();
+    setButtonBusy(bbcDownloadBtn, false, "Download");
+  }
+});
+
+bbcUrlInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  if (!bbcDownloadBtn.disabled) {
+    bbcDownloadBtn.click();
+  }
+});
+
 stationSelect.addEventListener("change", () => {
   refreshLivePanel().catch((error) => {
     liveNow.textContent = error.message;
@@ -491,6 +909,54 @@ refreshLiveBtn.addEventListener("click", () => {
     .finally(() => {
       setButtonBusy(refreshLiveBtn, false, "Refresh");
     });
+});
+
+bbcStationSelect.addEventListener("change", () => {
+  refreshBbcLivePanel().catch((error) => {
+    bbcLiveNow.textContent = error.message;
+  });
+});
+
+bbcRefreshLiveBtn.addEventListener("click", () => {
+  setButtonBusy(bbcRefreshLiveBtn, true, "Refresh");
+  loadBbcLiveStations()
+    .catch((error) => {
+      bbcLiveNow.textContent = error.message;
+    })
+    .finally(() => {
+      setButtonBusy(bbcRefreshLiveBtn, false, "Refresh");
+    });
+});
+
+liveOverlayPlayBtn.addEventListener("click", () => {
+  const rawSrc = liveOverlayPlayBtn.dataset.autoplaySrc || "";
+  if (!rawSrc) {
+    return;
+  }
+  const autoplaySrc = setUrlParam(rawSrc, "_ts", String(Date.now()));
+  livePlayerFrame.src = autoplaySrc;
+  liveOverlayPlayBtn.classList.add("hidden");
+});
+
+bbcLiveOverlayPlayBtn.addEventListener("click", () => {
+  const stationUrl = bbcLiveOverlayPlayBtn.dataset.stationUrl || "";
+  const candidates = buildBbcAutoplayCandidates(stationUrl);
+  if (!candidates.length) {
+    return;
+  }
+  const ts = String(Date.now());
+  bbcLivePlayerFrame.src = setUrlParam(candidates[0], "_ts", ts);
+  if (candidates[1]) {
+    setTimeout(() => {
+      bbcLivePlayerFrame.src = setUrlParam(candidates[1], "_ts", String(Date.now()));
+    }, 450);
+  }
+  if (candidates[2]) {
+    setTimeout(() => {
+      bbcLivePlayerFrame.src = setUrlParam(candidates[2], "_ts", String(Date.now()));
+    }, 1000);
+  }
+  bbcLiveOverlayPlayBtn.classList.add("hidden");
 });
 
 programSearchBtn.addEventListener("click", async () => {
@@ -548,11 +1014,27 @@ programSearchResult.addEventListener("click", (event) => {
   }
 });
 
+bbcProgramSearchResult.addEventListener("click", (event) => {
+  const item = event.target.closest(".item[data-load-bbc-program-url]");
+  if (!item) {
+    return;
+  }
+
+  const url = item.getAttribute("data-load-bbc-program-url");
+  if (url) {
+    hideBbcSearchDropdown();
+    loadBbcProgram(url, 1).catch((error) => {
+      bbcProgramMeta.textContent = error.message;
+    });
+  }
+});
+
 document.addEventListener("click", (event) => {
   if (event.target.closest(".search-box")) {
     return;
   }
   hideSearchDropdown();
+  hideBbcSearchDropdown();
 });
 
 loadProgramBtn.addEventListener("click", () => {
@@ -569,6 +1051,72 @@ loadProgramBtn.addEventListener("click", () => {
     .finally(() => {
       setButtonBusy(loadProgramBtn, false, "Load Episodes");
     });
+});
+
+bbcLoadProgramBtn.addEventListener("click", () => {
+  const url = bbcProgramUrlInput.value.trim();
+  if (!url) {
+    bbcProgramMeta.textContent = "Enter a BBC program URL first.";
+    return;
+  }
+
+  setButtonBusy(bbcLoadProgramBtn, true, "Load Episodes");
+  loadBbcProgram(url, 1)
+    .catch((error) => {
+      bbcProgramMeta.textContent = error.message;
+    })
+    .finally(() => {
+      setButtonBusy(bbcLoadProgramBtn, false, "Load Episodes");
+    });
+});
+
+bbcProgramSearchBtn.addEventListener("click", async () => {
+  await runBbcProgramSearch(bbcProgramSearchInput.value.trim());
+});
+
+bbcProgramSearchInput.addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+  event.preventDefault();
+  await runBbcProgramSearch(bbcProgramSearchInput.value.trim());
+});
+
+bbcProgramSearchInput.addEventListener("focus", async () => {
+  if (state.hasLoadedBbcProgramCatalog) {
+    bbcProgramSearchResult.classList.remove("hidden");
+    return;
+  }
+  bbcProgramSearchResult.classList.remove("hidden");
+  bbcProgramSearchResult.innerHTML = `<div class="item">Type at least 2 characters to search BBC programs.</div>`;
+  state.hasLoadedBbcProgramCatalog = true;
+});
+
+bbcProgramSearchInput.addEventListener("input", async () => {
+  if (bbcSearchDebounceTimer) {
+    clearTimeout(bbcSearchDebounceTimer);
+  }
+
+  const query = bbcProgramSearchInput.value.trim();
+  bbcSearchDebounceTimer = setTimeout(async () => {
+    if (query.length < 2) {
+      bbcProgramSearchResult.classList.remove("hidden");
+      bbcProgramSearchResult.innerHTML = `<div class="item">Type at least 2 characters to search BBC programs.</div>`;
+      return;
+    }
+
+    await runBbcProgramSearch(query);
+  }, 220);
+});
+
+bbcProgramUrlInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+  event.preventDefault();
+  if (!bbcLoadProgramBtn.disabled) {
+    bbcLoadProgramBtn.click();
+  }
 });
 
 prevPageBtn.addEventListener("click", () => {
@@ -597,6 +1145,56 @@ nextPageBtn.addEventListener("click", () => {
   });
 });
 
+bbcPrevPageBtn.addEventListener("click", () => {
+  if (!state.bbcProgramUrl || state.bbcProgramPage <= 1) {
+    return;
+  }
+
+  state.bbcProgramPage -= 1;
+  renderBbcEpisodes(state.bbcEpisodesPayload || { episodes: [] });
+  const totalRows = Number(state.bbcEpisodesPayload?.episodes?.length || 0);
+  bbcProgramMeta.innerHTML = `
+    <strong>${escapeHtml(state.bbcEpisodesPayload?.title || "BBC Program")}</strong><br>
+    ${escapeHtml(state.bbcEpisodesPayload?.description || "")}<br>
+    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(addLocalTimeHint(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
+    ${state.bbcEpisodesPayload?.nextBroadcastAt ? `Next show: ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastAt)}${state.bbcEpisodesPayload?.nextBroadcastTitle ? ` - ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastTitle)}` : ""}<br>` : ""}
+    Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
+  `;
+});
+
+bbcNextPageBtn.addEventListener("click", () => {
+  if (!state.bbcProgramUrl || !state.bbcEpisodesPayload) {
+    return;
+  }
+
+  if (state.bbcProgramPage >= state.bbcProgramMaxPages) {
+    return;
+  }
+
+  state.bbcProgramPage += 1;
+  renderBbcEpisodes(state.bbcEpisodesPayload || { episodes: [] });
+  const totalRows = Number(state.bbcEpisodesPayload?.episodes?.length || 0);
+  bbcProgramMeta.innerHTML = `
+    <strong>${escapeHtml(state.bbcEpisodesPayload?.title || "BBC Program")}</strong><br>
+    ${escapeHtml(state.bbcEpisodesPayload?.description || "")}<br>
+    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(addLocalTimeHint(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
+    ${state.bbcEpisodesPayload?.nextBroadcastAt ? `Next show: ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastAt)}${state.bbcEpisodesPayload?.nextBroadcastTitle ? ` - ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastTitle)}` : ""}<br>` : ""}
+    Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
+  `;
+});
+
+tabRteBtn.addEventListener("click", () => {
+  setActiveTab("rte");
+});
+
+tabBbcBtn.addEventListener("click", () => {
+  setActiveTab("bbc");
+});
+
+tabSettingsBtn.addEventListener("click", () => {
+  setActiveTab("settings");
+});
+
 themeToggleBtn.addEventListener("click", () => {
   applyTheme(state.theme === "dark" ? "light" : "dark");
 });
@@ -606,12 +1204,18 @@ scheduleBackfillMode.addEventListener("change", () => {
   scheduleBackfillCount.disabled = !isBackfill;
 });
 
+bbcScheduleBackfillMode.addEventListener("change", () => {
+  const isBackfill = bbcScheduleBackfillMode.value === "backfill";
+  bbcScheduleBackfillCount.disabled = !isBackfill;
+});
+
 chooseDownloadDirBtn.addEventListener("click", async () => {
   setButtonBusy(chooseDownloadDirBtn, true, "Choose Folder", "Opening...");
   try {
-    const chosen = await window.rteDownloader.pickDownloadDirectory();
+    const chosen = await window.rteDownloader.pickDownloadDirectory(getActiveSourceType());
     if (chosen) {
       downloadDirInput.value = chosen;
+      setActiveDownloadDir(chosen);
       setSettingsStatus("Folder selected. Click Save Settings to apply.");
     }
   } catch (error) {
@@ -622,24 +1226,32 @@ chooseDownloadDirBtn.addEventListener("click", async () => {
 });
 
 saveSettingsBtn.addEventListener("click", async () => {
-  const downloadDir = downloadDirInput.value.trim();
+  const activeDownloadDir = downloadDirInput.value.trim();
   const timeFormat = timeFormatSelect.value === "12h" ? "12h" : "24h";
   const episodeNameMode = episodeNameModeSelect.value === "full-title" ? "full-title" : "date-only";
 
-  if (!downloadDir) {
+  if (!activeDownloadDir) {
     setSettingsStatus("Choose a download directory first.", true);
     return;
   }
 
   setButtonBusy(saveSettingsBtn, true, "Save Settings", "Saving...");
   try {
-    const saved = await window.rteDownloader.saveSettings({ timeFormat, downloadDir, episodeNameMode });
+    setActiveDownloadDir(activeDownloadDir);
+    const saved = await window.rteDownloader.saveSettings({
+      timeFormat,
+      rteDownloadDir: state.rteDownloadDir,
+      bbcDownloadDir: state.bbcDownloadDir,
+      episodeNameMode
+    });
     state.timeFormat = saved.timeFormat === "12h" ? "12h" : "24h";
-    state.downloadDir = String(saved.downloadDir || "");
+    state.rteDownloadDir = String(saved.rteDownloadDir || saved.downloadDir || "");
+    state.bbcDownloadDir = String(saved.bbcDownloadDir || "");
     state.episodeNameMode = saved.episodeNameMode === "full-title" ? "full-title" : "date-only";
     timeFormatSelect.value = state.timeFormat;
-    downloadDirInput.value = state.downloadDir;
+    downloadDirInput.value = getActiveDownloadDir();
     episodeNameModeSelect.value = state.episodeNameMode;
+    updateDownloadDirSourceLabel();
     setSettingsStatus("Settings saved.");
     await refreshTimeBasedUi();
   } catch (error) {
@@ -671,6 +1283,28 @@ addScheduleBtn.addEventListener("click", async () => {
   }
 });
 
+bbcAddScheduleBtn.addEventListener("click", async () => {
+  if (!state.bbcProgramUrl) {
+    bbcProgramMeta.textContent = "Load a BBC program first.";
+    return;
+  }
+
+  const backfillCount = bbcScheduleBackfillMode.value === "backfill"
+    ? Math.max(1, Math.floor(Number(bbcScheduleBackfillCount.value || 1)))
+    : 0;
+
+  setButtonBusy(bbcAddScheduleBtn, true, "Add Scheduler", "Adding...");
+
+  try {
+    await window.rteDownloader.addBbcSchedule(state.bbcProgramUrl, { backfillCount });
+    await refreshBbcSchedules();
+  } catch (error) {
+    bbcProgramMeta.textContent = error.message;
+  } finally {
+    setButtonBusy(bbcAddScheduleBtn, false, "Add Scheduler");
+  }
+});
+
 episodesResult.addEventListener("click", async (event) => {
   const downloadBtn = event.target.closest("button[data-download-clip]");
   if (!downloadBtn) {
@@ -698,6 +1332,39 @@ episodesResult.addEventListener("click", async (event) => {
     setEpisodeStatus(clipId, `Downloaded: ${data.fileName}`);
   } catch (error) {
     setEpisodeStatus(clipId, `Download failed: ${error.message}`, true);
+  } finally {
+    detachProgress();
+    setButtonBusy(downloadBtn, false, "Download");
+  }
+});
+
+bbcEpisodesResult.addEventListener("click", async (event) => {
+  const downloadBtn = event.target.closest("button[data-bbc-episode-url]");
+  if (!downloadBtn) {
+    return;
+  }
+
+  const episodeUrl = downloadBtn.getAttribute("data-bbc-episode-url") || "";
+  const downloadUrl = downloadBtn.getAttribute("data-bbc-download-url") || episodeUrl;
+  const title = downloadBtn.getAttribute("data-bbc-episode-title") || "bbc-episode";
+  const programTitle = downloadBtn.getAttribute("data-bbc-program-title") || "BBC";
+  if (!episodeUrl) {
+    return;
+  }
+
+  setBbcEpisodeStatus(episodeUrl, "Starting download...");
+  setButtonBusy(downloadBtn, true, "Download", "Downloading...");
+  const progressToken = createProgressToken("bbc-episode");
+  const detachProgress = attachDownloadProgress(progressToken, (progress) => {
+    setBbcEpisodeStatus(episodeUrl, formatProgressText(progress, "Downloading..."));
+  });
+
+  try {
+    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle });
+    setBbcEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+    setBbcStatus(`Saved: ${data.outputDir}\\${data.fileName}`);
+  } catch (error) {
+    setBbcEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
   } finally {
     detachProgress();
     setButtonBusy(downloadBtn, false, "Download");
@@ -735,17 +1402,52 @@ scheduleList.addEventListener("click", async (event) => {
   }
 });
 
+bbcScheduleList.addEventListener("click", async (event) => {
+  const toggleBtn = event.target.closest("button[data-bbc-schedule-toggle]");
+  if (toggleBtn) {
+    const id = toggleBtn.getAttribute("data-bbc-schedule-toggle");
+    const enabled = toggleBtn.getAttribute("data-enabled") !== "1";
+    await window.rteDownloader.setBbcScheduleEnabled(id, enabled);
+    await refreshBbcSchedules();
+    return;
+  }
+
+  const runBtn = event.target.closest("button[data-bbc-schedule-run]");
+  if (runBtn) {
+    const id = runBtn.getAttribute("data-bbc-schedule-run");
+    setButtonBusy(runBtn, true, "Run Now", "Running...");
+    try {
+      await window.rteDownloader.runBbcScheduleNow(id);
+      await refreshBbcSchedules();
+    } finally {
+      setButtonBusy(runBtn, false, "Run Now");
+    }
+    return;
+  }
+
+  const removeBtn = event.target.closest("button[data-bbc-schedule-remove]");
+  if (removeBtn) {
+    const id = removeBtn.getAttribute("data-bbc-schedule-remove");
+    await window.rteDownloader.removeBbcSchedule(id);
+    await refreshBbcSchedules();
+  }
+});
+
 (async function bootstrap() {
   try {
     const savedTheme = localStorage.getItem("kimble_theme") || "dark";
     applyTheme(savedTheme);
+    setActiveTab("rte");
     scheduleBackfillCount.disabled = true;
+    bbcScheduleBackfillCount.disabled = true;
     await loadSettings();
-    await Promise.all([loadLiveStations(), refreshSchedules()]);
+    await Promise.all([loadLiveStations(), loadBbcLiveStations(), refreshSchedules(), refreshBbcSchedules()]);
     setSettingsStatus("Loaded.");
     setQuickStatus("Ready");
+    setBbcStatus("Ready");
   } catch (error) {
     setQuickStatus(error.message, true);
+    setBbcStatus(error.message, true);
     setSettingsStatus(error.message, true);
   }
 })();

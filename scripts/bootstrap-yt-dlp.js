@@ -45,48 +45,42 @@ const ffmpegTargets = [
   {
     id: "win32-x64",
     ffmpegOutPath: path.join(ffmpegDir, "bin", "win32-x64", "ffmpeg.exe"),
-    ffprobeOutPath: path.join(ffmpegDir, "bin", "win32-x64", "ffprobe.exe"),
-    ffmpegAssets: ["ffmpeg-win32-x64"],
-    ffprobeAssets: ["ffprobe-win32-x64"]
+    ffmpegAssets: ["ffmpeg-win32-x64"]
   },
   {
     id: "win32-arm64",
     ffmpegOutPath: path.join(ffmpegDir, "bin", "win32-arm64", "ffmpeg.exe"),
-    ffprobeOutPath: path.join(ffmpegDir, "bin", "win32-arm64", "ffprobe.exe"),
-    ffmpegAssets: ["ffmpeg-win32-x64"],
-    ffprobeAssets: ["ffprobe-win32-x64"]
+    ffmpegAssets: ["ffmpeg-win32-x64"]
   },
   {
     id: "darwin-x64",
     ffmpegOutPath: path.join(ffmpegDir, "bin", "darwin-x64", "ffmpeg"),
-    ffprobeOutPath: path.join(ffmpegDir, "bin", "darwin-x64", "ffprobe"),
-    ffmpegAssets: ["ffmpeg-darwin-x64"],
-    ffprobeAssets: ["ffprobe-darwin-x64"]
+    ffmpegAssets: ["ffmpeg-darwin-x64"]
   },
   {
     id: "darwin-arm64",
     ffmpegOutPath: path.join(ffmpegDir, "bin", "darwin-arm64", "ffmpeg"),
-    ffprobeOutPath: path.join(ffmpegDir, "bin", "darwin-arm64", "ffprobe"),
-    ffmpegAssets: ["ffmpeg-darwin-arm64"],
-    ffprobeAssets: ["ffprobe-darwin-arm64"]
+    ffmpegAssets: ["ffmpeg-darwin-arm64"]
   },
   {
     id: "linux-x64",
     ffmpegOutPath: path.join(ffmpegDir, "bin", "linux-x64", "ffmpeg"),
-    ffprobeOutPath: path.join(ffmpegDir, "bin", "linux-x64", "ffprobe"),
-    ffmpegAssets: ["ffmpeg-linux-x64"],
-    ffprobeAssets: ["ffprobe-linux-x64"]
+    ffmpegAssets: ["ffmpeg-linux-x64"]
   },
   {
     id: "linux-arm64",
     ffmpegOutPath: path.join(ffmpegDir, "bin", "linux-arm64", "ffmpeg"),
-    ffprobeOutPath: path.join(ffmpegDir, "bin", "linux-arm64", "ffprobe"),
-    ffmpegAssets: ["ffmpeg-linux-arm64", "ffmpeg-linux-arm"],
-    ffprobeAssets: ["ffprobe-linux-arm64", "ffprobe-linux-arm"]
+    ffmpegAssets: ["ffmpeg-linux-arm64", "ffmpeg-linux-arm"]
   }
 ];
 
 function filterTargetsForCurrentPlatform(targets) {
+  const exactId = `${process.platform}-${process.arch}`;
+  const exact = targets.filter((target) => target.id === exactId);
+  if (exact.length > 0) {
+    return exact;
+  }
+
   const prefix = `${process.platform}-`;
   return targets.filter((target) => target.id.startsWith(prefix));
 }
@@ -176,7 +170,27 @@ async function ensureOneFfmpegAsset(target, outPath, assets, label) {
 
 async function ensureFfmpegTarget(target) {
   await ensureOneFfmpegAsset(target, target.ffmpegOutPath, target.ffmpegAssets, "ffmpeg");
-  await ensureOneFfmpegAsset(target, target.ffprobeOutPath, target.ffprobeAssets, "ffprobe");
+}
+
+function removeLegacyFfprobeFiles() {
+  const root = path.join(ffmpegDir, "bin");
+  if (!fs.existsSync(root)) {
+    return;
+  }
+
+  for (const dirent of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!dirent.isDirectory()) {
+      continue;
+    }
+    const dir = path.join(root, dirent.name);
+    const probeNames = ["ffprobe", "ffprobe.exe"];
+    for (const name of probeNames) {
+      const full = path.join(dir, name);
+      if (fs.existsSync(full)) {
+        fs.rmSync(full, { force: true });
+      }
+    }
+  }
 }
 
 async function ensureAllStandaloneBinaries() {
@@ -237,6 +251,7 @@ function ensureRepoClone() {
 
 async function main() {
   ensureRepoClone();
+  removeLegacyFfprobeFiles();
 
   try {
     await ensureAllStandaloneBinaries();

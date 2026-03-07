@@ -252,6 +252,8 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
       description: summary.description,
       image: summary.image || "",
       runSchedule: summary.runSchedule || "",
+      nextBroadcastAt: summary.nextBroadcastAt || "",
+      nextBroadcastTitle: summary.nextBroadcastTitle || "",
       enabled: true,
       cadence: latest.cadence,
       averageDaysBetween: latest.averageDaysBetween,
@@ -321,6 +323,15 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
 
     schedule.cadence = latest.cadence;
     schedule.averageDaysBetween = latest.averageDaysBetween;
+    if (typeof latest.runSchedule === "string") {
+      schedule.runSchedule = latest.runSchedule;
+    }
+    if (typeof latest.nextBroadcastAt === "string") {
+      schedule.nextBroadcastAt = latest.nextBroadcastAt;
+    }
+    if (typeof latest.nextBroadcastTitle === "string") {
+      schedule.nextBroadcastTitle = latest.nextBroadcastTitle;
+    }
     schedule.lastCheckedAt = new Date().toISOString();
 
     const known = new Set((schedule.downloadedClipIds || []).map((id) => String(id)));

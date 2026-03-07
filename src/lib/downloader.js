@@ -377,7 +377,12 @@ function parseProgressLine(line) {
   };
 }
 
-function runYtDlpDownload({ manifestUrl, title, outputDir, onProgress }) {
+function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress }) {
+  const inputUrl = String(sourceUrl || manifestUrl || "").trim();
+  if (!inputUrl) {
+    throw new Error("No source URL provided to yt-dlp download.");
+  }
+
   const safeTitle = sanitizeFilename(title) || "rte-audio";
   const tempDir = path.join(outputDir, `.ytmp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
   fs.mkdirSync(tempDir, { recursive: true });
@@ -410,7 +415,7 @@ function runYtDlpDownload({ manifestUrl, title, outputDir, onProgress }) {
     "--no-part",
     "-o",
     shellSafeOutputTemplate,
-    manifestUrl
+    inputUrl
   ];
 
   return new Promise((resolve, reject) => {
@@ -496,6 +501,61 @@ function runYtDlpDownload({ manifestUrl, title, outputDir, onProgress }) {
   });
 }
 
+function runYtDlpJson({ url, args = [] }) {
+  const inputUrl = String(url || "").trim();
+  if (!inputUrl) {
+    throw new Error("No URL provided.");
+  }
+
+  const runner = resolveYtDlpCommand();
+  const cmdArgs = [
+    ...runner.baseArgs,
+    "--ignore-config",
+    ...args,
+    inputUrl
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(runner.command, cmdArgs, {
+      cwd: runner.cwd,
+      shell: Boolean(runner.shell)
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      reject(
+        new Error(
+          `Failed to start yt-dlp command "${runner.command}" (cwd: ${runner.cwd}): ${error.message}`
+        )
+      );
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`yt-dlp exited with code ${code}\n${stderr || stdout}`));
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(String(stdout || "").trim() || "{}");
+        resolve(parsed);
+      } catch (error) {
+        reject(new Error(`yt-dlp returned invalid JSON: ${error.message}`));
+      }
+    });
+  });
+}
+
 module.exports = {
-  runYtDlpDownload
+  runYtDlpDownload,
+  runYtDlpJson
 };

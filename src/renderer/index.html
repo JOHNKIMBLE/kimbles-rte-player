@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kimble's RTÉ Player</title>
+  <link rel="icon" type="image/png" href="/build/icon.png" />
+  <link rel="shortcut icon" href="/build/icon.ico" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -14,18 +16,14 @@
         <button id="themeToggleBtn" class="secondary">Light Mode</button>
       </div>
       <p class="hint">Live player, program browser, per-episode downloads, and auto scheduler.</p>
+      <div class="row tab-row">
+        <button id="tabRteBtn" class="secondary">RTE</button>
+        <button id="tabBbcBtn" class="secondary">BBC</button>
+        <button id="tabSettingsBtn" class="secondary">Settings</button>
+      </div>
     </header>
 
-    <section class="panel">
-      <h2>Quick Download by Episode URL</h2>
-      <div class="row">
-        <input id="quickUrlInput" type="url" placeholder="https://www.rte.ie/radio/..." />
-        <button id="quickDownloadBtn">Download</button>
-      </div>
-      <div id="quickResult" class="status muted">Idle</div>
-      <pre id="quickLog" class="log"></pre>
-    </section>
-
+    <div id="rteTabContent">
     <section class="panel">
       <h2>Live Stations</h2>
       <div class="row">
@@ -33,9 +31,20 @@
         <button id="refreshLiveBtn">Refresh</button>
       </div>
       <div id="liveNow" class="status muted">Loading station info...</div>
-      <div class="live-embed-wrap">
+      <div class="live-embed-wrap" id="rteLiveEmbedWrap">
         <iframe id="livePlayerFrame" title="RTÉ Live Player" allow="autoplay; encrypted-media"></iframe>
+        <button id="liveOverlayPlayBtn" type="button" class="live-overlay-btn">Play Live</button>
       </div>
+    </section>
+
+    <section class="panel">
+      <h2>RTÉ Quick Download</h2>
+      <div class="row">
+        <input id="quickUrlInput" type="url" placeholder="https://www.rte.ie/radio/..." />
+        <button id="quickDownloadBtn">Download</button>
+      </div>
+      <div id="quickResult" class="status muted">Idle</div>
+      <pre id="quickLog" class="log"></pre>
     </section>
 
     <section class="panel">
@@ -79,32 +88,101 @@
       <div id="scheduleList" class="list"></div>
     </section>
 
-    <section class="panel">
-      <h2>Settings</h2>
-      <div class="row">
-        <label for="timeFormatSelect">Time Format</label>
-        <select id="timeFormatSelect">
-          <option value="24h">24-hour</option>
-          <option value="12h">12-hour (AM/PM)</option>
-        </select>
-      </div>
-      <div class="row">
-        <label for="downloadDirInput">Download Directory</label>
-        <input id="downloadDirInput" type="text" readonly />
-        <button id="chooseDownloadDirBtn" class="secondary">Choose Folder</button>
-      </div>
-      <div class="row">
-        <label for="episodeNameModeSelect">Episode Filename</label>
-        <select id="episodeNameModeSelect">
-          <option value="date-only">Date only (e.g. Wednesday 4 March 2026)</option>
-          <option value="full-title">Full title (e.g. 2FM Greene Room with Jenny Greene Wednesday 4 March 2026)</option>
-        </select>
-      </div>
-      <div class="row">
-        <button id="saveSettingsBtn">Save Settings</button>
-      </div>
-      <div id="settingsStatus" class="status muted"></div>
-    </section>
+    </div>
+
+    <div id="bbcTabContent" class="hidden">
+      <section class="panel">
+        <h2>BBC Live Stations</h2>
+        <div class="row">
+          <select id="bbcStationSelect"></select>
+          <button id="bbcRefreshLiveBtn">Refresh</button>
+        </div>
+        <div id="bbcLiveNow" class="status muted">Loading station info...</div>
+        <div class="live-embed-wrap" id="bbcLiveEmbedWrap">
+          <iframe id="bbcLivePlayerFrame" title="BBC Live Player" allow="autoplay; encrypted-media"></iframe>
+          <button id="bbcLiveOverlayPlayBtn" type="button" class="live-overlay-btn">Play Live</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>BBC Quick Download</h2>
+        <div class="row">
+          <input id="bbcUrlInput" type="url" placeholder="https://www.bbc.co.uk/sounds/..." />
+          <button id="bbcDownloadBtn">Download</button>
+        </div>
+        <div id="bbcResult" class="status muted">Idle</div>
+        <pre id="bbcLog" class="log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>BBC Explorer</h2>
+        <div class="subheading">Search Programs</div>
+        <div class="search-box">
+          <div class="row">
+            <input id="bbcProgramSearchInput" type="text" placeholder="e.g. benji b" />
+            <button id="bbcProgramSearchBtn">Search</button>
+          </div>
+          <div id="bbcProgramSearchResult" class="list search-dropdown hidden"></div>
+        </div>
+
+        <div class="subheading">Load Program by URL</div>
+        <div class="row">
+          <input id="bbcProgramUrlInput" type="url" placeholder="https://www.bbc.co.uk/programmes/b00v4tv3" />
+          <button id="bbcLoadProgramBtn">Load Episodes</button>
+        </div>
+        <div id="bbcProgramMeta" class="status muted">No BBC program loaded.</div>
+        <div class="row">
+          <button id="bbcPrevPageBtn" class="secondary">Prev Page</button>
+          <button id="bbcNextPageBtn" class="secondary">Next Page</button>
+        </div>
+        <div class="row">
+          <label for="bbcScheduleBackfillMode">Scheduler Backfill</label>
+          <select id="bbcScheduleBackfillMode">
+            <option value="new-only">New episodes only</option>
+            <option value="backfill">Download latest N episodes now</option>
+          </select>
+          <input id="bbcScheduleBackfillCount" type="number" min="1" max="100" value="5" />
+          <button id="bbcAddScheduleBtn" class="secondary">Add Scheduler</button>
+        </div>
+        <div id="bbcEpisodesResult" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>BBC Schedulers</h2>
+        <p class="hint">Scheduler checks for new BBC episodes in background and auto-downloads unseen ones.</p>
+        <div id="bbcScheduleList" class="list"></div>
+      </section>
+    </div>
+
+    <div id="settingsTabContent" class="hidden">
+      <section class="panel">
+        <h2>Settings</h2>
+        <div class="row">
+          <label for="timeFormatSelect">Time Format</label>
+          <select id="timeFormatSelect">
+            <option value="24h">24-hour</option>
+            <option value="12h">12-hour (AM/PM)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="downloadDirInput">Download Directory</label>
+          <input id="downloadDirInput" type="text" readonly />
+          <button id="chooseDownloadDirBtn" class="secondary">Choose Folder</button>
+        </div>
+        <div id="downloadDirSourceLabel" class="hint"></div>
+        <div class="row">
+          <label for="episodeNameModeSelect">Episode Filename</label>
+          <select id="episodeNameModeSelect">
+            <option value="date-only">Date only (e.g. Wednesday 4 March 2026)</option>
+            <option value="full-title">Full title (e.g. 2FM Greene Room with Jenny Greene Wednesday 4 March 2026)</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="saveSettingsBtn">Save Settings</button>
+        </div>
+        <div id="settingsStatus" class="status muted"></div>
+      </section>
+    </div>
 
     <footer class="app-footer">
       Made with &#10084;&#65039; by <a href="https://connoregan.com" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">Connor Egan</a>

@@ -1,4 +1,5 @@
 :root {
+  --bbc-frame-offset: 255px;
   --bg: #11161e;
   --ink: #ecf0f4;
   --panel: #1b232d;
@@ -94,6 +95,18 @@ h2 {
   margin-bottom: 0.65rem;
 }
 
+.tab-row {
+  margin-top: 0.7rem;
+}
+
+.tab-row button.active-tab {
+  outline: 2px solid var(--accent);
+}
+
+.hidden {
+  display: none;
+}
+
 .search-box {
   position: relative;
 }
@@ -155,6 +168,7 @@ button:disabled {
 }
 
 .live-embed-wrap {
+  position: relative;
   width: 100%;
   min-height: 240px;
   border: 1px solid var(--line);
@@ -165,8 +179,61 @@ button:disabled {
 
 #livePlayerFrame {
   width: 100%;
-  min-height: 240px;
+  min-height: 420px;
+  height: 420px;
   border: 0;
+}
+
+#rteLiveEmbedWrap {
+  min-height: 420px;
+  height: 420px;
+}
+
+#bbcLivePlayerFrame {
+  width: 100%;
+  height: calc(460px + var(--bbc-frame-offset));
+  min-height: 0;
+  border: 0;
+  transform: translateY(calc(-1 * var(--bbc-frame-offset)));
+}
+
+#bbcLiveEmbedWrap {
+  height: 520px;
+  min-height: 520px;
+}
+
+.live-overlay-btn {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  padding: 0.75rem 1.05rem;
+}
+
+@media (max-width: 780px) {
+  :root {
+    --bbc-frame-offset: 215px;
+  }
+
+  #bbcLiveEmbedWrap {
+    height: 460px;
+    min-height: 460px;
+  }
+
+  #rteLiveEmbedWrap {
+    height: 360px;
+    min-height: 360px;
+  }
+
+  #livePlayerFrame {
+    height: 360px;
+    min-height: 360px;
+  }
+
+  #bbcLivePlayerFrame {
+    height: calc(460px + var(--bbc-frame-offset));
+  }
 }
 
 .list {
