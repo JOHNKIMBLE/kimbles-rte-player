@@ -12,13 +12,23 @@ const {
   normalizeProgramUrl,
   searchPrograms
 } = require("./lib/rte");
+const {
+  getBbcEpisodePlaylist,
+  getBbcLiveStations,
+  getBbcProgramEpisodes,
+  getBbcProgramSummary,
+  normalizeBbcProgramUrl,
+  searchBbcPrograms
+} = require("./lib/bbc");
 const { runYtDlpDownload } = require("./lib/downloader");
+const { runYtDlpJson } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 const rendererDir = path.join(__dirname, "renderer");
 app.use(express.static(rendererDir));
+app.use("/build", express.static(path.join(__dirname, "..", "build")));
 const progressSubscribers = new Map();
 
 const PORT = Number(process.env.PORT || 8080);
@@ -43,15 +53,37 @@ function inferProgramNameFromUrl(inputUrl) {
     if (parts[0] === "radio" && parts.length >= 3) {
       return parts[2].replace(/-/g, " ");
     }
+    if (parsed.hostname.includes("bbc.")) {
+      return "BBC";
+    }
   } catch {
     return "";
   }
   return "";
 }
 
-async function downloadFromManifest({ manifestUrl, title, programTitle, progressToken }) {
+function inferTitleFromUrl(inputUrl, fallback = "audio") {
+  try {
+    const parsed = new URL(String(inputUrl || ""), "https://example.com");
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] || "";
+    const clean = last
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (clean) {
+      return clean;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
+async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitle, progressToken, sourceType = "rte" }) {
+  const sourceRoot = sourceType === "bbc" ? "BBC" : "RTE";
   const programFolder = sanitizeDirName(programTitle) || "misc";
-  const outputDir = path.join(DOWNLOAD_DIR, programFolder);
+  const outputDir = path.join(DOWNLOAD_DIR, sourceRoot, programFolder);
   fs.mkdirSync(outputDir, { recursive: true });
 
   function emitProgress(payload) {
@@ -70,6 +102,7 @@ async function downloadFromManifest({ manifestUrl, title, programTitle, progress
 
   const result = await runYtDlpDownload({
     manifestUrl,
+    sourceUrl,
     title,
     outputDir,
     onProgress: emitProgress
@@ -88,7 +121,8 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     manifestUrl: playlist.m3u8Url,
     title: resolvedTitle,
     programTitle,
-    progressToken
+    progressToken,
+    sourceType: "rte"
   });
 
   return {
@@ -114,6 +148,20 @@ const scheduler = createSchedulerStore({
     })
 });
 
+const bbcScheduler = createSchedulerStore({
+  dataDir: path.join(DATA_DIR, "bbc"),
+  getProgramSummary: async (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson),
+  getProgramEpisodes: async (programUrl, page) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+  runEpisodeDownload: async (episode) =>
+    downloadFromManifest({
+      sourceUrl: String(episode.episodeUrl || ""),
+      manifestUrl: String(episode.episodeUrl || ""),
+      title: String(episode.title || "bbc-episode"),
+      programTitle: String(episode.programTitle || "BBC"),
+      sourceType: "bbc"
+    })
+});
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -131,10 +179,40 @@ app.get("/api/live/now/:channelId", async (req, res) => {
   }
 });
 
+app.get("/api/bbc/live/stations", async (_req, res) => {
+  try {
+    const data = await getBbcLiveStations(runYtDlpJson);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.get("/api/program/search", async (req, res) => {
   try {
     const query = String(req.query.q || "");
     const data = await searchPrograms(query);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/bbc/program/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "");
+    const data = await searchBbcPrograms(query, runYtDlpJson);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/bbc/program/episodes", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const page = Number(req.query.page || 1);
+    const data = await getBbcProgramEpisodes(programUrl, runYtDlpJson, page);
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -167,6 +245,16 @@ app.get("/api/episode/playlist", async (req, res) => {
   try {
     const episodeUrl = String(req.query.url || "");
     const data = await getEpisodePlaylist(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/bbc/episode/playlist", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getBbcEpisodePlaylist(episodeUrl);
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -215,9 +303,31 @@ app.post("/api/download/url", async (req, res) => {
       manifestUrl: info.m3u8Url,
       title: info.title,
       programTitle: inferProgramNameFromUrl(pageUrl),
-      progressToken
+      progressToken,
+      sourceType: "rte"
     });
     res.json({ ...info, ...download });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/download/bbc/url", async (req, res) => {
+  try {
+    const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
+    const providedTitle = String(req.body.title || "").trim();
+    const providedProgramTitle = String(req.body.programTitle || "").trim();
+    const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
+    const download = await downloadFromManifest({
+      sourceUrl: pageUrl,
+      manifestUrl: pageUrl,
+      title: inferredTitle,
+      programTitle: providedProgramTitle || inferProgramNameFromUrl(pageUrl) || "BBC",
+      progressToken,
+      sourceType: "bbc"
+    });
+    res.json({ pageUrl, title: inferredTitle, ...download });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -276,12 +386,53 @@ app.delete("/api/scheduler/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/bbc/scheduler", (_req, res) => {
+  res.json(bbcScheduler.list());
+});
+
+app.post("/api/bbc/scheduler", async (req, res) => {
+  try {
+    const programUrl = normalizeBbcProgramUrl(String(req.body.programUrl || ""));
+    const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
+    const data = await bbcScheduler.add(programUrl, { backfillCount });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/bbc/scheduler/:id", (req, res) => {
+  try {
+    const enabled = Boolean(req.body.enabled);
+    const data = bbcScheduler.setEnabled(req.params.id, enabled);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/bbc/scheduler/:id/run", async (req, res) => {
+  try {
+    const data = await bbcScheduler.checkOne(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/bbc/scheduler/:id", (req, res) => {
+  bbcScheduler.remove(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get("/", (_req, res) => {
   res.sendFile(path.join(rendererDir, "index.html"));
 });
 
 scheduler.start();
 scheduler.runAll().catch(() => {});
+bbcScheduler.start();
+bbcScheduler.runAll().catch(() => {});
 
 app.listen(PORT, () => {
   console.log(`Kimble's RTE Player API listening on ${PORT}`);

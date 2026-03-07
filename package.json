@@ -1,6 +1,6 @@
 {
   "name": "rte-ytdlp-electron",
-  "version": "0.6.7",
+  "version": "1.0",
   "description": "Electron app to download RTE radio episodes via yt-dlp",
   "main": "src/main.js",
   "scripts": {

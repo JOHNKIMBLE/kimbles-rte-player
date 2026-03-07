@@ -1,28 +1,41 @@
 # Kimble's RTE Player
 
-Desktop app + optional Docker API for downloading RT� radio episodes as MP3.
+Electron desktop app plus optional Docker web app for RTE and BBC radio:
+- live station player
+- program explorer
+- per-episode MP3 downloads
+- auto scheduler
 
 ## Features
-- Quick download from an RTE episode URL
-- Program explorer + per-episode download
-- Live station panel
-- Scheduler for auto-downloading new episodes
+- RTE tab:
+  - Live stations with play overlay
+  - Quick download by episode URL
+  - Program search, episodes, music-played list
+  - Scheduler with run windows based on show schedule
+- BBC tab:
+  - Live stations with play overlay
+  - Quick download by URL
+  - Program search, episodes, music-played list
+  - Scheduler using upcoming-broadcast schedule (run at show end + 30 min)
+- Settings tab:
+  - 12h/24h time format
+  - Episode filename mode (`date-only` or `full-title`)
+  - Download directory chooser
 
 ## Requirements
 - Node.js 20+
 
-## Quick Start (Desktop)
+## Desktop Quick Start
 ```bash
 npm install
 npm start
 ```
 
-Default desktop download location:
-- `~/Downloads/RTE/<program>/<episode>.mp3`
+Default download folders:
+- RTE: `~/Downloads/RTE/<program>/<episode>.mp3`
+- BBC: `~/Downloads/BBC/<program>/<episode>.mp3`
 
-Notes:
-- Download/filename/time format can be changed in app Settings.
-- Bundled `yt-dlp` + `ffmpeg` are used for packaged builds (no PATH dependency).
+In Settings, the directory shown is for the last selected source tab (RTE or BBC).
 
 ## Build
 Windows:
@@ -35,41 +48,35 @@ macOS:
 npm run pack:mac
 ```
 
-Output is written to `dist/`.
+Artifacts are written to `dist/`.
 
 ## Docker / Unraid
-Run UI + API + scheduler in Docker:
+Run web UI + API + scheduler:
 ```bash
 docker compose up -d --build
 ```
 
 Container paths:
-- Scheduler/state: `/data`
 - Downloads: `/downloads`
+- Scheduler/state: `/data`
 
 Unraid template:
 - `unraid/kimbles-rte-player.xml`
 
 Open:
-- `http://<host>:<port>/` for the web UI
-- `http://<host>:<port>/api/*` for API endpoints
+- `http://<host>:<port>/` (web UI)
+- `http://<host>:<port>/api/*` (API)
 
 ## Vendored Binaries
-Install/bootstrap downloads binaries for the current build OS into:
-- `vendor/yt-dlp/bin/<platform-arch>/...`
-- `vendor/ffmpeg/bin/<platform-arch>/...`
+This project vendors `yt-dlp` and `ffmpeg` under `vendor/`.
 
-Examples:
-- Windows build machine -> `win32-*`
-- macOS build machine -> `darwin-*`
-- Docker/Linux build machine -> `linux-*`
+Build-time pruning keeps only target-platform binaries in packaged output:
+- Windows builds -> `win32-*`
+- macOS builds -> `darwin-*`
+- Linux/Docker builds -> `linux-*`
 
 ## Third-Party Licenses
-This project redistributes third-party binaries. Ensure compliance when distributing.
-
-- `yt-dlp`: Unlicense
-  - https://github.com/yt-dlp/yt-dlp
-  - local file: `vendor/yt-dlp/LICENSE`
-- `FFmpeg`: LGPL/GPL depending on build/options
-  - https://ffmpeg.org/legal.html
+- `yt-dlp` (Unlicense): https://github.com/yt-dlp/yt-dlp
+  - local: `vendor/yt-dlp/LICENSE`
+- `FFmpeg` (LGPL/GPL depending on build/options): https://ffmpeg.org/legal.html
   - binary source used: https://github.com/eugeneware/ffmpeg-static

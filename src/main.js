@@ -12,10 +12,19 @@ const {
   normalizeProgramUrl,
   searchPrograms
 } = require("./lib/rte");
-const { runYtDlpDownload } = require("./lib/downloader");
+const {
+  getBbcEpisodePlaylist,
+  getBbcLiveStations,
+  getBbcProgramEpisodes,
+  getBbcProgramSummary,
+  normalizeBbcProgramUrl,
+  searchBbcPrograms
+} = require("./lib/bbc");
+const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 
 let scheduler;
+let bbcScheduler;
 let appSettings = null;
 
 function getAppRootDir() {
@@ -31,8 +40,9 @@ function getAppRootDir() {
   return process.cwd();
 }
 
-function getDefaultDownloadDir() {
-  return path.join(app.getPath("downloads"), "RTE");
+function getDefaultDownloadDir(sourceType = "rte") {
+  const folder = sourceType === "bbc" ? "BBC" : "RTE";
+  return path.join(app.getPath("downloads"), folder);
 }
 
 function isEphemeralTempDataPath(inputPath) {
@@ -48,7 +58,8 @@ function isEphemeralTempDataPath(inputPath) {
 function getDefaultSettings() {
   return {
     timeFormat: "24h",
-    downloadDir: getDefaultDownloadDir(),
+    rteDownloadDir: getDefaultDownloadDir("rte"),
+    bbcDownloadDir: getDefaultDownloadDir("bbc"),
     episodeNameMode: "date-only"
   };
 }
@@ -62,17 +73,27 @@ function normalizeSettings(input) {
   const raw = input && typeof input === "object" ? input : {};
   const timeFormat = raw.timeFormat === "12h" ? "12h" : "24h";
   const episodeNameMode = raw.episodeNameMode === "full-title" ? "full-title" : "date-only";
-  let downloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
+  const legacyDownloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
     ? raw.downloadDir.trim()
-    : defaults.downloadDir;
+    : "";
+  let rteDownloadDir = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim()
+    ? raw.rteDownloadDir.trim()
+    : (legacyDownloadDir || defaults.rteDownloadDir);
+  let bbcDownloadDir = typeof raw.bbcDownloadDir === "string" && raw.bbcDownloadDir.trim()
+    ? raw.bbcDownloadDir.trim()
+    : defaults.bbcDownloadDir;
 
-  if (isEphemeralTempDataPath(downloadDir)) {
-    downloadDir = defaults.downloadDir;
+  if (isEphemeralTempDataPath(rteDownloadDir)) {
+    rteDownloadDir = defaults.rteDownloadDir;
+  }
+  if (isEphemeralTempDataPath(bbcDownloadDir)) {
+    bbcDownloadDir = defaults.bbcDownloadDir;
   }
 
   return {
     timeFormat,
-    downloadDir,
+    rteDownloadDir,
+    bbcDownloadDir,
     episodeNameMode
   };
 }
@@ -137,8 +158,9 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
-function ensureOutputDir() {
-  const outputDir = readSettings().downloadDir;
+function ensureOutputDir(sourceType = "rte") {
+  const settings = readSettings();
+  const outputDir = sourceType === "bbc" ? settings.bbcDownloadDir : settings.rteDownloadDir;
   fs.mkdirSync(outputDir, { recursive: true });
   return outputDir;
 }
@@ -158,10 +180,31 @@ function inferProgramNameFromUrl(inputUrl) {
     if (parts[0] === "radio" && parts.length >= 3) {
       return parts[2].replace(/-/g, " ");
     }
+    if (parsed.hostname.includes("bbc.")) {
+      return "BBC";
+    }
   } catch {
     return "";
   }
   return "";
+}
+
+function inferTitleFromUrl(inputUrl, fallback = "audio") {
+  try {
+    const parsed = new URL(String(inputUrl || ""), "https://example.com");
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] || "";
+    const clean = last
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (clean) {
+      return clean;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
 }
 
 function extractDateFromEpisodeTitle(input) {
@@ -187,13 +230,14 @@ function buildEpisodeFileTitle({ episodeTitle, programTitle, clipId }) {
   return safeEpisodeTitle || (safeProgramTitle ? `${safeProgramTitle} ${clipId}` : `rte-episode-${clipId}`);
 }
 
-async function downloadFromManifest({ manifestUrl, title, programTitle, onProgress }) {
-  const baseOutputDir = ensureOutputDir();
+async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitle, onProgress, sourceType = "rte" }) {
+  const baseOutputDir = ensureOutputDir(sourceType);
   const programFolder = sanitizeDirName(programTitle) || "misc";
   const outputDir = path.join(baseOutputDir, programFolder);
   fs.mkdirSync(outputDir, { recursive: true });
   const result = await runYtDlpDownload({
     manifestUrl,
+    sourceUrl,
     title,
     outputDir,
     onProgress
@@ -220,7 +264,8 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     manifestUrl: playlist.m3u8Url,
     title: resolvedTitle,
     programTitle,
-    onProgress
+    onProgress,
+    sourceType: "rte"
   });
 
   return {
@@ -229,6 +274,30 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     title: resolvedTitle,
     playlistApiUrl: playlist.apiUrl,
     m3u8Url: playlist.m3u8Url,
+    ...download
+  };
+}
+
+async function downloadBbcEpisode({ episodeUrl, title, programTitle, onProgress }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) {
+    throw new Error("episodeUrl is required.");
+  }
+
+  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "bbc-episode");
+  const download = await downloadFromManifest({
+    sourceUrl,
+    manifestUrl: sourceUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || "BBC",
+    onProgress,
+    sourceType: "bbc"
+  });
+
+  return {
+    episodeUrl: sourceUrl,
+    title: resolvedTitle,
+    clipId: inferTitleFromUrl(sourceUrl, resolvedTitle).replace(/\s+/g, "-").toLowerCase(),
     ...download
   };
 }
@@ -256,6 +325,38 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken }) => 
 
   return {
     ...info,
+    ...download
+  };
+});
+
+ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle }) => {
+  if (!pageUrl || typeof pageUrl !== "string") {
+    throw new Error("A valid BBC page URL is required.");
+  }
+
+  const providedTitle = String(title || "").trim();
+  const providedProgramTitle = String(programTitle || "").trim();
+  const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
+  const download = await downloadFromManifest({
+    sourceUrl: pageUrl,
+    manifestUrl: pageUrl,
+    title: inferredTitle,
+    programTitle: providedProgramTitle || inferProgramNameFromUrl(pageUrl) || "BBC",
+    sourceType: "bbc",
+    onProgress: (progress) => {
+      if (!progressToken) {
+        return;
+      }
+      event.sender.send("download-progress", {
+        token: progressToken,
+        ...progress
+      });
+    }
+  });
+
+  return {
+    pageUrl,
+    title: inferredTitle,
     ...download
   };
 });
@@ -302,6 +403,22 @@ ipcMain.handle("rte-program-search", async (_event, { query }) => {
   return searchPrograms(query || "");
 });
 
+ipcMain.handle("bbc-program-episodes", async (_event, { programUrl, page = 1 }) => {
+  return getBbcProgramEpisodes(programUrl, runYtDlpJson, page);
+});
+
+ipcMain.handle("bbc-program-search", async (_event, { query }) => {
+  return searchBbcPrograms(query || "", runYtDlpJson);
+});
+
+ipcMain.handle("bbc-live-stations", async () => {
+  return getBbcLiveStations(runYtDlpJson);
+});
+
+ipcMain.handle("bbc-episode-playlist", async (_event, { episodeUrl }) => {
+  return getBbcEpisodePlaylist(episodeUrl);
+});
+
 ipcMain.handle("rte-episode-playlist", async (_event, { episodeUrl }) => {
   return getEpisodePlaylist(episodeUrl);
 });
@@ -330,6 +447,30 @@ ipcMain.handle("scheduler-check-one", async (_event, { scheduleId }) => {
   return scheduler.checkOne(scheduleId);
 });
 
+ipcMain.handle("bbc-scheduler-list", async () => {
+  return bbcScheduler.list();
+});
+
+ipcMain.handle("bbc-scheduler-add", async (_event, { programUrl, options }) => {
+  const normalized = normalizeBbcProgramUrl(programUrl);
+  const added = await bbcScheduler.add(normalized, options || {});
+  return added;
+});
+
+ipcMain.handle("bbc-scheduler-remove", async (_event, { scheduleId }) => {
+  bbcScheduler.remove(scheduleId);
+  return bbcScheduler.list();
+});
+
+ipcMain.handle("bbc-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
+  bbcScheduler.setEnabled(scheduleId, enabled);
+  return bbcScheduler.list();
+});
+
+ipcMain.handle("bbc-scheduler-check-one", async (_event, { scheduleId }) => {
+  return bbcScheduler.checkOne(scheduleId);
+});
+
 ipcMain.handle("settings-get", async () => {
   return readSettings();
 });
@@ -342,12 +483,14 @@ ipcMain.handle("settings-save", async (_event, payload) => {
   });
 });
 
-ipcMain.handle("settings-pick-download-dir", async (event) => {
+ipcMain.handle("settings-pick-download-dir", async (event, payload = {}) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const current = readSettings();
+  const sourceType = String(payload.sourceType || "rte").toLowerCase() === "bbc" ? "bbc" : "rte";
+  const defaultPath = sourceType === "bbc" ? current.bbcDownloadDir : current.rteDownloadDir;
   const response = await dialog.showOpenDialog(window, {
     title: "Choose Download Directory",
-    defaultPath: current.downloadDir,
+    defaultPath,
     properties: ["openDirectory", "createDirectory"]
   });
 
@@ -374,8 +517,23 @@ app.whenReady().then(() => {
       })
   });
 
+  bbcScheduler = createSchedulerStore({
+    app,
+    dataDir: path.join(app.getPath("userData"), "bbc"),
+    getProgramSummary: async (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson),
+    getProgramEpisodes: async (programUrl, page) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+    runEpisodeDownload: async (episode) =>
+      downloadBbcEpisode({
+        episodeUrl: episode.episodeUrl,
+        title: episode.title,
+        programTitle: episode.programTitle
+      })
+  });
+
   scheduler.start();
   scheduler.runAll().catch(() => {});
+  bbcScheduler.start();
+  bbcScheduler.runAll().catch(() => {});
 
   createWindow();
 
@@ -395,5 +553,8 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   if (scheduler) {
     scheduler.stop();
+  }
+  if (bbcScheduler) {
+    bbcScheduler.stop();
   }
 });
