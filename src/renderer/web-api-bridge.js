@@ -71,9 +71,8 @@
 
   const defaultSettings = {
     timeFormat: "24h",
-    rteDownloadDir: "/downloads/RTE",
-    bbcDownloadDir: "/downloads/BBC",
-    episodeNameMode: "date-only",
+    downloadDir: "/downloads",
+    pathFormat: "{radio}/{program}/{episode_short} {release_date}",
     cueAutoGenerate: false
   };
 
@@ -86,15 +85,14 @@
       const parsed = JSON.parse(raw);
       return {
         timeFormat: parsed.timeFormat === "12h" ? "12h" : "24h",
-        rteDownloadDir: typeof parsed.rteDownloadDir === "string" && parsed.rteDownloadDir.trim()
-          ? parsed.rteDownloadDir.trim()
-          : (typeof parsed.downloadDir === "string" && parsed.downloadDir.trim()
-            ? parsed.downloadDir.trim()
-            : defaultSettings.rteDownloadDir),
-        bbcDownloadDir: typeof parsed.bbcDownloadDir === "string" && parsed.bbcDownloadDir.trim()
-          ? parsed.bbcDownloadDir.trim()
-          : defaultSettings.bbcDownloadDir,
-        episodeNameMode: parsed.episodeNameMode === "full-title" ? "full-title" : "date-only",
+        downloadDir: typeof parsed.downloadDir === "string" && parsed.downloadDir.trim()
+          ? parsed.downloadDir.trim()
+          : (typeof parsed.rteDownloadDir === "string" && parsed.rteDownloadDir.trim()
+            ? parsed.rteDownloadDir.trim()
+            : defaultSettings.downloadDir),
+        pathFormat: typeof parsed.pathFormat === "string" && parsed.pathFormat.trim()
+          ? parsed.pathFormat.trim()
+          : defaultSettings.pathFormat,
         cueAutoGenerate: Boolean(parsed.cueAutoGenerate)
       };
     } catch {
@@ -110,13 +108,12 @@
     };
     const normalized = {
       timeFormat: next.timeFormat === "12h" ? "12h" : "24h",
-      rteDownloadDir: typeof next.rteDownloadDir === "string" && next.rteDownloadDir.trim()
-        ? next.rteDownloadDir.trim()
-        : defaultSettings.rteDownloadDir,
-      bbcDownloadDir: typeof next.bbcDownloadDir === "string" && next.bbcDownloadDir.trim()
-        ? next.bbcDownloadDir.trim()
-        : defaultSettings.bbcDownloadDir,
-      episodeNameMode: next.episodeNameMode === "full-title" ? "full-title" : "date-only",
+      downloadDir: typeof next.downloadDir === "string" && next.downloadDir.trim()
+        ? next.downloadDir.trim()
+        : defaultSettings.downloadDir,
+      pathFormat: typeof next.pathFormat === "string" && next.pathFormat.trim()
+        ? next.pathFormat.trim()
+        : defaultSettings.pathFormat,
       cueAutoGenerate: Boolean(next.cueAutoGenerate)
     };
     localStorage.setItem("rte_web_settings", JSON.stringify(normalized));
@@ -225,6 +222,7 @@
       }
     },
     generateCue: async (payload) => API.sendJson("/api/cue/generate", "POST", payload || {}),
-    pickDownloadDirectory: async () => ""
+    pickDownloadDirectory: async () => "",
+    canPickDownloadDirectory: async () => false
   };
 })();

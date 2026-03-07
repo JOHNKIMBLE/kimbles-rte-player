@@ -43,5 +43,6 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
   getSettings: () => ipcRenderer.invoke("settings-get"),
   saveSettings: (payload) => ipcRenderer.invoke("settings-save", payload || {}),
-  pickDownloadDirectory: (sourceType = "rte") => ipcRenderer.invoke("settings-pick-download-dir", { sourceType })
+  pickDownloadDirectory: (sourceType = "rte") => ipcRenderer.invoke("settings-pick-download-dir", { sourceType }),
+  canPickDownloadDirectory: async () => true
 });

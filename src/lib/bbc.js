@@ -11,17 +11,18 @@ const DISABLED_BBC_STATION_IDS = new Set(["bbc_5live_sportsextra", "bbc_radio_fo
 const bbcEpisodeDateCache = new Map();
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function cleanText(input) {
-  return String(input || "").replace(/\s+/g, " ").trim();
-}
-
 function decodeHtml(input) {
   return String(input || "")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
     .replace(/&#39;/g, "'")
+    .replace(/&#039;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
+}
+
+function cleanText(input) {
+  return decodeHtml(String(input || "")).replace(/\s+/g, " ").trim();
 }
 
 function normalizeBbcUrl(inputUrl) {
@@ -119,7 +120,8 @@ function mapEpisode(entry, index) {
     episodeUrl: canonicalEpisodeUrl,
     downloadUrl: canonicalEpisodeUrl,
     publishedTime: published,
-    durationSeconds
+    durationSeconds,
+    image: normalizeImageUrl(cleanText(entry?.thumbnail || entry?.thumbnails?.[0]?.url || ""))
   };
 }
 
@@ -275,6 +277,7 @@ function parseEpisodesFromPlayerHtml(html) {
 
     const titleMatch = card.match(/<span class="programme__title[^"]*">\s*<span>([\s\S]*?)<\/span>\s*<\/span>/i);
     const synopsisMatch = card.match(/<p class="programme__synopsis[\s\S]*?<span>([\s\S]*?)<\/span>/i);
+    const imageMatch = card.match(/<img[^>]+(?:src|data-src)=["']([^"']+)["']/i);
     const ctaHrefMatch = card.match(/<div class="cta cta__overlay">[\s\S]*?href=["'](https?:\/\/www\.bbc\.co\.uk\/sounds\/play\/[a-z0-9]+)["']/i);
     const ctaTitleMatch = card.match(/<div class="cta cta__overlay">[\s\S]*?title=["']([^"']+)["']/i);
     const ariaLabelMatch = card.match(/aria-label=["']([^"']+)["']/i);
@@ -299,7 +302,8 @@ function parseEpisodesFromPlayerHtml(html) {
       downloadUrl: `https://www.bbc.co.uk/programmes/${id}`,
       publishedTime,
       durationSeconds: null,
-      hasPlayableAudio: Boolean(ctaHrefMatch?.[1])
+      hasPlayableAudio: Boolean(ctaHrefMatch?.[1]),
+      image: normalizeImageUrl(imageMatch?.[1] || "")
     });
   }
 

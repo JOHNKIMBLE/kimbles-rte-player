@@ -48,12 +48,13 @@ const themeToggleBtn = document.getElementById("themeToggleBtn");
 const scheduleList = document.getElementById("scheduleList");
 const timeFormatSelect = document.getElementById("timeFormatSelect");
 const downloadDirInput = document.getElementById("downloadDirInput");
-const episodeNameModeSelect = document.getElementById("episodeNameModeSelect");
+const pathFormatInput = document.getElementById("pathFormatInput");
+const pathFormatPreview = document.getElementById("pathFormatPreview");
+const pathFormatPresetsRow = document.getElementById("pathFormatPresetsRow");
 const cueAutoGenerateCheckbox = document.getElementById("cueAutoGenerateCheckbox");
 const chooseDownloadDirBtn = document.getElementById("chooseDownloadDirBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const settingsStatus = document.getElementById("settingsStatus");
-const downloadDirSourceSelect = document.getElementById("downloadDirSourceSelect");
 const tabRteBtn = document.getElementById("tabRteBtn");
 const tabBbcBtn = document.getElementById("tabBbcBtn");
 const tabSettingsBtn = document.getElementById("tabSettingsBtn");
@@ -76,18 +77,17 @@ const state = {
   theme: "dark",
   hasLoadedProgramCatalog: false,
   timeFormat: "24h",
-  rteDownloadDir: "",
-  bbcDownloadDir: "",
-  episodeNameMode: "date-only",
+  downloadDir: "",
+  pathFormat: "{radio}/{program}/{episode_short} {release_date}",
   cueAutoGenerate: false,
   activeTab: "rte",
   lastSourceTab: "rte",
+  canPickDownloadDirectory: true,
   rteDownloadedAudioByClip: {},
   bbcDownloadedAudioByEpisode: {}
 };
 const PROGRAM_EPISODES_PER_PAGE = 10;
 const BBC_EPISODES_PER_PAGE = 10;
-const SETTINGS_DOWNLOAD_SOURCE_KEY = "kimble_settings_download_source";
 let searchDebounceTimer = null;
 let bbcSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
@@ -172,43 +172,70 @@ function setSettingsStatus(text, isError = false) {
   settingsStatus.textContent = text;
 }
 
-function getActiveSourceType() {
-  if (downloadDirSourceSelect?.value === "bbc") {
-    return "bbc";
+function updateDownloadDirPickerUi() {
+  if (!chooseDownloadDirBtn) {
+    return;
   }
-  if (downloadDirSourceSelect?.value === "rte") {
-    return "rte";
-  }
-  return state.lastSourceTab === "bbc" ? "bbc" : "rte";
-}
-
-function getSavedSettingsDownloadSource() {
-  const raw = String(localStorage.getItem(SETTINGS_DOWNLOAD_SOURCE_KEY) || "").toLowerCase();
-  return raw === "bbc" ? "bbc" : "rte";
-}
-
-function saveSettingsDownloadSource(source) {
-  const normalized = source === "bbc" ? "bbc" : "rte";
-  localStorage.setItem(SETTINGS_DOWNLOAD_SOURCE_KEY, normalized);
+  const canPick = Boolean(state.canPickDownloadDirectory);
+  chooseDownloadDirBtn.disabled = !canPick;
+  chooseDownloadDirBtn.title = canPick
+    ? "Open folder picker"
+    : "Folder picker is only available in Electron desktop build. Edit path manually here.";
 }
 
 function getActiveDownloadDir() {
-  return getActiveSourceType() === "bbc" ? state.bbcDownloadDir : state.rteDownloadDir;
-}
-
-function updateDownloadDirSourceLabel() {
-  if (!downloadDirSourceSelect) {
-    return;
-  }
-  downloadDirSourceSelect.value = getActiveSourceType();
+  return state.downloadDir;
 }
 
 function setActiveDownloadDir(dir) {
-  if (getActiveSourceType() === "bbc") {
-    state.bbcDownloadDir = dir;
+  state.downloadDir = String(dir || "").trim();
+}
+
+function parseReleaseDate(input) {
+  const text = String(input || "").trim();
+  const iso = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (iso) {
+    return iso[1];
+  }
+  const dmy = text.match(/\b(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\b/);
+  if (!dmy) {
+    return "YYYY-MM-DD";
+  }
+  const months = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  const idx = months.indexOf(String(dmy[2]).toLowerCase());
+  if (idx < 0) {
+    return "YYYY-MM-DD";
+  }
+  return `${dmy[3]}-${String(idx + 1).padStart(2, "0")}-${String(Number(dmy[1])).padStart(2, "0")}`;
+}
+
+function renderPathFormatPreview() {
+  if (!pathFormatPreview) {
     return;
   }
-  state.rteDownloadDir = dir;
+  const format = String(pathFormatInput?.value || state.pathFormat || "").trim();
+  if (!format) {
+    pathFormatPreview.textContent = "Preview: (empty format)";
+    return;
+  }
+  const sampleProgram = state.currentEpisodes?.title || state.bbcEpisodesPayload?.title || "2FM Greene Room with Jenny Greene";
+  const sampleEpisode = "Wednesday 4 March 2026";
+  const sampleDate = parseReleaseDate(state.currentEpisodes?.episodes?.[0]?.publishedTime || state.bbcEpisodesPayload?.episodes?.[0]?.publishedTime || "2026-03-04");
+  const [year = "2026", month = "03", day = "04"] = sampleDate.split("-");
+  const sample = format
+    .replace(/\{radio\}/gi, "RTE")
+    .replace(/\{program\}/gi, sampleProgram)
+    .replace(/\{program_slug\}/gi, "2fm-greene-room-with-jenny-greene")
+    .replace(/\{episode_short\}/gi, "Wednesday 4 March 2026")
+    .replace(/\{episode\}/gi, sampleEpisode)
+    .replace(/\{episode_slug\}/gi, "wednesday-4-march-2026")
+    .replace(/\{release_date\}/gi, sampleDate)
+    .replace(/\{year\}/gi, year)
+    .replace(/\{month\}/gi, month)
+    .replace(/\{day\}/gi, day)
+    .replace(/\{date_compact\}/gi, `${year}${month}${day}`)
+    .replace(/\{source_id\}/gi, "11783152");
+  pathFormatPreview.textContent = `Preview: ${sample}.mp3`;
 }
 
 function setActiveTab(tabName) {
@@ -219,9 +246,6 @@ function setActiveTab(tabName) {
   const isRte = state.activeTab === "rte";
   const isBbc = state.activeTab === "bbc";
   const isSettings = state.activeTab === "settings";
-  if (isSettings && downloadDirSourceSelect) {
-    downloadDirSourceSelect.value = getSavedSettingsDownloadSource();
-  }
   rteTabContent.classList.toggle("hidden", !isRte);
   bbcTabContent.classList.toggle("hidden", !isBbc);
   settingsTabContent.classList.toggle("hidden", !isSettings);
@@ -229,7 +253,7 @@ function setActiveTab(tabName) {
   tabBbcBtn.classList.toggle("active-tab", isBbc);
   tabSettingsBtn.classList.toggle("active-tab", isSettings);
   downloadDirInput.value = getActiveDownloadDir();
-  updateDownloadDirSourceLabel();
+  renderPathFormatPreview();
 }
 
 function parseOffsetToMinutes(offsetText) {
@@ -685,7 +709,7 @@ function renderEpisodes(payload) {
             - clip ${escapeHtml(clipId)}
           </div>
           <div class="item-actions">
-            <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}">Download</button>
+            <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}" data-download-published="${escapeHtml(episode.publishedTime || episode.publishedTimeFormatted || "")}">Download</button>
             <button class="secondary" data-generate-cue-clip="${escapeHtml(clipId)}" data-generate-cue-title="${escapeHtml(episode.title)}" data-generate-cue-program-title="${escapeHtml(payload.title || "")}" data-generate-cue-url="${escapeHtml(episode.episodeUrl || "")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-episode-status="${escapeHtml(clipId)}" style="display:none;"></div>
@@ -731,7 +755,7 @@ function renderBbcEpisodes(payload) {
           </div>
           ${description ? `<div class="item-meta">${escapeHtml(description)}</div>` : ""}
           <div class="item-actions">
-            <button data-bbc-episode-url="${escapeHtml(episodeUrl)}" data-bbc-download-url="${escapeHtml(downloadUrl)}" data-bbc-episode-title="${escapeHtml(episode.title)}" data-bbc-program-title="${escapeHtml(payload.title || "BBC")}">Download</button>
+            <button data-bbc-episode-url="${escapeHtml(episodeUrl)}" data-bbc-download-url="${escapeHtml(downloadUrl)}" data-bbc-episode-title="${escapeHtml(episode.title)}" data-bbc-program-title="${escapeHtml(payload.title || "BBC")}" data-bbc-published="${escapeHtml(published)}">Download</button>
             <button class="secondary" data-bbc-generate-cue-url="${escapeHtml(episodeUrl)}" data-bbc-generate-cue-title="${escapeHtml(episode.title)}" data-bbc-generate-cue-program-title="${escapeHtml(payload.title || "BBC")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-bbc-episode-status="${episodeStatusKey}" style="display:none;"></div>
@@ -807,8 +831,12 @@ async function refreshSchedules() {
     .map(
       (s) => `
         <div class="item">
-          <div class="item-title">${escapeHtml(s.title)}</div>
+          <div class="scheduler-head">
+            ${(s.latestEpisodeImage || s.image) ? `<img class="scheduler-thumb" src="${escapeHtml(s.latestEpisodeImage || s.image)}" alt="${escapeHtml(s.latestEpisodeTitle || s.title || "Program")}" loading="lazy" />` : `<div class="scheduler-thumb scheduler-thumb-placeholder"></div>`}
+            <div class="item-title">${escapeHtml(s.title)}</div>
+          </div>
           <div class="item-meta">
+            ${s.latestEpisodeTitle ? `Latest episode: ${escapeHtml(s.latestEpisodeTitle)}${s.latestEpisodePublishedTime ? ` (${escapeHtml(s.latestEpisodePublishedTime)})` : ""}<br>` : ""}
             ${s.runSchedule ? `Runs: ${escapeHtml(addLocalTimeHint(s.runSchedule))}<br>` : ""}
             Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
             Backfill setting: ${s.initialBackfillCount ? `latest ${escapeHtml(s.initialBackfillCount)} on create` : "new episodes only"}<br>
@@ -836,8 +864,12 @@ async function refreshBbcSchedules() {
     .map(
       (s) => `
         <div class="item">
-          <div class="item-title">${escapeHtml(s.title)}</div>
+          <div class="scheduler-head">
+            ${(s.latestEpisodeImage || s.image) ? `<img class="scheduler-thumb" src="${escapeHtml(s.latestEpisodeImage || s.image)}" alt="${escapeHtml(s.latestEpisodeTitle || s.title || "Program")}" loading="lazy" />` : `<div class="scheduler-thumb scheduler-thumb-placeholder"></div>`}
+            <div class="item-title">${escapeHtml(s.title)}</div>
+          </div>
           <div class="item-meta">
+            ${s.latestEpisodeTitle ? `Latest episode: ${escapeHtml(s.latestEpisodeTitle)}${s.latestEpisodePublishedTime ? ` (${escapeHtml(s.latestEpisodePublishedTime)})` : ""}<br>` : ""}
             ${s.runSchedule ? `Runs: ${escapeHtml(addLocalTimeHint(s.runSchedule))}<br>` : ""}
             ${s.nextBroadcastAt ? `Next show: ${escapeHtml(s.nextBroadcastAt)}${s.nextBroadcastTitle ? ` - ${escapeHtml(s.nextBroadcastTitle)}` : ""}<br>` : ""}
             Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
@@ -858,15 +890,16 @@ async function refreshBbcSchedules() {
 async function loadSettings() {
   const settings = await window.rteDownloader.getSettings();
   state.timeFormat = settings?.timeFormat === "12h" ? "12h" : "24h";
-  state.rteDownloadDir = String(settings?.rteDownloadDir || settings?.downloadDir || "");
-  state.bbcDownloadDir = String(settings?.bbcDownloadDir || "");
-  state.episodeNameMode = settings?.episodeNameMode === "full-title" ? "full-title" : "date-only";
+  state.downloadDir = String(settings?.downloadDir || settings?.rteDownloadDir || "");
+  state.pathFormat = String(settings?.pathFormat || state.pathFormat);
   state.cueAutoGenerate = Boolean(settings?.cueAutoGenerate);
   timeFormatSelect.value = state.timeFormat;
   downloadDirInput.value = getActiveDownloadDir();
-  episodeNameModeSelect.value = state.episodeNameMode;
+  if (pathFormatInput) {
+    pathFormatInput.value = state.pathFormat;
+  }
   cueAutoGenerateCheckbox.checked = state.cueAutoGenerate;
-  updateDownloadDirSourceLabel();
+  renderPathFormatPreview();
 }
 
 async function refreshTimeBasedUi() {
@@ -1295,17 +1328,32 @@ bbcScheduleBackfillMode.addEventListener("change", () => {
   bbcScheduleBackfillCount.disabled = !isBackfill;
 });
 
-if (downloadDirSourceSelect) {
-  downloadDirSourceSelect.addEventListener("change", () => {
-    saveSettingsDownloadSource(downloadDirSourceSelect.value);
-    downloadDirInput.value = getActiveDownloadDir();
+if (pathFormatInput) {
+  pathFormatInput.addEventListener("input", () => {
+    renderPathFormatPreview();
+  });
+}
+
+if (pathFormatPresetsRow) {
+  pathFormatPresetsRow.addEventListener("click", (event) => {
+    const presetBtn = event.target.closest("button[data-path-preset]");
+    if (!presetBtn || !pathFormatInput) {
+      return;
+    }
+    pathFormatInput.value = presetBtn.getAttribute("data-path-preset") || "";
+    renderPathFormatPreview();
+    setSettingsStatus("Preset applied. Click Save Settings to apply.");
   });
 }
 
 chooseDownloadDirBtn.addEventListener("click", async () => {
+  if (!state.canPickDownloadDirectory) {
+    setSettingsStatus("Folder picker is desktop-only. In Docker/web, type the path manually and click Save Settings.");
+    return;
+  }
   setButtonBusy(chooseDownloadDirBtn, true, "Choose Folder", "Opening...");
   try {
-    const chosen = await window.rteDownloader.pickDownloadDirectory(getActiveSourceType());
+    const chosen = await window.rteDownloader.pickDownloadDirectory();
     if (chosen) {
       downloadDirInput.value = chosen;
       setActiveDownloadDir(chosen);
@@ -1320,12 +1368,16 @@ chooseDownloadDirBtn.addEventListener("click", async () => {
 
 saveSettingsBtn.addEventListener("click", async () => {
   const activeDownloadDir = downloadDirInput.value.trim();
+  const pathFormat = String(pathFormatInput?.value || "").trim();
   const timeFormat = timeFormatSelect.value === "12h" ? "12h" : "24h";
-  const episodeNameMode = episodeNameModeSelect.value === "full-title" ? "full-title" : "date-only";
   const cueAutoGenerate = Boolean(cueAutoGenerateCheckbox.checked);
 
   if (!activeDownloadDir) {
     setSettingsStatus("Choose a download directory first.", true);
+    return;
+  }
+  if (!pathFormat) {
+    setSettingsStatus("Set a path format first.", true);
     return;
   }
 
@@ -1334,21 +1386,21 @@ saveSettingsBtn.addEventListener("click", async () => {
     setActiveDownloadDir(activeDownloadDir);
     const saved = await window.rteDownloader.saveSettings({
       timeFormat,
-      rteDownloadDir: state.rteDownloadDir,
-      bbcDownloadDir: state.bbcDownloadDir,
-      episodeNameMode,
+      downloadDir: state.downloadDir,
+      pathFormat,
       cueAutoGenerate
     });
     state.timeFormat = saved.timeFormat === "12h" ? "12h" : "24h";
-    state.rteDownloadDir = String(saved.rteDownloadDir || saved.downloadDir || "");
-    state.bbcDownloadDir = String(saved.bbcDownloadDir || "");
-    state.episodeNameMode = saved.episodeNameMode === "full-title" ? "full-title" : "date-only";
+    state.downloadDir = String(saved.downloadDir || "");
+    state.pathFormat = String(saved.pathFormat || state.pathFormat);
     state.cueAutoGenerate = Boolean(saved.cueAutoGenerate);
     timeFormatSelect.value = state.timeFormat;
     downloadDirInput.value = getActiveDownloadDir();
-    episodeNameModeSelect.value = state.episodeNameMode;
+    if (pathFormatInput) {
+      pathFormatInput.value = state.pathFormat;
+    }
     cueAutoGenerateCheckbox.checked = state.cueAutoGenerate;
-    updateDownloadDirSourceLabel();
+    renderPathFormatPreview();
     setSettingsStatus("Settings saved.");
     await refreshTimeBasedUi();
   } catch (error) {
@@ -1443,6 +1495,7 @@ episodesResult.addEventListener("click", async (event) => {
   const title = downloadBtn.getAttribute("data-download-title") || "rte-episode";
   const programTitle = downloadBtn.getAttribute("data-download-program-title") || "";
   const episodeUrl = downloadBtn.getAttribute("data-download-url") || "";
+  const publishedTime = downloadBtn.getAttribute("data-download-published") || "";
 
   if (!clipId) {
     return;
@@ -1460,7 +1513,7 @@ episodesResult.addEventListener("click", async (event) => {
   });
 
   try {
-    const data = await window.rteDownloader.downloadEpisode({ clipId, title, programTitle, episodeUrl, progressToken, forceDownload });
+    const data = await window.rteDownloader.downloadEpisode({ clipId, title, programTitle, episodeUrl, publishedTime, progressToken, forceDownload });
     state.rteDownloadedAudioByClip[String(clipId)] = {
       outputDir: data.outputDir,
       fileName: data.fileName,
@@ -1528,6 +1581,7 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   const downloadUrl = downloadBtn.getAttribute("data-bbc-download-url") || episodeUrl;
   const title = downloadBtn.getAttribute("data-bbc-episode-title") || "bbc-episode";
   const programTitle = downloadBtn.getAttribute("data-bbc-program-title") || "BBC";
+  const publishedTime = downloadBtn.getAttribute("data-bbc-published") || "";
   if (!episodeUrl) {
     return;
   }
@@ -1544,7 +1598,7 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   });
 
   try {
-    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle, forceDownload });
+    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle, publishedTime, forceDownload });
     state.bbcDownloadedAudioByEpisode[episodeUrl] = {
       outputDir: data.outputDir,
       fileName: data.fileName,
@@ -1640,9 +1694,12 @@ bbcScheduleList.addEventListener("click", async (event) => {
   try {
     const savedTheme = localStorage.getItem("kimble_theme") || "dark";
     applyTheme(savedTheme);
-    if (downloadDirSourceSelect) {
-      downloadDirSourceSelect.value = getSavedSettingsDownloadSource();
+    try {
+      state.canPickDownloadDirectory = Boolean(await window.rteDownloader.canPickDownloadDirectory());
+    } catch {
+      state.canPickDownloadDirectory = false;
     }
+    updateDownloadDirPickerUi();
     setActiveTab("rte");
     scheduleBackfillCount.disabled = true;
     bbcScheduleBackfillCount.disabled = true;

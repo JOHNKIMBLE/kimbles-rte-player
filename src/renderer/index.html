@@ -165,24 +165,24 @@
           </select>
         </div>
         <div class="row">
-          <label for="downloadDirSourceSelect">Folder For</label>
-          <select id="downloadDirSourceSelect">
-            <option value="rte">RTE</option>
-            <option value="bbc">BBC</option>
-          </select>
-        </div>
-        <div class="row">
           <label for="downloadDirInput">Download Directory</label>
-          <input id="downloadDirInput" type="text" readonly />
+          <input id="downloadDirInput" type="text" />
           <button id="chooseDownloadDirBtn" class="secondary">Choose Folder</button>
         </div>
         <div class="row">
-          <label for="episodeNameModeSelect">Episode Filename</label>
-          <select id="episodeNameModeSelect">
-            <option value="date-only">Date only (e.g. Wednesday 4 March 2026)</option>
-            <option value="full-title">Full title (e.g. 2FM Greene Room with Jenny Greene Wednesday 4 March 2026)</option>
-          </select>
+          <label for="pathFormatInput">Path Format</label>
+          <input id="pathFormatInput" type="text" placeholder="{radio}/{program}/{episode_short} {release_date}" />
         </div>
+        <div class="row" id="pathFormatPresetsRow">
+          <label>Format Presets</label>
+          <button type="button" class="secondary" data-path-preset="{radio}/{program}/{year}/{month}/{release_date} - {episode_short}">Archive by Year</button>
+          <button type="button" class="secondary" data-path-preset="{radio}/{program}/{release_date} [{source_id}] {episode_short}">Date + Source ID</button>
+          <button type="button" class="secondary" data-path-preset="{radio}/{program_slug} - {release_date} - {episode_short}">Flat Podcast</button>
+          <button type="button" class="secondary" data-path-preset="{radio}/{program}/{episode}">Full Episode Title</button>
+          <button type="button" class="secondary" data-path-preset="{radio}/{program}/{episode_slug}">Slug Safe</button>
+        </div>
+        <div class="hint">Tokens: <code>{radio}</code> <code>{program}</code> <code>{program_slug}</code> <code>{episode}</code> <code>{episode_short}</code> <code>{episode_slug}</code> <code>{release_date}</code> <code>{year}</code> <code>{month}</code> <code>{day}</code> <code>{date_compact}</code> <code>{source_id}</code></div>
+        <div id="pathFormatPreview" class="hint"></div>
         <div class="row">
           <label for="cueAutoGenerateCheckbox">Generate CUE/Chapters on download</label>
           <input id="cueAutoGenerateCheckbox" type="checkbox" />

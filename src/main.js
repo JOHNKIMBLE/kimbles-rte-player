@@ -23,6 +23,7 @@ const {
 const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
 const { generateCueForAudio } = require("./lib/cue");
 const { createSchedulerStore } = require("./lib/scheduler");
+const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 
 let scheduler;
 let bbcScheduler;
@@ -41,9 +42,8 @@ function getAppRootDir() {
   return process.cwd();
 }
 
-function getDefaultDownloadDir(sourceType = "rte") {
-  const folder = sourceType === "bbc" ? "BBC" : "RTE";
-  return path.join(app.getPath("downloads"), folder);
+function getDefaultDownloadDir() {
+  return app.getPath("downloads");
 }
 
 function isEphemeralTempDataPath(inputPath) {
@@ -59,8 +59,8 @@ function isEphemeralTempDataPath(inputPath) {
 function getDefaultSettings() {
   return {
     timeFormat: "24h",
-    rteDownloadDir: getDefaultDownloadDir("rte"),
-    bbcDownloadDir: getDefaultDownloadDir("bbc"),
+    downloadDir: getDefaultDownloadDir(),
+    pathFormat: "{radio}/{program}/{episode_short} {release_date}",
     episodeNameMode: "date-only",
     cueAutoGenerate: false
   };
@@ -76,27 +76,28 @@ function normalizeSettings(input) {
   const timeFormat = raw.timeFormat === "12h" ? "12h" : "24h";
   const episodeNameMode = raw.episodeNameMode === "full-title" ? "full-title" : "date-only";
   const cueAutoGenerate = Boolean(raw.cueAutoGenerate);
-  const legacyDownloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
+  let downloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
     ? raw.downloadDir.trim()
     : "";
-  let rteDownloadDir = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim()
-    ? raw.rteDownloadDir.trim()
-    : (legacyDownloadDir || defaults.rteDownloadDir);
-  let bbcDownloadDir = typeof raw.bbcDownloadDir === "string" && raw.bbcDownloadDir.trim()
-    ? raw.bbcDownloadDir.trim()
-    : defaults.bbcDownloadDir;
-
-  if (isEphemeralTempDataPath(rteDownloadDir)) {
-    rteDownloadDir = defaults.rteDownloadDir;
+  if (!downloadDir) {
+    const legacyRte = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim() ? raw.rteDownloadDir.trim() : "";
+    const legacyBbc = typeof raw.bbcDownloadDir === "string" && raw.bbcDownloadDir.trim() ? raw.bbcDownloadDir.trim() : "";
+    const candidate = legacyRte || legacyBbc;
+    if (candidate) {
+      downloadDir = path.dirname(candidate);
+    }
   }
-  if (isEphemeralTempDataPath(bbcDownloadDir)) {
-    bbcDownloadDir = defaults.bbcDownloadDir;
+  if (!downloadDir || isEphemeralTempDataPath(downloadDir)) {
+    downloadDir = defaults.downloadDir;
   }
+  const pathFormat = typeof raw.pathFormat === "string" && raw.pathFormat.trim()
+    ? raw.pathFormat.trim()
+    : defaults.pathFormat;
 
   return {
     timeFormat,
-    rteDownloadDir,
-    bbcDownloadDir,
+    downloadDir,
+    pathFormat,
     episodeNameMode,
     cueAutoGenerate
   };
@@ -164,17 +165,9 @@ function createWindow() {
 
 function ensureOutputDir(sourceType = "rte") {
   const settings = readSettings();
-  const outputDir = sourceType === "bbc" ? settings.bbcDownloadDir : settings.rteDownloadDir;
+  const outputDir = settings.downloadDir;
   fs.mkdirSync(outputDir, { recursive: true });
   return outputDir;
-}
-
-function sanitizeDirName(name) {
-  return String(name || "")
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
 }
 
 function inferProgramNameFromUrl(inputUrl) {
@@ -236,38 +229,43 @@ function inferTitleFromUrl(inputUrl, fallback = "audio") {
   return fallback;
 }
 
-function extractDateFromEpisodeTitle(input) {
-  const text = String(input || "").trim();
-  const match = text.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}\s+[A-Za-z]+\s+\d{4}\b/i);
-  return match ? match[0] : "";
-}
-
 function buildEpisodeFileTitle({ episodeTitle, programTitle, clipId }) {
-  const settings = readSettings();
   const safeEpisodeTitle = String(episodeTitle || "").trim();
   const safeProgramTitle = String(programTitle || "").trim();
-  const dateText = extractDateFromEpisodeTitle(safeEpisodeTitle);
-
-  if (settings.episodeNameMode === "full-title") {
-    return safeEpisodeTitle || (safeProgramTitle ? `${safeProgramTitle} ${clipId}` : `rte-episode-${clipId}`);
-  }
-
-  if (dateText) {
-    return dateText;
-  }
 
   return safeEpisodeTitle || (safeProgramTitle ? `${safeProgramTitle} ${clipId}` : `rte-episode-${clipId}`);
 }
 
-async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitle, onProgress, sourceType = "rte", forceDownload = false }) {
+async function downloadFromManifest({
+  manifestUrl,
+  sourceUrl,
+  title,
+  programTitle,
+  publishedTime,
+  clipId,
+  episodeUrl,
+  onProgress,
+  sourceType = "rte",
+  forceDownload = false
+}) {
   const baseOutputDir = ensureOutputDir(sourceType);
-  const programFolder = sanitizeDirName(programTitle) || "misc";
-  const outputDir = path.join(baseOutputDir, programFolder);
+  const settings = readSettings();
+  const target = buildDownloadTarget({
+    baseDownloadDir: baseOutputDir,
+    pathFormat: settings.pathFormat,
+    sourceType,
+    programTitle: sanitizePathSegment(programTitle) || inferProgramNameFromUrl(sourceUrl || manifestUrl || ""),
+    episodeTitle: title,
+    publishedTime,
+    clipId,
+    episodeUrl: episodeUrl || sourceUrl || manifestUrl
+  });
+  const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
   const result = await runYtDlpDownload({
     manifestUrl,
     sourceUrl,
-    title,
+    title: target.fileStem,
     outputDir,
     onProgress,
     forceDownload
@@ -316,7 +314,7 @@ async function maybeGenerateCue({
   }
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, onProgress, forceDownload = false }) {
+async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, onProgress, forceDownload = false }) {
   if (!clipId) {
     throw new Error("clipId is required.");
   }
@@ -331,6 +329,9 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     manifestUrl: playlist.m3u8Url,
     title: resolvedTitle,
     programTitle,
+    publishedTime: publishedTime || resolvedTitle,
+    clipId,
+    episodeUrl,
     onProgress,
     sourceType: "rte",
     forceDownload
@@ -354,7 +355,7 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
   };
 }
 
-async function downloadBbcEpisode({ episodeUrl, title, programTitle, onProgress, forceDownload = false }) {
+async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTime, onProgress, forceDownload = false }) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) {
     throw new Error("episodeUrl is required.");
@@ -366,6 +367,8 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, onProgress,
     manifestUrl: sourceUrl,
     title: resolvedTitle,
     programTitle: programTitle || "BBC",
+    publishedTime: publishedTime || resolvedTitle,
+    episodeUrl,
     onProgress,
     sourceType: "bbc",
     forceDownload
@@ -397,6 +400,9 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
     manifestUrl: info.m3u8Url,
     title: info.title,
     programTitle: inferProgramNameFromUrl(pageUrl),
+    publishedTime: info.title,
+    clipId: info.clipId,
+    episodeUrl: pageUrl,
     onProgress: (progress) => {
       if (!progressToken) {
         return;
@@ -423,7 +429,7 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
   };
 });
 
-ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, forceDownload = false }) => {
+ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid BBC page URL is required.");
   }
@@ -445,6 +451,8 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
         manifestUrl: candidate,
         title: inferredTitle,
         programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+        publishedTime: publishedTime || inferredTitle,
+        episodeUrl: candidate,
         sourceType: "bbc",
         onProgress: (progress) => {
           if (!progressToken) {
@@ -640,8 +648,7 @@ ipcMain.handle("cue-generate", async (_event, payload = {}) => {
 ipcMain.handle("settings-pick-download-dir", async (event, payload = {}) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const current = readSettings();
-  const sourceType = String(payload.sourceType || "rte").toLowerCase() === "bbc" ? "bbc" : "rte";
-  const defaultPath = sourceType === "bbc" ? current.bbcDownloadDir : current.rteDownloadDir;
+  const defaultPath = current.downloadDir;
   const response = await dialog.showOpenDialog(window, {
     title: "Choose Download Directory",
     defaultPath,
@@ -667,7 +674,8 @@ app.whenReady().then(() => {
         clipId: episode.clipId,
         title: episode.title,
         programTitle: episode.programTitle,
-        episodeUrl: episode.episodeUrl
+        episodeUrl: episode.episodeUrl,
+        publishedTime: episode.publishedTime
       })
   });
 
