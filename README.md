@@ -67,6 +67,19 @@ Open:
 - `http://<host>:<port>/` (web UI)
 - `http://<host>:<port>/api/*` (API)
 
+## Quick Release Script (PowerShell)
+Use `scripts/release.ps1` to do commit + git push + Docker build/push (Docker Hub + GHCR).
+
+Example (latest + version tag):
+```powershell
+.\scripts\release.ps1 -CommitMessage "release: bbc fixes" -TagRelease -Version "1.0.1"
+```
+
+Example (no git, only rebuild/push images):
+```powershell
+.\scripts\release.ps1 -CommitMessage "rebuild images" -SkipGit
+```
+
 ## Vendored Binaries
 This project vendors `yt-dlp` and `ffmpeg` under `vendor/`.
 
