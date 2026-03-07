@@ -165,11 +165,17 @@
           </select>
         </div>
         <div class="row">
+          <label for="downloadDirSourceSelect">Folder For</label>
+          <select id="downloadDirSourceSelect">
+            <option value="rte">RTE</option>
+            <option value="bbc">BBC</option>
+          </select>
+        </div>
+        <div class="row">
           <label for="downloadDirInput">Download Directory</label>
           <input id="downloadDirInput" type="text" readonly />
           <button id="chooseDownloadDirBtn" class="secondary">Choose Folder</button>
         </div>
-        <div id="downloadDirSourceLabel" class="hint"></div>
         <div class="row">
           <label for="episodeNameModeSelect">Episode Filename</label>
           <select id="episodeNameModeSelect">
