@@ -102,6 +102,7 @@ function inferCadence(episodes) {
 
 function mapEpisode(entry, index) {
   const episodeUrl = pickEpisodeUrl(entry);
+  const canonicalEpisodeUrl = entry?.id ? `https://www.bbc.co.uk/programmes/${entry.id}` : episodeUrl;
   const title = cleanText(entry?.title || entry?.track || entry?.id || `Episode ${index + 1}`);
   const uploadDate = String(entry?.upload_date || "").trim();
   const published = uploadDate.match(/^\d{8}$/)
@@ -115,8 +116,8 @@ function mapEpisode(entry, index) {
     id: clipId,
     title,
     description: cleanText(entry?.description || entry?.alt_title || ""),
-    episodeUrl: entry?.id ? `https://www.bbc.co.uk/programmes/${entry.id}` : episodeUrl,
-    downloadUrl: episodeUrl,
+    episodeUrl: canonicalEpisodeUrl,
+    downloadUrl: canonicalEpisodeUrl,
     publishedTime: published,
     durationSeconds
   };
@@ -295,7 +296,7 @@ function parseEpisodesFromPlayerHtml(html) {
       title: title || `Episode ${episodes.length + 1}`,
       description,
       episodeUrl: `https://www.bbc.co.uk/programmes/${id}`,
-      downloadUrl: ctaHrefMatch?.[1] || `https://www.bbc.co.uk/programmes/${id}`,
+      downloadUrl: `https://www.bbc.co.uk/programmes/${id}`,
       publishedTime,
       durationSeconds: null,
       hasPlayableAudio: Boolean(ctaHrefMatch?.[1])

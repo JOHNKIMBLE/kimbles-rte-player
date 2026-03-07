@@ -62,6 +62,31 @@ function inferProgramNameFromUrl(inputUrl) {
   return "";
 }
 
+function toCanonicalBbcEpisodeUrl(inputUrl) {
+  const raw = String(inputUrl || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    const parsed = new URL(raw);
+    if (!/bbc\./i.test(parsed.hostname)) {
+      return raw;
+    }
+    const match = parsed.pathname.match(/\/sounds\/play\/([a-z0-9]{8})/i);
+    if (match?.[1]) {
+      return `https://www.bbc.co.uk/programmes/${match[1].toLowerCase()}`;
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
+function shouldRetryBbcWithFallback(error) {
+  const text = String(error?.message || "");
+  return /\[bbc\]/i.test(text) && /Unable to extract playlist data/i.test(text);
+}
+
 function inferTitleFromUrl(inputUrl, fallback = "audio") {
   try {
     const parsed = new URL(String(inputUrl || ""), "https://example.com");
@@ -319,15 +344,39 @@ app.post("/api/download/bbc/url", async (req, res) => {
     const providedTitle = String(req.body.title || "").trim();
     const providedProgramTitle = String(req.body.programTitle || "").trim();
     const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
-    const download = await downloadFromManifest({
-      sourceUrl: pageUrl,
-      manifestUrl: pageUrl,
-      title: inferredTitle,
-      programTitle: providedProgramTitle || inferProgramNameFromUrl(pageUrl) || "BBC",
-      progressToken,
-      sourceType: "bbc"
-    });
-    res.json({ pageUrl, title: inferredTitle, ...download });
+    const canonicalUrl = toCanonicalBbcEpisodeUrl(pageUrl);
+    const attemptUrls = Array.from(new Set([canonicalUrl, String(pageUrl).trim()].filter(Boolean)));
+    let download = null;
+    let lastError = null;
+    let usedUrl = canonicalUrl || String(pageUrl).trim();
+
+    for (let i = 0; i < attemptUrls.length; i += 1) {
+      const candidate = attemptUrls[i];
+      try {
+        download = await downloadFromManifest({
+          sourceUrl: candidate,
+          manifestUrl: candidate,
+          title: inferredTitle,
+          programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+          progressToken,
+          sourceType: "bbc"
+        });
+        usedUrl = candidate;
+        break;
+      } catch (error) {
+        lastError = error;
+        const hasNext = i < attemptUrls.length - 1;
+        if (!hasNext || !shouldRetryBbcWithFallback(error)) {
+          throw error;
+        }
+      }
+    }
+
+    if (!download) {
+      throw lastError || new Error("BBC download failed.");
+    }
+
+    res.json({ pageUrl, sourceUrlUsed: usedUrl, title: inferredTitle, ...download });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
