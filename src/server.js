@@ -24,6 +24,7 @@ const { runYtDlpDownload } = require("./lib/downloader");
 const { runYtDlpJson } = require("./lib/downloader");
 const { generateCueForAudio } = require("./lib/cue");
 const { createSchedulerStore } = require("./lib/scheduler");
+const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -43,8 +44,8 @@ fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 function getDefaultSettings() {
   return {
     timeFormat: "24h",
-    rteDownloadDir: path.join(DOWNLOAD_DIR, "RTE"),
-    bbcDownloadDir: path.join(DOWNLOAD_DIR, "BBC"),
+    downloadDir: DOWNLOAD_DIR,
+    pathFormat: "{radio}/{program}/{episode_short} {release_date}",
     episodeNameMode: "date-only",
     cueAutoGenerate: false
   };
@@ -54,10 +55,15 @@ let cachedSettings = null;
 function normalizeSettings(input) {
   const defaults = getDefaultSettings();
   const raw = input && typeof input === "object" ? input : {};
+  const legacyRte = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim() ? raw.rteDownloadDir.trim() : "";
   return {
     timeFormat: raw.timeFormat === "12h" ? "12h" : "24h",
-    rteDownloadDir: typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim() ? raw.rteDownloadDir.trim() : defaults.rteDownloadDir,
-    bbcDownloadDir: typeof raw.bbcDownloadDir === "string" && raw.bbcDownloadDir.trim() ? raw.bbcDownloadDir.trim() : defaults.bbcDownloadDir,
+    downloadDir: typeof raw.downloadDir === "string" && raw.downloadDir.trim()
+      ? raw.downloadDir.trim()
+      : (legacyRte ? path.dirname(legacyRte) : defaults.downloadDir),
+    pathFormat: typeof raw.pathFormat === "string" && raw.pathFormat.trim()
+      ? raw.pathFormat.trim()
+      : defaults.pathFormat,
     episodeNameMode: raw.episodeNameMode === "full-title" ? "full-title" : "date-only",
     cueAutoGenerate: Boolean(raw.cueAutoGenerate)
   };
@@ -82,14 +88,6 @@ function writeSettings(next) {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(normalized, null, 2), "utf8");
   cachedSettings = normalized;
   return normalized;
-}
-
-function sanitizeDirName(name) {
-  return String(name || "")
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
 }
 
 function inferProgramNameFromUrl(inputUrl) {
@@ -151,10 +149,30 @@ function inferTitleFromUrl(inputUrl, fallback = "audio") {
   return fallback;
 }
 
-async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitle, progressToken, sourceType = "rte", forceDownload = false }) {
-  const sourceRoot = sourceType === "bbc" ? "BBC" : "RTE";
-  const programFolder = sanitizeDirName(programTitle) || "misc";
-  const outputDir = path.join(DOWNLOAD_DIR, sourceRoot, programFolder);
+async function downloadFromManifest({
+  manifestUrl,
+  sourceUrl,
+  title,
+  programTitle,
+  publishedTime,
+  clipId,
+  episodeUrl,
+  progressToken,
+  sourceType = "rte",
+  forceDownload = false
+}) {
+  const settings = readSettings();
+  const target = buildDownloadTarget({
+    baseDownloadDir: settings.downloadDir,
+    pathFormat: settings.pathFormat,
+    sourceType,
+    programTitle: sanitizePathSegment(programTitle) || inferProgramNameFromUrl(sourceUrl || manifestUrl || ""),
+    episodeTitle: title,
+    publishedTime,
+    clipId,
+    episodeUrl: episodeUrl || sourceUrl || manifestUrl
+  });
+  const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
 
   function emitProgress(payload) {
@@ -174,7 +192,7 @@ async function downloadFromManifest({ manifestUrl, sourceUrl, title, programTitl
   const result = await runYtDlpDownload({
     manifestUrl,
     sourceUrl,
-    title,
+    title: target.fileStem,
     outputDir,
     onProgress: emitProgress,
     forceDownload
@@ -223,13 +241,16 @@ async function maybeGenerateCue({
   }
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, progressToken, forceDownload = false }) {
+async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, progressToken, forceDownload = false }) {
   const playlist = await getPlaylist(String(clipId));
   const resolvedTitle = title || `rte-episode-${clipId}`;
   const download = await downloadFromManifest({
     manifestUrl: playlist.m3u8Url,
     title: resolvedTitle,
     programTitle,
+    publishedTime: publishedTime || resolvedTitle,
+    clipId,
+    episodeUrl,
     progressToken,
     sourceType: "rte",
     forceDownload
@@ -262,7 +283,8 @@ const scheduler = createSchedulerStore({
       clipId: episode.clipId,
       title: episode.title,
       programTitle: episode.programTitle,
-      episodeUrl: episode.episodeUrl
+      episodeUrl: episode.episodeUrl,
+      publishedTime: episode.publishedTime
     })
 });
 
@@ -277,6 +299,9 @@ const bbcScheduler = createSchedulerStore({
         manifestUrl: String(episode.episodeUrl || ""),
         title: String(episode.title || "bbc-episode"),
         programTitle: String(episode.programTitle || "BBC"),
+        publishedTime: String(episode.publishedTime || episode.title || ""),
+        clipId: episode.clipId,
+        episodeUrl: String(episode.episodeUrl || ""),
         sourceType: "bbc"
       });
       const cue = await maybeGenerateCue({
@@ -432,6 +457,9 @@ app.post("/api/download/url", async (req, res) => {
       manifestUrl: info.m3u8Url,
       title: info.title,
       programTitle: inferProgramNameFromUrl(pageUrl),
+      publishedTime: info.title,
+      clipId: info.clipId,
+      episodeUrl: pageUrl,
       progressToken,
       sourceType: "rte",
       forceDownload
@@ -456,6 +484,7 @@ app.post("/api/download/bbc/url", async (req, res) => {
     const forceDownload = Boolean(req.body.forceDownload);
     const providedTitle = String(req.body.title || "").trim();
     const providedProgramTitle = String(req.body.programTitle || "").trim();
+    const publishedTime = String(req.body.publishedTime || "").trim();
     const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
     const canonicalUrl = toCanonicalBbcEpisodeUrl(pageUrl);
     const attemptUrls = Array.from(new Set([canonicalUrl, String(pageUrl).trim()].filter(Boolean)));
@@ -471,6 +500,8 @@ app.post("/api/download/bbc/url", async (req, res) => {
           manifestUrl: candidate,
           title: inferredTitle,
           programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+          publishedTime: publishedTime || inferredTitle,
+          episodeUrl: candidate,
           progressToken,
           sourceType: "bbc",
           forceDownload
@@ -507,10 +538,11 @@ app.post("/api/download/episode", async (req, res) => {
     const clipId = String(req.body.clipId || "");
     const title = String(req.body.title || "");
     const programTitle = String(req.body.programTitle || "");
+    const publishedTime = String(req.body.publishedTime || "");
     const episodeUrl = String(req.body.episodeUrl || "");
     const progressToken = String(req.body.progressToken || "");
     const forceDownload = Boolean(req.body.forceDownload);
-    const data = await downloadEpisodeByClip({ clipId, title, programTitle, episodeUrl, progressToken, forceDownload });
+    const data = await downloadEpisodeByClip({ clipId, title, programTitle, episodeUrl, publishedTime, progressToken, forceDownload });
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });

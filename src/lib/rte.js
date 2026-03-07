@@ -208,6 +208,7 @@ function inferCadence(episodes) {
 function mapEpisodeItem(item) {
   const clipId = String(item.clip_id || item.item_id || "").trim();
   const episodeUrl = item.url ? toAbsoluteRteUrl(item.url) : null;
+  const image = item?.image || item?.thumbnail || item?.thumb || "";
 
   return {
     title: cleanTitle(item.title || item.show_title || "Untitled"),
@@ -216,7 +217,8 @@ function mapEpisodeItem(item) {
     publishedTimeFormatted: cleanText(item.published_time_formatted || ""),
     durationString: cleanText(item.duration_string || ""),
     clipId,
-    episodeUrl
+    episodeUrl,
+    image: image ? toAbsoluteRteUrl(image) : ""
   };
 }
 

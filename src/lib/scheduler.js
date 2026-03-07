@@ -1,8 +1,9 @@
-const fs = require("node:fs");
+﻿const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
 const DUBLIN_TZ = "Europe/Dublin";
+const RELEASE_LAG_WINDOW_MINUTES = 6 * 60;
 const DAY_TO_INDEX = new Map([
   ["sun", 0], ["sunday", 0], ["sundays", 0],
   ["mon", 1], ["monday", 1], ["mondays", 1],
@@ -91,7 +92,7 @@ function parseRunScheduleWindows(runScheduleText) {
   const windows = [];
 
   for (const segment of segments) {
-    const match = segment.match(/^(.*?)\s*[�]\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/i);
+    const match = segment.match(/^(.*?)\s*[•]\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/i);
     if (!match) {
       continue;
     }
@@ -154,11 +155,11 @@ function shouldRunInScheduleWindow(schedule, now = new Date()) {
       return false;
     }
     const delta = dublinNow.minuteOfDay - window.dueMinute;
-    return delta >= 0 && delta < 60;
+    return delta >= 0 && delta < RELEASE_LAG_WINDOW_MINUTES;
   });
 
   if (!currentSlot) {
-    return { shouldRun: false, reason: "Waiting for end+30m window" };
+    return { shouldRun: false, reason: "Waiting for end+30m to +6h window" };
   }
 
   if (schedule.lastCheckedAt) {
@@ -211,6 +212,17 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
     return schedules.find((item) => item.id === scheduleId);
   }
 
+  function setLatestEpisodeFields(schedule, latest) {
+    const episodes = Array.isArray(latest?.episodes) ? latest.episodes : [];
+    const top = episodes.find((episode) => episode && (episode.title || episode.clipId));
+    if (!top) {
+      return;
+    }
+    schedule.latestEpisodeTitle = String(top.title || "");
+    schedule.latestEpisodePublishedTime = String(top.publishedTime || top.publishedTimeFormatted || "");
+    schedule.latestEpisodeImage = String(top.image || "");
+  }
+
   async function add(programUrl, options = {}) {
     const existing = schedules.find((item) => item.programUrl === programUrl);
     if (existing) {
@@ -257,6 +269,9 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
       enabled: true,
       cadence: latest.cadence,
       averageDaysBetween: latest.averageDaysBetween,
+      latestEpisodeTitle: "",
+      latestEpisodePublishedTime: "",
+      latestEpisodeImage: "",
       downloadedClipIds: Array.from(known),
       initialBackfillCount: backfillCount,
       lastCheckedAt: null,
@@ -265,6 +280,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
         ? `Created and backfilled ${downloadedNow.length} episode(s)`
         : "Created (new episodes only)"
     };
+    setLatestEpisodeFields(schedule, latest);
 
     schedules.push(schedule);
     writeStore();
@@ -333,6 +349,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
       schedule.nextBroadcastTitle = latest.nextBroadcastTitle;
     }
     schedule.lastCheckedAt = new Date().toISOString();
+    setLatestEpisodeFields(schedule, latest);
 
     const known = new Set((schedule.downloadedClipIds || []).map((id) => String(id)));
     const unseen = [];
@@ -436,3 +453,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
 module.exports = {
   createSchedulerStore
 };
+
+
+
+

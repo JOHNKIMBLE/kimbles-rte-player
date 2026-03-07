@@ -1,26 +1,38 @@
 # Kimble's RTE Player
-
-Electron desktop app plus optional Docker web app for RTE and BBC radio:
-- live station player
-- program explorer
-- per-episode MP3 downloads
-- auto scheduler
+Electron desktop app plus optional Docker web app for RTÉ + BBC radio.
 
 ## Features
-- RTE tab:
-  - Live stations with play overlay
-  - Quick download by episode URL
-  - Program search, episodes, music-played list
-  - Scheduler with run windows based on show schedule
-- BBC tab:
-  - Live stations with play overlay
-  - Quick download by URL
-  - Program search, episodes, music-played list
-  - Scheduler using upcoming-broadcast schedule (run at show end + 30 min)
-- Settings tab:
-  - 12h/24h time format
-  - Episode filename mode (`date-only` or `full-title`)
-  - Download directory chooser
+- RTÉ + BBC tabs:
+  - live station player with play overlay
+  - quick URL download
+  - program search + episode explorer
+  - music-played lists (where available)
+- Download behavior:
+  - MP3 output
+  - duplicate detection (file + archive)
+  - click download again to force re-download
+  - optional auto CUE generation (writes `.cue` only, no JSON sidecar)
+- Scheduler:
+  - RTÉ and BBC both use show-time windows
+  - checks from show end + 30 min up to +6 hours
+  - falls back to cadence-based background checks
+  - scheduler cards show program art + latest episode info
+- Settings:
+  - 12h/24h time display
+  - episode filename mode (`date-only` / `full-title`)
+  - single base download directory
+  - path format template with presets + preview
+
+## Path Format Tokens
+Use in Settings `Path Format`:
+- `{radio}` (`RTE` or `BBC`)
+- `{program}`
+- `{episode}`
+- `{episode_short}`
+- `{release_date}`
+
+Default:
+`{radio}/{program}/{episode_short} {release_date}`
 
 ## Requirements
 - Node.js 20+
@@ -30,12 +42,6 @@ Electron desktop app plus optional Docker web app for RTE and BBC radio:
 npm install
 npm start
 ```
-
-Default download folders:
-- RTE: `~/Downloads/RTE/<program>/<episode>.mp3`
-- BBC: `~/Downloads/BBC/<program>/<episode>.mp3`
-
-In Settings, the directory shown is for the last selected source tab (RTE or BBC).
 
 ## Build
 Windows:
@@ -67,26 +73,18 @@ Open:
 - `http://<host>:<port>/` (web UI)
 - `http://<host>:<port>/api/*` (API)
 
+Note: in Docker/web mode, `Choose Folder` is disabled; set the download path manually in Settings.
+
 ## Quick Release Script (PowerShell)
-Use `scripts/release.ps1` to do commit + git push + Docker build/push (Docker Hub + GHCR).
+Use `scripts/release.ps1` for commit + git push + Docker build/push (Docker Hub + GHCR).
 
-Example (latest + version tag):
 ```powershell
-.\scripts\release.ps1 -CommitMessage "release: bbc fixes" -TagRelease -Version "1.0.1"
-```
-
-Example (no git, only rebuild/push images):
-```powershell
-.\scripts\release.ps1 -CommitMessage "rebuild images" -SkipGit
+.\scripts\release.ps1 -CommitMessage "release: update" -TagRelease -Version "1.0.1"
 ```
 
 ## Vendored Binaries
 This project vendors `yt-dlp` and `ffmpeg` under `vendor/`.
-
-Build-time pruning keeps only target-platform binaries in packaged output:
-- Windows builds -> `win32-*`
-- macOS builds -> `darwin-*`
-- Linux/Docker builds -> `linux-*`
+Build-time pruning keeps only target-platform binaries in packaged output.
 
 ## Third-Party Licenses
 - `yt-dlp` (Unlicense): https://github.com/yt-dlp/yt-dlp
