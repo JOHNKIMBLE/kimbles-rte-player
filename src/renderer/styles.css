@@ -361,6 +361,19 @@ button:disabled {
   font-size: 0.82rem;
 }
 
+.token-legend {
+  line-height: 1.9;
+}
+
+.token-pill {
+  margin-right: 0.25rem;
+  padding: 0.12rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--inputbg);
+  cursor: help;
+}
+
 .scheduler-head {
   display: flex;
   align-items: center;

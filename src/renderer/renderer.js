@@ -709,8 +709,8 @@ function renderEpisodes(payload) {
             - clip ${escapeHtml(clipId)}
           </div>
           <div class="item-actions">
-            <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}" data-download-published="${escapeHtml(episode.publishedTime || episode.publishedTimeFormatted || "")}">Download</button>
-            <button class="secondary" data-generate-cue-clip="${escapeHtml(clipId)}" data-generate-cue-title="${escapeHtml(episode.title)}" data-generate-cue-program-title="${escapeHtml(payload.title || "")}" data-generate-cue-url="${escapeHtml(episode.episodeUrl || "")}">Generate CUE</button>
+            <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.fullTitle || episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}" data-download-published="${escapeHtml(episode.publishedTime || episode.publishedTimeFormatted || "")}">Download</button>
+            <button class="secondary" data-generate-cue-clip="${escapeHtml(clipId)}" data-generate-cue-title="${escapeHtml(episode.fullTitle || episode.title)}" data-generate-cue-program-title="${escapeHtml(payload.title || "")}" data-generate-cue-url="${escapeHtml(episode.episodeUrl || "")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-episode-status="${escapeHtml(clipId)}" style="display:none;"></div>
           <div class="episode-inline-playlist" data-episode-chapters="${escapeHtml(clipId)}"></div>
