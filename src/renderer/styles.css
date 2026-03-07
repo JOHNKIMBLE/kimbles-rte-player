@@ -35,12 +35,16 @@ body.light-mode {
 
 body {
   margin: 0;
+  min-height: 100vh;
   color: var(--ink);
   font-family: "Segoe UI", Tahoma, sans-serif;
   background:
     radial-gradient(circle at 15% 0%, rgba(2, 190, 210, 0.22) 0, transparent 35%),
     radial-gradient(circle at 100% 20%, rgba(222, 134, 28, 0.2) 0, transparent 30%),
     var(--bg);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-attachment: fixed;
 }
 
 .app-shell {

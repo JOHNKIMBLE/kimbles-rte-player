@@ -53,7 +53,7 @@ const cueAutoGenerateCheckbox = document.getElementById("cueAutoGenerateCheckbox
 const chooseDownloadDirBtn = document.getElementById("chooseDownloadDirBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const settingsStatus = document.getElementById("settingsStatus");
-const downloadDirSourceLabel = document.getElementById("downloadDirSourceLabel");
+const downloadDirSourceSelect = document.getElementById("downloadDirSourceSelect");
 const tabRteBtn = document.getElementById("tabRteBtn");
 const tabBbcBtn = document.getElementById("tabBbcBtn");
 const tabSettingsBtn = document.getElementById("tabSettingsBtn");
@@ -87,6 +87,7 @@ const state = {
 };
 const PROGRAM_EPISODES_PER_PAGE = 10;
 const BBC_EPISODES_PER_PAGE = 10;
+const SETTINGS_DOWNLOAD_SOURCE_KEY = "kimble_settings_download_source";
 let searchDebounceTimer = null;
 let bbcSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
@@ -172,13 +173,23 @@ function setSettingsStatus(text, isError = false) {
 }
 
 function getActiveSourceType() {
-  if (state.activeTab === "bbc") {
+  if (downloadDirSourceSelect?.value === "bbc") {
     return "bbc";
   }
-  if (state.activeTab === "rte") {
+  if (downloadDirSourceSelect?.value === "rte") {
     return "rte";
   }
   return state.lastSourceTab === "bbc" ? "bbc" : "rte";
+}
+
+function getSavedSettingsDownloadSource() {
+  const raw = String(localStorage.getItem(SETTINGS_DOWNLOAD_SOURCE_KEY) || "").toLowerCase();
+  return raw === "bbc" ? "bbc" : "rte";
+}
+
+function saveSettingsDownloadSource(source) {
+  const normalized = source === "bbc" ? "bbc" : "rte";
+  localStorage.setItem(SETTINGS_DOWNLOAD_SOURCE_KEY, normalized);
 }
 
 function getActiveDownloadDir() {
@@ -186,11 +197,10 @@ function getActiveDownloadDir() {
 }
 
 function updateDownloadDirSourceLabel() {
-  if (!downloadDirSourceLabel) {
+  if (!downloadDirSourceSelect) {
     return;
   }
-  const source = getActiveSourceType() === "bbc" ? "BBC" : "RTE";
-  downloadDirSourceLabel.textContent = `Editing folder for: ${source}`;
+  downloadDirSourceSelect.value = getActiveSourceType();
 }
 
 function setActiveDownloadDir(dir) {
@@ -209,6 +219,9 @@ function setActiveTab(tabName) {
   const isRte = state.activeTab === "rte";
   const isBbc = state.activeTab === "bbc";
   const isSettings = state.activeTab === "settings";
+  if (isSettings && downloadDirSourceSelect) {
+    downloadDirSourceSelect.value = getSavedSettingsDownloadSource();
+  }
   rteTabContent.classList.toggle("hidden", !isRte);
   bbcTabContent.classList.toggle("hidden", !isBbc);
   settingsTabContent.classList.toggle("hidden", !isSettings);
@@ -1282,6 +1295,13 @@ bbcScheduleBackfillMode.addEventListener("change", () => {
   bbcScheduleBackfillCount.disabled = !isBackfill;
 });
 
+if (downloadDirSourceSelect) {
+  downloadDirSourceSelect.addEventListener("change", () => {
+    saveSettingsDownloadSource(downloadDirSourceSelect.value);
+    downloadDirInput.value = getActiveDownloadDir();
+  });
+}
+
 chooseDownloadDirBtn.addEventListener("click", async () => {
   setButtonBusy(chooseDownloadDirBtn, true, "Choose Folder", "Opening...");
   try {
@@ -1620,6 +1640,9 @@ bbcScheduleList.addEventListener("click", async (event) => {
   try {
     const savedTheme = localStorage.getItem("kimble_theme") || "dark";
     applyTheme(savedTheme);
+    if (downloadDirSourceSelect) {
+      downloadDirSourceSelect.value = getSavedSettingsDownloadSource();
+    }
     setActiveTab("rte");
     scheduleBackfillCount.disabled = true;
     bbcScheduleBackfillCount.disabled = true;
