@@ -19,6 +19,7 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 const rendererDir = path.join(__dirname, "renderer");
 app.use(express.static(rendererDir));
+const progressSubscribers = new Map();
 
 const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
@@ -27,25 +28,67 @@ const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || "/downloads";
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-async function downloadFromManifest({ manifestUrl, title }) {
+function sanitizeDirName(name) {
+  return String(name || "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function inferProgramNameFromUrl(inputUrl) {
+  try {
+    const parsed = new URL(String(inputUrl || ""), "https://www.rte.ie");
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts[0] === "radio" && parts.length >= 3) {
+      return parts[2].replace(/-/g, " ");
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+async function downloadFromManifest({ manifestUrl, title, programTitle, progressToken }) {
+  const programFolder = sanitizeDirName(programTitle) || "misc";
+  const outputDir = path.join(DOWNLOAD_DIR, programFolder);
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  function emitProgress(payload) {
+    if (!progressToken) {
+      return;
+    }
+    const listeners = progressSubscribers.get(progressToken);
+    if (!listeners || listeners.size === 0) {
+      return;
+    }
+    const event = `data: ${JSON.stringify({ token: progressToken, ...payload })}\n\n`;
+    for (const res of listeners) {
+      res.write(event);
+    }
+  }
+
   const result = await runYtDlpDownload({
     manifestUrl,
     title,
-    outputDir: DOWNLOAD_DIR
+    outputDir,
+    onProgress: emitProgress
   });
 
   return {
     ...result,
-    outputDir: DOWNLOAD_DIR
+    outputDir
   };
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl }) {
+async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, progressToken }) {
   const playlist = await getPlaylist(String(clipId));
   const resolvedTitle = title || `rte-episode-${clipId}`;
   const download = await downloadFromManifest({
     manifestUrl: playlist.m3u8Url,
-    title: resolvedTitle
+    title: resolvedTitle,
+    programTitle,
+    progressToken
   });
 
   return {
@@ -66,6 +109,7 @@ const scheduler = createSchedulerStore({
     downloadEpisodeByClip({
       clipId: episode.clipId,
       title: episode.title,
+      programTitle: episode.programTitle,
       episodeUrl: episode.episodeUrl
     })
 });
@@ -129,13 +173,49 @@ app.get("/api/episode/playlist", async (req, res) => {
   }
 });
 
+app.get("/api/progress/stream", (req, res) => {
+  const token = String(req.query.token || "").trim();
+  if (!token) {
+    res.status(400).json({ error: "token is required" });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive"
+  });
+  res.write("event: ready\ndata: ok\n\n");
+
+  let listeners = progressSubscribers.get(token);
+  if (!listeners) {
+    listeners = new Set();
+    progressSubscribers.set(token, listeners);
+  }
+  listeners.add(res);
+
+  req.on("close", () => {
+    const current = progressSubscribers.get(token);
+    if (!current) {
+      return;
+    }
+    current.delete(res);
+    if (current.size === 0) {
+      progressSubscribers.delete(token);
+    }
+  });
+});
+
 app.post("/api/download/url", async (req, res) => {
   try {
     const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
     const info = await extractRteInfo(pageUrl);
     const download = await downloadFromManifest({
       manifestUrl: info.m3u8Url,
-      title: info.title
+      title: info.title,
+      programTitle: inferProgramNameFromUrl(pageUrl),
+      progressToken
     });
     res.json({ ...info, ...download });
   } catch (error) {
@@ -147,8 +227,10 @@ app.post("/api/download/episode", async (req, res) => {
   try {
     const clipId = String(req.body.clipId || "");
     const title = String(req.body.title || "");
+    const programTitle = String(req.body.programTitle || "");
     const episodeUrl = String(req.body.episodeUrl || "");
-    const data = await downloadEpisodeByClip({ clipId, title, episodeUrl });
+    const progressToken = String(req.body.progressToken || "");
+    const data = await downloadEpisodeByClip({ clipId, title, programTitle, episodeUrl, progressToken });
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
