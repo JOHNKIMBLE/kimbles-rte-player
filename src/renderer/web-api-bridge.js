@@ -3,6 +3,45 @@
     return;
   }
 
+  const progressListeners = new Set();
+  const progressStreams = new Map();
+
+  function emitProgress(payload) {
+    for (const listener of progressListeners) {
+      try {
+        listener(payload);
+      } catch {}
+    }
+  }
+
+  function openProgressStream(token) {
+    if (!token || progressStreams.has(token)) {
+      return;
+    }
+
+    const source = new EventSource(`/api/progress/stream?token=${encodeURIComponent(token)}`);
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        emitProgress(payload);
+      } catch {}
+    };
+    source.onerror = () => {
+      source.close();
+      progressStreams.delete(token);
+    };
+    progressStreams.set(token, source);
+  }
+
+  function closeProgressStream(token) {
+    const source = progressStreams.get(token);
+    if (!source) {
+      return;
+    }
+    source.close();
+    progressStreams.delete(token);
+  }
+
   const API = {
     async getJson(path) {
       const response = await fetch(path, { headers: { Accept: "application/json" } });
@@ -73,9 +112,40 @@
   }
 
   window.rteDownloader = {
-    downloadFromPageUrl: (pageUrl) => API.sendJson("/api/download/url", "POST", { pageUrl }),
-    downloadEpisode: (payload) => API.sendJson("/api/download/episode", "POST", payload || {}),
-    onDownloadProgress: () => () => {},
+    downloadFromPageUrl: async (pageUrl, progressToken) => {
+      if (progressToken) {
+        openProgressStream(progressToken);
+      }
+      try {
+        return await API.sendJson("/api/download/url", "POST", { pageUrl, progressToken });
+      } finally {
+        if (progressToken) {
+          setTimeout(() => closeProgressStream(progressToken), 1500);
+        }
+      }
+    },
+    downloadEpisode: async (payload) => {
+      const token = String(payload?.progressToken || "");
+      if (token) {
+        openProgressStream(token);
+      }
+      try {
+        return await API.sendJson("/api/download/episode", "POST", payload || {});
+      } finally {
+        if (token) {
+          setTimeout(() => closeProgressStream(token), 1500);
+        }
+      }
+    },
+    onDownloadProgress: (handler) => {
+      if (typeof handler !== "function") {
+        return () => {};
+      }
+      progressListeners.add(handler);
+      return () => {
+        progressListeners.delete(handler);
+      };
+    },
 
     getLiveStations: () => API.getJson("/api/live/stations"),
     getLiveNow: (channelId) => API.getJson(`/api/live/now/${encodeURIComponent(channelId)}`),
