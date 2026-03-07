@@ -181,7 +181,20 @@
           <button type="button" class="secondary" data-path-preset="{radio}/{program}/{episode}">Full Episode Title</button>
           <button type="button" class="secondary" data-path-preset="{radio}/{program}/{episode_slug}">Slug Safe</button>
         </div>
-        <div class="hint">Tokens: <code>{radio}</code> <code>{program}</code> <code>{program_slug}</code> <code>{episode}</code> <code>{episode_short}</code> <code>{episode_slug}</code> <code>{release_date}</code> <code>{year}</code> <code>{month}</code> <code>{day}</code> <code>{date_compact}</code> <code>{source_id}</code></div>
+        <div class="hint token-legend">Tokens:
+          <code class="token-pill" title="Source radio group (RTE or BBC).">{radio}</code>
+          <code class="token-pill" title="Program/show title, cleaned for file paths.">{program}</code>
+          <code class="token-pill" title="Program title slug (lowercase, hyphen-separated).">{program_slug}</code>
+          <code class="token-pill" title="Full episode title, cleaned for file paths.">{episode}</code>
+          <code class="token-pill" title="Short episode title (best effort short form).">{episode_short}</code>
+          <code class="token-pill" title="Episode title slug (lowercase, hyphen-separated).">{episode_slug}</code>
+          <code class="token-pill" title="Release/broadcast date in YYYY-MM-DD.">{release_date}</code>
+          <code class="token-pill" title="Year from release date (YYYY).">{year}</code>
+          <code class="token-pill" title="Month from release date (MM).">{month}</code>
+          <code class="token-pill" title="Day from release date (DD).">{day}</code>
+          <code class="token-pill" title="Compact date from release date (YYYYMMDD).">{date_compact}</code>
+          <code class="token-pill" title="Source clip/program ID when available (e.g. RTÉ clip id or BBC pid).">{source_id}</code>
+        </div>
         <div id="pathFormatPreview" class="hint"></div>
         <div class="row">
           <label for="cueAutoGenerateCheckbox">Generate CUE/Chapters on download</label>

@@ -218,7 +218,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
     if (!top) {
       return;
     }
-    schedule.latestEpisodeTitle = String(top.title || "");
+    schedule.latestEpisodeTitle = String(top.fullTitle || top.title || "");
     schedule.latestEpisodePublishedTime = String(top.publishedTime || top.publishedTimeFormatted || "");
     schedule.latestEpisodeImage = String(top.image || "");
   }
@@ -244,6 +244,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
       for (const episode of toBackfill) {
         const result = await runEpisodeDownload({
           ...episode,
+          title: String(episode.fullTitle || episode.title || ""),
           programTitle: summary.title
         });
         downloadedNow.push({
@@ -376,6 +377,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
     for (const episode of toDownload) {
       const result = await runEpisodeDownload({
         ...episode,
+        title: String(episode.fullTitle || episode.title || ""),
         programTitle: schedule.title
       });
       downloaded.push({

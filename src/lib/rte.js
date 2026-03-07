@@ -209,9 +209,11 @@ function mapEpisodeItem(item) {
   const clipId = String(item.clip_id || item.item_id || "").trim();
   const episodeUrl = item.url ? toAbsoluteRteUrl(item.url) : null;
   const image = item?.image || item?.thumbnail || item?.thumb || "";
+  const fullTitle = cleanText(item.title || item.show_title || "Untitled");
 
   return {
     title: cleanTitle(item.title || item.show_title || "Untitled"),
+    fullTitle,
     subtitle: cleanText(item.subtitle || ""),
     publishedTime: item.published_time || item.broadcast_date || "",
     publishedTimeFormatted: cleanText(item.published_time_formatted || ""),
