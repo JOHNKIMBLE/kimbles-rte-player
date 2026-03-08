@@ -25,6 +25,9 @@ const { runYtDlpJson } = require("./lib/downloader");
 const { generateCueForAudio } = require("./lib/cue");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
+const { createDownloadQueue } = require("./lib/download-queue");
+const { applyId3Tags } = require("./lib/tags");
+const { writeProgramFeedFiles } = require("./lib/feeds");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -32,22 +35,58 @@ const rendererDir = path.join(__dirname, "renderer");
 app.use(express.static(rendererDir));
 app.use("/build", express.static(path.join(__dirname, "..", "build")));
 const progressSubscribers = new Map();
+const localPlaybackTokens = new Map();
 
 const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || "/downloads";
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
+const DOWNLOAD_ARCHIVE_PATH = path.join(DATA_DIR, "download-archive.txt");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
+function isPathInside(baseDir, targetPath) {
+  const base = path.resolve(baseDir);
+  const target = path.resolve(targetPath);
+  return target === base || target.startsWith(`${base}${path.sep}`);
+}
+
+function issueLocalPlaybackToken(filePath) {
+  const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  localPlaybackTokens.set(token, {
+    path: filePath,
+    expiresAt: Date.now() + 10 * 60 * 1000
+  });
+  return token;
+}
+
+function resolveLocalPlaybackToken(token) {
+  const item = localPlaybackTokens.get(String(token || ""));
+  if (!item) {
+    return "";
+  }
+  if (Date.now() > item.expiresAt) {
+    localPlaybackTokens.delete(String(token || ""));
+    return "";
+  }
+  return item.path;
+}
 
 function getDefaultSettings() {
   return {
     timeFormat: "24h",
     downloadDir: DOWNLOAD_DIR,
     pathFormat: "{radio}/{program}/{episode_short} {release_date}",
-    episodeNameMode: "date-only",
-    cueAutoGenerate: false
+    cueAutoGenerate: false,
+    maxConcurrentDownloads: 2,
+    outputFormat: "mp3",
+    outputQuality: "128K",
+    normalizeLoudness: true,
+    dedupeMode: "source-id",
+    id3Tagging: true,
+    feedExportEnabled: true,
+    webhookUrl: ""
   };
 }
 
@@ -56,6 +95,7 @@ function normalizeSettings(input) {
   const defaults = getDefaultSettings();
   const raw = input && typeof input === "object" ? input : {};
   const legacyRte = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim() ? raw.rteDownloadDir.trim() : "";
+  const dedupeModeRaw = String(raw.dedupeMode || defaults.dedupeMode).toLowerCase();
   return {
     timeFormat: raw.timeFormat === "12h" ? "12h" : "24h",
     downloadDir: typeof raw.downloadDir === "string" && raw.downloadDir.trim()
@@ -64,10 +104,19 @@ function normalizeSettings(input) {
     pathFormat: typeof raw.pathFormat === "string" && raw.pathFormat.trim()
       ? raw.pathFormat.trim()
       : defaults.pathFormat,
-    episodeNameMode: raw.episodeNameMode === "full-title" ? "full-title" : "date-only",
-    cueAutoGenerate: Boolean(raw.cueAutoGenerate)
+    cueAutoGenerate: Boolean(raw.cueAutoGenerate),
+    maxConcurrentDownloads: Math.max(1, Math.min(8, Math.floor(Number(raw.maxConcurrentDownloads || defaults.maxConcurrentDownloads)))),
+    outputFormat: String(raw.outputFormat || defaults.outputFormat).toLowerCase(),
+    outputQuality: String(raw.outputQuality || defaults.outputQuality).trim() || defaults.outputQuality,
+    normalizeLoudness: raw.normalizeLoudness == null ? defaults.normalizeLoudness : Boolean(raw.normalizeLoudness),
+    dedupeMode: ["source-id", "title-date", "none"].includes(dedupeModeRaw) ? dedupeModeRaw : defaults.dedupeMode,
+    id3Tagging: raw.id3Tagging == null ? defaults.id3Tagging : Boolean(raw.id3Tagging),
+    feedExportEnabled: raw.feedExportEnabled == null ? defaults.feedExportEnabled : Boolean(raw.feedExportEnabled),
+    webhookUrl: typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : ""
   };
 }
+
+const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
 
 function readSettings() {
   if (cachedSettings) {
@@ -189,19 +238,72 @@ async function downloadFromManifest({
     }
   }
 
-  const result = await runYtDlpDownload({
-    manifestUrl,
-    sourceUrl,
-    title: target.fileStem,
-    outputDir,
-    onProgress: emitProgress,
-    forceDownload
-  });
+  const result = await downloadQueue.run(
+    (queueTask) => runYtDlpDownload({
+      manifestUrl,
+      sourceUrl,
+      title: target.fileStem,
+      outputDir,
+      archivePath: DOWNLOAD_ARCHIVE_PATH,
+      registerCancel: queueTask?.registerCancel,
+      onProgress: emitProgress,
+      forceDownload,
+      audioFormat: settings.outputFormat,
+      audioQuality: settings.outputQuality,
+      normalizeLoudness: settings.normalizeLoudness,
+      dedupeMode: settings.dedupeMode
+    }),
+    {
+      label: target.fileStem,
+      sourceType
+    }
+  );
 
   return {
     ...result,
     outputDir
   };
+}
+
+async function maybeApplyId3({
+  downloadResult,
+  sourceType,
+  episodeTitle,
+  programTitle,
+  publishedTime,
+  sourceUrl,
+  artworkUrl,
+  episodeUrl = "",
+  clipId = "",
+  description = ""
+}) {
+  const settings = readSettings();
+  if (!settings.id3Tagging) {
+    return null;
+  }
+
+  const outputDir = String(downloadResult?.outputDir || "");
+  const fileName = String(downloadResult?.fileName || "");
+  if (!outputDir || !fileName) {
+    return null;
+  }
+
+  try {
+    return await applyId3Tags({
+      audioPath: path.join(outputDir, fileName),
+      title: episodeTitle,
+      programTitle,
+      sourceType,
+      publishedTime,
+      sourceUrl,
+      artworkUrl,
+      episodeUrl,
+      clipId,
+      description
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function maybeGenerateCue({
@@ -262,6 +364,17 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     episodeTitle: resolvedTitle,
     programTitle
   });
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "rte",
+    episodeTitle: resolvedTitle,
+    programTitle,
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl: episodeUrl,
+    artworkUrl: "",
+    episodeUrl,
+    clipId: String(clipId || "")
+  });
 
   return {
     clipId: String(clipId),
@@ -269,15 +382,114 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     title: resolvedTitle,
     playlistApiUrl: playlist.apiUrl,
     m3u8Url: playlist.m3u8Url,
+    tags,
     cue,
     ...download
   };
+}
+
+async function resolveRteEpisodeStream(clipId) {
+  const id = String(clipId || "").trim();
+  if (!id) {
+    throw new Error("clipId is required.");
+  }
+  const playlist = await getPlaylist(id);
+  return {
+    clipId: id,
+    streamUrl: playlist.m3u8Url
+  };
+}
+
+async function resolveBbcEpisodeStream(episodeUrl) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) {
+    throw new Error("episodeUrl is required.");
+  }
+
+  const json = await runYtDlpJson({
+    url,
+    args: ["-J", "--no-playlist", "--playlist-items", "1"]
+  });
+
+  const direct = String(
+    json?.url
+    || json?.requested_downloads?.[0]?.url
+    || json?.formats?.find((f) => f && String(f.protocol || "").includes("m3u8"))?.url
+    || ""
+  ).trim();
+
+  if (!direct) {
+    throw new Error("No playable BBC stream URL found for this episode.");
+  }
+
+  return {
+    episodeUrl: url,
+    streamUrl: direct,
+    title: String(json?.title || "").trim(),
+    image: String(json?.thumbnail || "").trim()
+  };
+}
+
+function feedDataDirFor(sourceType) {
+  return sourceType === "bbc" ? path.join(DATA_DIR, "bbc") : DATA_DIR;
+}
+
+async function sendWebhookIfConfigured(payload) {
+  const webhookUrl = String(readSettings().webhookUrl || "").trim();
+  if (!webhookUrl) {
+    return;
+  }
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {})
+    });
+  } catch {}
+}
+
+async function onScheduleRefreshed(sourceType, schedule, latest) {
+  if (!readSettings().feedExportEnabled) {
+    return;
+  }
+  writeProgramFeedFiles({
+    dataDir: feedDataDirFor(sourceType),
+    schedule,
+    latest
+  });
+}
+
+async function onScheduleComplete(sourceType, schedule, downloaded) {
+  if (!Array.isArray(downloaded) || !downloaded.length) {
+    return;
+  }
+  await sendWebhookIfConfigured({
+    event: "download.complete",
+    source: sourceType,
+    scheduleId: schedule.id,
+    title: schedule.title,
+    count: downloaded.length,
+    downloaded
+  });
+}
+
+async function onScheduleError(sourceType, schedule, error) {
+  await sendWebhookIfConfigured({
+    event: "download.error",
+    source: sourceType,
+    scheduleId: schedule?.id || "",
+    title: schedule?.title || "",
+    error: String(error?.message || error || "Unknown error")
+  });
 }
 
 const scheduler = createSchedulerStore({
   dataDir: DATA_DIR,
   getProgramSummary,
   getProgramEpisodes,
+  onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("rte", schedule, latest),
+  onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("rte", schedule, downloaded),
+  onScheduleRunError: (schedule, error) => onScheduleError("rte", schedule, error),
   runEpisodeDownload: async (episode) =>
     downloadEpisodeByClip({
       clipId: episode.clipId,
@@ -292,6 +504,9 @@ const bbcScheduler = createSchedulerStore({
   dataDir: path.join(DATA_DIR, "bbc"),
   getProgramSummary: async (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson),
   getProgramEpisodes: async (programUrl, page) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+  onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("bbc", schedule, latest),
+  onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("bbc", schedule, downloaded),
+  onScheduleRunError: (schedule, error) => onScheduleError("bbc", schedule, error),
   runEpisodeDownload: async (episode) =>
     (async () => {
       const download = await downloadFromManifest({
@@ -304,6 +519,17 @@ const bbcScheduler = createSchedulerStore({
         episodeUrl: String(episode.episodeUrl || ""),
         sourceType: "bbc"
       });
+      const tags = await maybeApplyId3({
+        downloadResult: download,
+        sourceType: "bbc",
+        episodeTitle: String(episode.title || "bbc-episode"),
+        programTitle: String(episode.programTitle || "BBC"),
+        publishedTime: String(episode.publishedTime || episode.title || ""),
+        sourceUrl: String(episode.episodeUrl || ""),
+        artworkUrl: "",
+        episodeUrl: String(episode.episodeUrl || ""),
+        clipId: String(episode.clipId || "")
+      });
       const cue = await maybeGenerateCue({
         downloadResult: download,
         sourceType: "bbc",
@@ -311,7 +537,7 @@ const bbcScheduler = createSchedulerStore({
         episodeTitle: String(episode.title || "bbc-episode"),
         programTitle: String(episode.programTitle || "BBC")
       });
-      return { ...download, cue };
+      return { ...download, tags, cue };
     })()
 });
 
@@ -414,6 +640,26 @@ app.get("/api/bbc/episode/playlist", async (req, res) => {
   }
 });
 
+app.get("/api/rte/episode/stream", async (req, res) => {
+  try {
+    const clipId = String(req.query.clipId || "").trim();
+    const data = await resolveRteEpisodeStream(clipId);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/bbc/episode/stream", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "").trim();
+    const data = await resolveBbcEpisodeStream(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.get("/api/progress/stream", (req, res) => {
   const token = String(req.query.token || "").trim();
   if (!token) {
@@ -471,7 +717,18 @@ app.post("/api/download/url", async (req, res) => {
       episodeTitle: info.title,
       programTitle: inferProgramNameFromUrl(pageUrl)
     });
-    res.json({ ...info, cue, ...download });
+    const tags = await maybeApplyId3({
+      downloadResult: download,
+      sourceType: "rte",
+      episodeTitle: info.title,
+      programTitle: inferProgramNameFromUrl(pageUrl),
+      publishedTime: info.title,
+      sourceUrl: pageUrl,
+      artworkUrl: "",
+      episodeUrl: pageUrl,
+      clipId: String(info.clipId || "")
+    });
+    res.json({ ...info, tags, cue, ...download });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -527,7 +784,17 @@ app.post("/api/download/bbc/url", async (req, res) => {
       episodeTitle: inferredTitle,
       programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC"
     });
-    res.json({ pageUrl, sourceUrlUsed: usedUrl, title: inferredTitle, cue, ...download });
+    const tags = await maybeApplyId3({
+      downloadResult: download,
+      sourceType: "bbc",
+      episodeTitle: inferredTitle,
+      programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
+      publishedTime: publishedTime || inferredTitle,
+      sourceUrl: usedUrl,
+      artworkUrl: "",
+      episodeUrl: usedUrl
+    });
+    res.json({ pageUrl, sourceUrlUsed: usedUrl, title: inferredTitle, tags, cue, ...download });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -563,6 +830,73 @@ app.post("/api/settings", (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
+});
+
+app.post("/api/local-playback-url", (req, res) => {
+  try {
+    const outputDir = path.resolve(String(req.body.outputDir || "").trim());
+    const fileName = String(req.body.fileName || "").trim();
+    if (!outputDir || !fileName) {
+      throw new Error("outputDir and fileName are required.");
+    }
+    const fullPath = path.resolve(outputDir, fileName);
+    const baseDir = path.resolve(readSettings().downloadDir || DOWNLOAD_DIR);
+    if (!isPathInside(baseDir, fullPath)) {
+      throw new Error("Requested file is outside download directory.");
+    }
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`File not found: ${fullPath}`);
+    }
+    const token = issueLocalPlaybackToken(fullPath);
+    res.json({ url: `/api/local-audio/${encodeURIComponent(token)}` });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/local-audio/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const fullPath = resolveLocalPlaybackToken(token);
+  if (!fullPath) {
+    res.status(404).json({ error: "Playback token expired or invalid." });
+    return;
+  }
+  if (!fs.existsSync(fullPath)) {
+    res.status(404).json({ error: "Audio file no longer exists." });
+    return;
+  }
+  res.sendFile(fullPath);
+});
+
+app.get("/api/download-queue/stats", (_req, res) => {
+  res.json(downloadQueue.stats());
+});
+
+app.get("/api/download-queue", (_req, res) => {
+  res.json(downloadQueue.snapshot());
+});
+
+app.post("/api/download-queue/pause", (_req, res) => {
+  downloadQueue.pause();
+  res.json(downloadQueue.snapshot());
+});
+
+app.post("/api/download-queue/resume", (_req, res) => {
+  downloadQueue.resume();
+  res.json(downloadQueue.snapshot());
+});
+
+app.post("/api/download-queue/cancel", (req, res) => {
+  const taskId = String(req.body.taskId || "").trim();
+  res.json({
+    ok: downloadQueue.cancel(taskId),
+    snapshot: downloadQueue.snapshot()
+  });
+});
+
+app.post("/api/download-queue/clear-pending", (_req, res) => {
+  downloadQueue.clearPending();
+  res.json(downloadQueue.snapshot());
 });
 
 app.post("/api/cue/generate", async (req, res) => {

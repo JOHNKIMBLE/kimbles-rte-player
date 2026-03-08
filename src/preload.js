@@ -26,7 +26,10 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getBbcProgramEpisodes: (programUrl, page = 1) =>
     ipcRenderer.invoke("bbc-program-episodes", { programUrl, page }),
   getBbcEpisodePlaylist: (episodeUrl) => ipcRenderer.invoke("bbc-episode-playlist", { episodeUrl }),
+  getBbcEpisodeStream: (episodeUrl) => ipcRenderer.invoke("bbc-episode-stream", { episodeUrl }),
   getEpisodePlaylist: (episodeUrl) => ipcRenderer.invoke("rte-episode-playlist", { episodeUrl }),
+  getRteEpisodeStream: (clipId) => ipcRenderer.invoke("rte-episode-stream", { clipId }),
+  getLocalPlaybackUrl: (outputDir, fileName) => ipcRenderer.invoke("local-playback-url", { outputDir, fileName }),
 
   listSchedules: () => ipcRenderer.invoke("scheduler-list"),
   addSchedule: (programUrl, options = {}) => ipcRenderer.invoke("scheduler-add", { programUrl, options }),
@@ -41,6 +44,12 @@ contextBridge.exposeInMainWorld("rteDownloader", {
     ipcRenderer.invoke("bbc-scheduler-set-enabled", { scheduleId, enabled }),
   runBbcScheduleNow: (scheduleId) => ipcRenderer.invoke("bbc-scheduler-check-one", { scheduleId }),
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
+  getDownloadQueueStats: () => ipcRenderer.invoke("download-queue-stats"),
+  getDownloadQueueSnapshot: () => ipcRenderer.invoke("download-queue-snapshot"),
+  pauseDownloadQueue: () => ipcRenderer.invoke("download-queue-pause"),
+  resumeDownloadQueue: () => ipcRenderer.invoke("download-queue-resume"),
+  cancelDownloadQueueTask: (taskId) => ipcRenderer.invoke("download-queue-cancel", { taskId }),
+  clearPendingDownloadQueue: () => ipcRenderer.invoke("download-queue-clear-pending"),
   getSettings: () => ipcRenderer.invoke("settings-get"),
   saveSettings: (payload) => ipcRenderer.invoke("settings-save", payload || {}),
   pickDownloadDirectory: (sourceType = "rte") => ipcRenderer.invoke("settings-pick-download-dir", { sourceType }),

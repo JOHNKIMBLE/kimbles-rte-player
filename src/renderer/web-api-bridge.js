@@ -73,7 +73,15 @@
     timeFormat: "24h",
     downloadDir: "/downloads",
     pathFormat: "{radio}/{program}/{episode_short} {release_date}",
-    cueAutoGenerate: false
+    cueAutoGenerate: false,
+    maxConcurrentDownloads: 2,
+    outputFormat: "mp3",
+    outputQuality: "128K",
+    normalizeLoudness: true,
+    dedupeMode: "source-id",
+    id3Tagging: true,
+    feedExportEnabled: true,
+    webhookUrl: ""
   };
 
   function loadWebSettings() {
@@ -93,7 +101,21 @@
         pathFormat: typeof parsed.pathFormat === "string" && parsed.pathFormat.trim()
           ? parsed.pathFormat.trim()
           : defaultSettings.pathFormat,
-        cueAutoGenerate: Boolean(parsed.cueAutoGenerate)
+        cueAutoGenerate: Boolean(parsed.cueAutoGenerate),
+        maxConcurrentDownloads: Math.max(1, Math.min(8, Math.floor(Number(parsed.maxConcurrentDownloads || defaultSettings.maxConcurrentDownloads)))),
+        outputFormat: typeof parsed.outputFormat === "string" && parsed.outputFormat.trim()
+          ? parsed.outputFormat.trim().toLowerCase()
+          : defaultSettings.outputFormat,
+        outputQuality: typeof parsed.outputQuality === "string" && parsed.outputQuality.trim()
+          ? parsed.outputQuality.trim()
+          : defaultSettings.outputQuality,
+        normalizeLoudness: parsed.normalizeLoudness == null ? defaultSettings.normalizeLoudness : Boolean(parsed.normalizeLoudness),
+        dedupeMode: typeof parsed.dedupeMode === "string" && parsed.dedupeMode.trim()
+          ? parsed.dedupeMode.trim().toLowerCase()
+          : defaultSettings.dedupeMode,
+        id3Tagging: parsed.id3Tagging == null ? defaultSettings.id3Tagging : Boolean(parsed.id3Tagging),
+        feedExportEnabled: parsed.feedExportEnabled == null ? defaultSettings.feedExportEnabled : Boolean(parsed.feedExportEnabled),
+        webhookUrl: typeof parsed.webhookUrl === "string" ? parsed.webhookUrl.trim() : defaultSettings.webhookUrl
       };
     } catch {
       return { ...defaultSettings };
@@ -114,7 +136,21 @@
       pathFormat: typeof next.pathFormat === "string" && next.pathFormat.trim()
         ? next.pathFormat.trim()
         : defaultSettings.pathFormat,
-      cueAutoGenerate: Boolean(next.cueAutoGenerate)
+      cueAutoGenerate: Boolean(next.cueAutoGenerate),
+      maxConcurrentDownloads: Math.max(1, Math.min(8, Math.floor(Number(next.maxConcurrentDownloads || defaultSettings.maxConcurrentDownloads)))),
+      outputFormat: typeof next.outputFormat === "string" && next.outputFormat.trim()
+        ? next.outputFormat.trim().toLowerCase()
+        : defaultSettings.outputFormat,
+      outputQuality: typeof next.outputQuality === "string" && next.outputQuality.trim()
+        ? next.outputQuality.trim()
+        : defaultSettings.outputQuality,
+      normalizeLoudness: next.normalizeLoudness == null ? defaultSettings.normalizeLoudness : Boolean(next.normalizeLoudness),
+      dedupeMode: typeof next.dedupeMode === "string" && next.dedupeMode.trim()
+        ? next.dedupeMode.trim().toLowerCase()
+        : defaultSettings.dedupeMode,
+      id3Tagging: next.id3Tagging == null ? defaultSettings.id3Tagging : Boolean(next.id3Tagging),
+      feedExportEnabled: next.feedExportEnabled == null ? defaultSettings.feedExportEnabled : Boolean(next.feedExportEnabled),
+      webhookUrl: typeof next.webhookUrl === "string" ? next.webhookUrl.trim() : defaultSettings.webhookUrl
     };
     localStorage.setItem("rte_web_settings", JSON.stringify(normalized));
     return normalized;
@@ -181,7 +217,14 @@
       API.getJson(`/api/bbc/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
     getBbcEpisodePlaylist: (episodeUrl) =>
       API.getJson(`/api/bbc/episode/playlist?url=${encodeURIComponent(episodeUrl)}`),
+    getBbcEpisodeStream: (episodeUrl) =>
+      API.getJson(`/api/bbc/episode/stream?url=${encodeURIComponent(episodeUrl)}`),
     getEpisodePlaylist: (episodeUrl) => API.getJson(`/api/episode/playlist?url=${encodeURIComponent(episodeUrl)}`),
+    getRteEpisodeStream: (clipId) => API.getJson(`/api/rte/episode/stream?clipId=${encodeURIComponent(clipId)}`),
+    getLocalPlaybackUrl: async (outputDir, fileName) => {
+      const payload = await API.sendJson("/api/local-playback-url", "POST", { outputDir, fileName });
+      return String(payload?.url || "");
+    },
 
     listSchedules: () => API.getJson("/api/scheduler"),
     addSchedule: (programUrl, options = {}) =>
@@ -203,6 +246,12 @@
     setBbcScheduleEnabled: (scheduleId, enabled) =>
       API.sendJson(`/api/bbc/scheduler/${encodeURIComponent(scheduleId)}`, "PATCH", { enabled }),
     runBbcScheduleNow: (scheduleId) => API.sendJson(`/api/bbc/scheduler/${encodeURIComponent(scheduleId)}/run`, "POST", {}),
+    getDownloadQueueStats: () => API.getJson("/api/download-queue/stats"),
+    getDownloadQueueSnapshot: () => API.getJson("/api/download-queue"),
+    pauseDownloadQueue: () => API.sendJson("/api/download-queue/pause", "POST", {}),
+    resumeDownloadQueue: () => API.sendJson("/api/download-queue/resume", "POST", {}),
+    cancelDownloadQueueTask: (taskId) => API.sendJson("/api/download-queue/cancel", "POST", { taskId }),
+    clearPendingDownloadQueue: () => API.sendJson("/api/download-queue/clear-pending", "POST", {}),
 
     getSettings: async () => {
       try {
