@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const { pathToFileURL } = require("node:url");
 const {
   LIVE_STATIONS,
   extractRteInfo,
@@ -24,10 +25,14 @@ const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
 const { generateCueForAudio } = require("./lib/cue");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
+const { createDownloadQueue } = require("./lib/download-queue");
+const { applyId3Tags } = require("./lib/tags");
+const { writeProgramFeedFiles } = require("./lib/feeds");
 
 let scheduler;
 let bbcScheduler;
 let appSettings = null;
+const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
 
 function getAppRootDir() {
   if (app.isPackaged) {
@@ -61,8 +66,15 @@ function getDefaultSettings() {
     timeFormat: "24h",
     downloadDir: getDefaultDownloadDir(),
     pathFormat: "{radio}/{program}/{episode_short} {release_date}",
-    episodeNameMode: "date-only",
-    cueAutoGenerate: false
+    cueAutoGenerate: false,
+    maxConcurrentDownloads: 2,
+    outputFormat: "mp3",
+    outputQuality: "128K",
+    normalizeLoudness: true,
+    dedupeMode: "source-id",
+    id3Tagging: true,
+    feedExportEnabled: true,
+    webhookUrl: ""
   };
 }
 
@@ -70,11 +82,14 @@ function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
 
+function getDownloadArchivePath() {
+  return path.join(app.getPath("userData"), "download-archive.txt");
+}
+
 function normalizeSettings(input) {
   const defaults = getDefaultSettings();
   const raw = input && typeof input === "object" ? input : {};
   const timeFormat = raw.timeFormat === "12h" ? "12h" : "24h";
-  const episodeNameMode = raw.episodeNameMode === "full-title" ? "full-title" : "date-only";
   const cueAutoGenerate = Boolean(raw.cueAutoGenerate);
   let downloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
     ? raw.downloadDir.trim()
@@ -93,13 +108,29 @@ function normalizeSettings(input) {
   const pathFormat = typeof raw.pathFormat === "string" && raw.pathFormat.trim()
     ? raw.pathFormat.trim()
     : defaults.pathFormat;
+  const maxConcurrentDownloads = Math.max(1, Math.min(8, Math.floor(Number(raw.maxConcurrentDownloads || defaults.maxConcurrentDownloads))));
+  const outputFormat = String(raw.outputFormat || defaults.outputFormat).toLowerCase();
+  const outputQuality = String(raw.outputQuality || defaults.outputQuality).trim() || defaults.outputQuality;
+  const normalizeLoudness = raw.normalizeLoudness == null ? defaults.normalizeLoudness : Boolean(raw.normalizeLoudness);
+  const dedupeModeRaw = String(raw.dedupeMode || defaults.dedupeMode).toLowerCase();
+  const dedupeMode = ["source-id", "title-date", "none"].includes(dedupeModeRaw) ? dedupeModeRaw : defaults.dedupeMode;
+  const id3Tagging = raw.id3Tagging == null ? defaults.id3Tagging : Boolean(raw.id3Tagging);
+  const feedExportEnabled = raw.feedExportEnabled == null ? defaults.feedExportEnabled : Boolean(raw.feedExportEnabled);
+  const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
 
   return {
     timeFormat,
     downloadDir,
     pathFormat,
-    episodeNameMode,
-    cueAutoGenerate
+    cueAutoGenerate,
+    maxConcurrentDownloads,
+    outputFormat,
+    outputQuality,
+    normalizeLoudness,
+    dedupeMode,
+    id3Tagging,
+    feedExportEnabled,
+    webhookUrl
   };
 }
 
@@ -262,19 +293,70 @@ async function downloadFromManifest({
   });
   const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
-  const result = await runYtDlpDownload({
-    manifestUrl,
-    sourceUrl,
-    title: target.fileStem,
-    outputDir,
-    onProgress,
-    forceDownload
-  });
+  const result = await downloadQueue.run(
+    (queueTask) => runYtDlpDownload({
+      manifestUrl,
+      sourceUrl,
+      title: target.fileStem,
+      outputDir,
+      archivePath: getDownloadArchivePath(),
+      registerCancel: queueTask?.registerCancel,
+      onProgress,
+      forceDownload,
+      audioFormat: settings.outputFormat,
+      audioQuality: settings.outputQuality,
+      normalizeLoudness: settings.normalizeLoudness,
+      dedupeMode: settings.dedupeMode
+    }),
+    {
+      label: target.fileStem,
+      sourceType
+    }
+  );
 
   return {
     ...result,
     outputDir
   };
+}
+
+async function maybeApplyId3({
+  downloadResult,
+  sourceType,
+  episodeTitle,
+  programTitle,
+  publishedTime,
+  sourceUrl,
+  artworkUrl,
+  episodeUrl = "",
+  clipId = "",
+  description = ""
+}) {
+  const settings = readSettings();
+  if (!settings.id3Tagging) {
+    return null;
+  }
+  const outputDir = String(downloadResult?.outputDir || "");
+  const fileName = String(downloadResult?.fileName || "");
+  if (!outputDir || !fileName) {
+    return null;
+  }
+  try {
+    return await applyId3Tags({
+      audioPath: path.join(outputDir, fileName),
+      title: episodeTitle,
+      programTitle,
+      sourceType,
+      publishedTime,
+      sourceUrl,
+      artworkUrl,
+      episodeUrl,
+      clipId,
+      description
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function maybeGenerateCue({
@@ -336,6 +418,17 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     sourceType: "rte",
     forceDownload
   });
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "rte",
+    episodeTitle: resolvedTitle,
+    programTitle,
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl: episodeUrl,
+    artworkUrl: "",
+    episodeUrl,
+    clipId: String(clipId || "")
+  });
   const cue = await maybeGenerateCue({
     downloadResult: download,
     sourceType: "rte",
@@ -350,6 +443,7 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     title: resolvedTitle,
     playlistApiUrl: playlist.apiUrl,
     m3u8Url: playlist.m3u8Url,
+    tags,
     cue,
     ...download
   };
@@ -373,6 +467,16 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceType: "bbc",
     forceDownload
   });
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "bbc",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "BBC",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: "",
+    episodeUrl: sourceUrl
+  });
   const cue = await maybeGenerateCue({
     downloadResult: download,
     sourceType: "bbc",
@@ -385,8 +489,51 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTi
     episodeUrl: sourceUrl,
     title: resolvedTitle,
     clipId: inferTitleFromUrl(sourceUrl, resolvedTitle).replace(/\s+/g, "-").toLowerCase(),
+    tags,
     cue,
     ...download
+  };
+}
+
+async function resolveRteEpisodeStream(clipId) {
+  const id = String(clipId || "").trim();
+  if (!id) {
+    throw new Error("clipId is required.");
+  }
+  const playlist = await getPlaylist(id);
+  return {
+    clipId: id,
+    streamUrl: playlist.m3u8Url
+  };
+}
+
+async function resolveBbcEpisodeStream(episodeUrl) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) {
+    throw new Error("episodeUrl is required.");
+  }
+
+  const json = await runYtDlpJson({
+    url,
+    args: ["-J", "--no-playlist", "--playlist-items", "1"]
+  });
+
+  const direct = String(
+    json?.url
+    || json?.requested_downloads?.[0]?.url
+    || json?.formats?.find((f) => f && String(f.protocol || "").includes("m3u8"))?.url
+    || ""
+  ).trim();
+
+  if (!direct) {
+    throw new Error("No playable BBC stream URL found for this episode.");
+  }
+
+  return {
+    episodeUrl: url,
+    streamUrl: direct,
+    title: String(json?.title || "").trim(),
+    image: String(json?.thumbnail || "").trim()
   };
 }
 
@@ -421,9 +568,21 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
     episodeTitle: info.title,
     programTitle: inferProgramNameFromUrl(pageUrl)
   });
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "rte",
+    episodeTitle: info.title,
+    programTitle: inferProgramNameFromUrl(pageUrl),
+    publishedTime: info.title,
+    sourceUrl: pageUrl,
+    artworkUrl: "",
+    episodeUrl: pageUrl,
+    clipId: String(info.clipId || "")
+  });
 
   return {
     ...info,
+    tags,
     cue,
     ...download
   };
@@ -479,6 +638,16 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
   if (!download) {
     throw lastError || new Error("BBC download failed.");
   }
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "bbc",
+    episodeTitle: inferredTitle,
+    programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
+    publishedTime: publishedTime || inferredTitle,
+    sourceUrl: usedUrl,
+    artworkUrl: "",
+    episodeUrl: usedUrl
+  });
   const cue = await maybeGenerateCue({
     downloadResult: download,
     sourceType: "bbc",
@@ -491,6 +660,7 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
     pageUrl,
     sourceUrlUsed: usedUrl,
     title: inferredTitle,
+    tags,
     cue,
     ...download
   };
@@ -557,6 +727,27 @@ ipcMain.handle("bbc-episode-playlist", async (_event, { episodeUrl }) => {
 
 ipcMain.handle("rte-episode-playlist", async (_event, { episodeUrl }) => {
   return getEpisodePlaylist(episodeUrl);
+});
+
+ipcMain.handle("rte-episode-stream", async (_event, { clipId }) => {
+  return resolveRteEpisodeStream(clipId);
+});
+
+ipcMain.handle("bbc-episode-stream", async (_event, { episodeUrl }) => {
+  return resolveBbcEpisodeStream(episodeUrl);
+});
+
+ipcMain.handle("local-playback-url", async (_event, { outputDir, fileName }) => {
+  const dir = path.resolve(String(outputDir || "").trim());
+  const name = String(fileName || "").trim();
+  if (!dir || !name) {
+    throw new Error("outputDir and fileName are required.");
+  }
+  const fullPath = path.resolve(dir, name);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`File not found: ${fullPath}`);
+  }
+  return pathToFileURL(fullPath).toString();
 });
 
 ipcMain.handle("scheduler-list", async () => {
@@ -662,6 +853,91 @@ ipcMain.handle("settings-pick-download-dir", async (event, payload = {}) => {
   return response.filePaths[0];
 });
 
+ipcMain.handle("download-queue-stats", async () => {
+  return downloadQueue.stats();
+});
+
+ipcMain.handle("download-queue-snapshot", async () => {
+  return downloadQueue.snapshot();
+});
+
+ipcMain.handle("download-queue-pause", async () => {
+  downloadQueue.pause();
+  return downloadQueue.snapshot();
+});
+
+ipcMain.handle("download-queue-resume", async () => {
+  downloadQueue.resume();
+  return downloadQueue.snapshot();
+});
+
+ipcMain.handle("download-queue-cancel", async (_event, { taskId }) => {
+  return {
+    ok: downloadQueue.cancel(taskId),
+    snapshot: downloadQueue.snapshot()
+  };
+});
+
+ipcMain.handle("download-queue-clear-pending", async () => {
+  downloadQueue.clearPending();
+  return downloadQueue.snapshot();
+});
+
+function feedDataDirFor(sourceType) {
+  return sourceType === "bbc"
+    ? path.join(app.getPath("userData"), "bbc")
+    : app.getPath("userData");
+}
+
+async function sendWebhookIfConfigured(payload) {
+  const webhookUrl = String(readSettings().webhookUrl || "").trim();
+  if (!webhookUrl) {
+    return;
+  }
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {})
+    });
+  } catch {}
+}
+
+async function onScheduleRefreshed(sourceType, schedule, latest) {
+  if (!readSettings().feedExportEnabled) {
+    return;
+  }
+  writeProgramFeedFiles({
+    dataDir: feedDataDirFor(sourceType),
+    schedule,
+    latest
+  });
+}
+
+async function onScheduleComplete(sourceType, schedule, downloaded) {
+  if (!Array.isArray(downloaded) || !downloaded.length) {
+    return;
+  }
+  await sendWebhookIfConfigured({
+    event: "download.complete",
+    source: sourceType,
+    scheduleId: schedule.id,
+    title: schedule.title,
+    count: downloaded.length,
+    downloaded
+  });
+}
+
+async function onScheduleError(sourceType, schedule, error) {
+  await sendWebhookIfConfigured({
+    event: "download.error",
+    source: sourceType,
+    scheduleId: schedule?.id || "",
+    title: schedule?.title || "",
+    error: String(error?.message || error || "Unknown error")
+  });
+}
+
 app.whenReady().then(() => {
   readSettings();
 
@@ -669,6 +945,9 @@ app.whenReady().then(() => {
     app,
     getProgramSummary,
     getProgramEpisodes,
+    onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("rte", schedule, latest),
+    onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("rte", schedule, downloaded),
+    onScheduleRunError: (schedule, error) => onScheduleError("rte", schedule, error),
     runEpisodeDownload: async (episode) =>
       downloadEpisodeByClip({
         clipId: episode.clipId,
@@ -684,6 +963,9 @@ app.whenReady().then(() => {
     dataDir: path.join(app.getPath("userData"), "bbc"),
     getProgramSummary: async (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson),
     getProgramEpisodes: async (programUrl, page) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+    onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("bbc", schedule, latest),
+    onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("bbc", schedule, downloaded),
+    onScheduleRunError: (schedule, error) => onScheduleError("bbc", schedule, error),
     runEpisodeDownload: async (episode) =>
       downloadBbcEpisode({
         episodeUrl: episode.episodeUrl,

@@ -4,6 +4,8 @@ const crypto = require("node:crypto");
 
 const DUBLIN_TZ = "Europe/Dublin";
 const RELEASE_LAG_WINDOW_MINUTES = 6 * 60;
+const RETRY_BACKOFF_MINUTES = [15, 60, 180, 720, 1440, 2880];
+const RETRY_MAX_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
 const DAY_TO_INDEX = new Map([
   ["sun", 0], ["sunday", 0], ["sundays", 0],
   ["mon", 1], ["monday", 1], ["mondays", 1],
@@ -172,7 +174,42 @@ function shouldRunInScheduleWindow(schedule, now = new Date()) {
   return { shouldRun: true, reason: "Due window reached" };
 }
 
-function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpisodes, runEpisodeDownload }) {
+function toIsoAfterMinutes(minutes) {
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString();
+}
+
+function getRetryBackoffMinutes(attempts) {
+  const idx = Math.max(0, Math.min(RETRY_BACKOFF_MINUTES.length - 1, Number(attempts || 1) - 1));
+  return RETRY_BACKOFF_MINUTES[idx];
+}
+
+function toRetryItem(episode, error, attempts = 1) {
+  const clipId = String(episode?.clipId || "").trim();
+  const publishedTime = String(episode?.publishedTime || episode?.publishedTimeFormatted || "").trim();
+  const title = String(episode?.fullTitle || episode?.title || "").trim();
+  const backoffMinutes = getRetryBackoffMinutes(attempts);
+
+  return {
+    clipId,
+    title,
+    episodeUrl: String(episode?.episodeUrl || "").trim(),
+    publishedTime,
+    attempts,
+    lastError: String(error?.message || error || "Download failed"),
+    nextRetryAt: toIsoAfterMinutes(backoffMinutes)
+  };
+}
+
+function createSchedulerStore({
+  app,
+  dataDir,
+  getProgramSummary,
+  getProgramEpisodes,
+  runEpisodeDownload,
+  onScheduleRefreshed,
+  onScheduleRunComplete,
+  onScheduleRunError
+}) {
   const rootDir = dataDir || (app ? app.getPath("userData") : path.join(process.cwd(), "data"));
   const storagePath = path.join(rootDir, "schedules.json");
 
@@ -221,6 +258,58 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
     schedule.latestEpisodeTitle = String(top.fullTitle || top.title || "");
     schedule.latestEpisodePublishedTime = String(top.publishedTime || top.publishedTimeFormatted || "");
     schedule.latestEpisodeImage = String(top.image || "");
+  }
+
+  function normalizeRetryQueue(schedule) {
+    const raw = Array.isArray(schedule.retryQueue) ? schedule.retryQueue : [];
+    schedule.retryQueue = raw
+      .map((item) => ({
+        clipId: String(item?.clipId || "").trim(),
+        title: String(item?.title || "").trim(),
+        episodeUrl: String(item?.episodeUrl || "").trim(),
+        publishedTime: String(item?.publishedTime || "").trim(),
+        attempts: Math.max(1, Number(item?.attempts || 1)),
+        lastError: String(item?.lastError || ""),
+        nextRetryAt: String(item?.nextRetryAt || "")
+      }))
+      .filter((item) => item.clipId);
+  }
+
+  function upsertRetry(schedule, episode, error) {
+    normalizeRetryQueue(schedule);
+    const clipId = String(episode?.clipId || "").trim();
+    if (!clipId) {
+      return null;
+    }
+
+    const existing = schedule.retryQueue.find((item) => item.clipId === clipId);
+    const attempts = Math.max(1, Number(existing?.attempts || 0) + 1);
+    const next = toRetryItem({ ...episode, clipId }, error, attempts);
+
+    if (attempts > RETRY_MAX_ATTEMPTS) {
+      schedule.retryQueue = schedule.retryQueue.filter((item) => item.clipId !== clipId);
+      return {
+        dropped: true,
+        clipId,
+        error: next.lastError
+      };
+    }
+
+    if (existing) {
+      Object.assign(existing, next);
+    } else {
+      schedule.retryQueue.push(next);
+    }
+    return {
+      dropped: false,
+      clipId,
+      attempts
+    };
+  }
+
+  function removeRetry(schedule, clipId) {
+    normalizeRetryQueue(schedule);
+    schedule.retryQueue = schedule.retryQueue.filter((item) => item.clipId !== String(clipId || "").trim());
   }
 
   async function add(programUrl, options = {}) {
@@ -274,6 +363,7 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
       latestEpisodePublishedTime: "",
       latestEpisodeImage: "",
       downloadedClipIds: Array.from(known),
+      retryQueue: [],
       initialBackfillCount: backfillCount,
       lastCheckedAt: null,
       lastRunAt: downloadedNow.length ? new Date().toISOString() : null,
@@ -337,6 +427,9 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
     }
 
     const latest = await getProgramEpisodes(schedule.programUrl, 1);
+    if (typeof onScheduleRefreshed === "function") {
+      await onScheduleRefreshed(schedule, latest);
+    }
 
     schedule.cadence = latest.cadence;
     schedule.averageDaysBetween = latest.averageDaysBetween;
@@ -353,7 +446,40 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
     setLatestEpisodeFields(schedule, latest);
 
     const known = new Set((schedule.downloadedClipIds || []).map((id) => String(id)));
+    normalizeRetryQueue(schedule);
+    const nowMs = Date.now();
+    const dueRetries = schedule.retryQueue
+      .filter((item) => force || !item.nextRetryAt || Date.parse(item.nextRetryAt) <= nowMs)
+      .slice(0, 10);
+    const downloaded = [];
     const unseen = [];
+    let failedRetries = 0;
+    let droppedRetries = 0;
+
+    for (const retry of dueRetries) {
+      try {
+        const result = await runEpisodeDownload({
+          clipId: retry.clipId,
+          title: retry.title,
+          episodeUrl: retry.episodeUrl,
+          publishedTime: retry.publishedTime,
+          programTitle: schedule.title
+        });
+        downloaded.push({
+          clipId: retry.clipId,
+          title: retry.title,
+          fileName: result.fileName
+        });
+        known.add(String(retry.clipId));
+        removeRetry(schedule, retry.clipId);
+      } catch (error) {
+        failedRetries += 1;
+        const meta = upsertRetry(schedule, retry, error);
+        if (meta?.dropped) {
+          droppedRetries += 1;
+        }
+      }
+    }
 
     for (const episode of latest.episodes.slice(0, 10)) {
       if (!episode.clipId) {
@@ -365,34 +491,58 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
       unseen.push(episode);
     }
 
-    if (unseen.length === 0) {
-      schedule.lastStatus = "No new episodes";
-      writeStore();
-      return { scheduleId: schedule.id, status: schedule.lastStatus, downloaded: [] };
-    }
-
     const toDownload = unseen.reverse();
-    const downloaded = [];
 
     for (const episode of toDownload) {
-      const result = await runEpisodeDownload({
-        ...episode,
-        title: String(episode.fullTitle || episode.title || ""),
-        programTitle: schedule.title
-      });
-      downloaded.push({
-        clipId: episode.clipId,
-        title: episode.title,
-        fileName: result.fileName
-      });
-      known.add(String(episode.clipId));
+      try {
+        const result = await runEpisodeDownload({
+          ...episode,
+          title: String(episode.fullTitle || episode.title || ""),
+          programTitle: schedule.title
+        });
+        downloaded.push({
+          clipId: episode.clipId,
+          title: episode.title,
+          fileName: result.fileName
+        });
+        known.add(String(episode.clipId));
+        removeRetry(schedule, episode.clipId);
+      } catch (error) {
+        const meta = upsertRetry(schedule, episode, error);
+        if (meta?.dropped) {
+          droppedRetries += 1;
+        } else {
+          failedRetries += 1;
+        }
+      }
     }
 
     schedule.downloadedClipIds = Array.from(known).slice(-400);
-    schedule.lastRunAt = new Date().toISOString();
-    schedule.lastStatus = `Downloaded ${downloaded.length} new episode(s)`;
+    if (downloaded.length > 0 || failedRetries > 0 || droppedRetries > 0 || dueRetries.length > 0) {
+      schedule.lastRunAt = new Date().toISOString();
+    }
+    const retryPending = Array.isArray(schedule.retryQueue) ? schedule.retryQueue.length : 0;
+    if (downloaded.length > 0) {
+      schedule.lastStatus = `Downloaded ${downloaded.length} episode(s)`;
+    } else if (unseen.length === 0 && dueRetries.length === 0) {
+      schedule.lastStatus = "No new episodes";
+    } else {
+      schedule.lastStatus = "No completed downloads";
+    }
+    if (failedRetries > 0) {
+      schedule.lastStatus += ` • ${failedRetries} failed (queued retry)`;
+    }
+    if (droppedRetries > 0) {
+      schedule.lastStatus += ` • ${droppedRetries} dropped (max retries)`;
+    }
+    if (retryPending > 0) {
+      schedule.lastStatus += ` • ${retryPending} retry pending`;
+    }
 
     writeStore();
+    if (downloaded.length > 0 && typeof onScheduleRunComplete === "function") {
+      await onScheduleRunComplete(schedule, downloaded);
+    }
     return {
       scheduleId: schedule.id,
       status: schedule.lastStatus,
@@ -414,6 +564,9 @@ function createSchedulerStore({ app, dataDir, getProgramSummary, getProgramEpiso
           schedule.lastCheckedAt = new Date().toISOString();
           schedule.lastStatus = `Error: ${error.message}`;
           writeStore();
+          if (typeof onScheduleRunError === "function") {
+            await onScheduleRunError(schedule, error);
+          }
         }
       }
     } finally {

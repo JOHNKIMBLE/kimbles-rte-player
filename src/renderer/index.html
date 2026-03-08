@@ -157,6 +157,8 @@
     <div id="settingsTabContent" class="hidden">
       <section class="panel">
         <h2>Settings</h2>
+        <div class="settings-group">
+          <div class="subheading">General</div>
         <div class="row">
           <label for="timeFormatSelect">Time Format</label>
           <select id="timeFormatSelect">
@@ -164,6 +166,9 @@
             <option value="12h">12-hour (AM/PM)</option>
           </select>
         </div>
+        </div>
+        <div class="settings-group">
+          <div class="subheading">Download Path</div>
         <div class="row">
           <label for="downloadDirInput">Download Directory</label>
           <input id="downloadDirInput" type="text" />
@@ -196,11 +201,78 @@
           <code class="token-pill" title="Source clip/program ID when available (e.g. RTÉ clip id or BBC pid).">{source_id}</code>
         </div>
         <div id="pathFormatPreview" class="hint"></div>
+        </div>
+        <div class="settings-group">
+          <div class="subheading">Download Engine</div>
         <div class="row">
           <label for="cueAutoGenerateCheckbox">Generate CUE/Chapters on download</label>
           <input id="cueAutoGenerateCheckbox" type="checkbox" />
         </div>
+        <div class="row">
+          <label for="outputFormatSelect">Audio Format</label>
+          <select id="outputFormatSelect">
+            <option value="mp3">MP3</option>
+            <option value="m4a">M4A</option>
+            <option value="aac">AAC</option>
+            <option value="opus">Opus</option>
+            <option value="vorbis">Vorbis</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="outputQualitySelect">Audio Quality</label>
+          <select id="outputQualitySelect">
+            <option value="128K">128 kbps</option>
+            <option value="192K">192 kbps</option>
+            <option value="256K">256 kbps</option>
+            <option value="320K">320 kbps</option>
+            <option value="0">Best VBR</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="normalizeLoudnessCheckbox">Normalize Loudness (recommended)</label>
+          <input id="normalizeLoudnessCheckbox" type="checkbox" />
+        </div>
+        <div class="row">
+          <label for="maxConcurrentInput">Concurrent Downloads</label>
+          <input id="maxConcurrentInput" type="number" min="1" max="8" step="1" value="2" />
+        </div>
+        <div class="row">
+          <label for="dedupeModeSelect">Duplicate Handling</label>
+          <select id="dedupeModeSelect">
+            <option value="source-id">Skip by source ID + archive</option>
+            <option value="title-date">Skip by title/date filename</option>
+            <option value="none">Always download</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="id3TaggingCheckbox">Write ID3 tags on download</label>
+          <input id="id3TaggingCheckbox" type="checkbox" />
+        </div>
+        <div class="row">
+          <label for="feedExportCheckbox">Export program feeds (JSON/RSS)</label>
+          <input id="feedExportCheckbox" type="checkbox" />
+        </div>
+        <div class="row">
+          <label for="webhookUrlInput">Webhook URL (optional)</label>
+          <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" />
+        </div>
         <div class="hint">CUE mode: auto (try episode tracklists, then estimate chapter times).</div>
+        </div>
+        <div class="settings-group">
+          <div class="subheading">Download Queue</div>
+          <div id="downloadQueueStatus" class="hint">Loading queue...</div>
+          <div class="row">
+            <button id="queuePauseBtn" class="secondary">Pause Queue</button>
+            <button id="queueResumeBtn" class="secondary">Resume Queue</button>
+            <button id="queueClearBtn" class="secondary">Clear Pending</button>
+          </div>
+          <div class="hint">Active</div>
+          <div id="downloadQueueActive" class="list compact-list"></div>
+          <div class="hint">Queued</div>
+          <div id="downloadQueuePending" class="list compact-list"></div>
+          <div class="hint">Recent</div>
+          <div id="downloadQueueRecent" class="list compact-list"></div>
+        </div>
         <div class="row">
           <button id="saveSettingsBtn">Save Settings</button>
         </div>
@@ -208,11 +280,23 @@
       </section>
     </div>
 
+    <div id="nowPlayingBar" class="now-playing hidden">
+      <img id="nowPlayingImage" class="now-playing-image" alt="Now playing artwork" />
+      <div class="now-playing-main">
+        <div id="nowPlayingTitle" class="now-playing-title">Now Playing</div>
+        <div id="nowPlayingMeta" class="now-playing-meta"></div>
+        <div id="nowPlayingTrack" class="now-playing-track"></div>
+        <audio id="nowPlayingAudio" class="now-playing-audio" controls preload="none"></audio>
+      </div>
+      <button id="nowPlayingCloseBtn" class="secondary now-playing-close" aria-label="Hide player">X</button>
+    </div>
+
     <footer class="app-footer">
       Made with &#10084;&#65039; by <a href="https://connoregan.com" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">Connor Egan</a>
     </footer>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.2/dist/hls.min.js"></script>
   <script src="./web-api-bridge.js"></script>
   <script src="./renderer.js"></script>
 </body>

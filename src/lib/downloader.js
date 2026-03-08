@@ -68,14 +68,14 @@ function pickFinalMediaFile(tempDir) {
   return files[0]?.filePath || null;
 }
 
-function pickExistingMp3(outputDir, preferredBaseName) {
-  const preferred = path.join(outputDir, `${preferredBaseName}.mp3`);
+function pickExistingByExt(outputDir, preferredBaseName, ext) {
+  const preferred = path.join(outputDir, `${preferredBaseName}${ext}`);
   if (fs.existsSync(preferred)) {
     return preferred;
   }
 
   const files = walkFiles(outputDir)
-    .filter((filePath) => path.extname(filePath).toLowerCase() === ".mp3")
+    .filter((filePath) => path.extname(filePath).toLowerCase() === ext.toLowerCase())
     .map((filePath) => ({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs }))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
@@ -92,6 +92,15 @@ function makeUniquePath(baseDir, baseName, ext) {
     }
     index += 1;
   }
+}
+
+function ensureWorldWritablePath(targetPath, isDirectory = false) {
+  if (!targetPath || process.platform === "win32") {
+    return;
+  }
+  try {
+    fs.chmodSync(targetPath, isDirectory ? 0o777 : 0o666);
+  } catch {}
 }
 
 function usesShellOnWindows(command) {
@@ -391,15 +400,34 @@ function parseProgressLine(line) {
   };
 }
 
-function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress, forceDownload = false }) {
+function runYtDlpDownload({
+  manifestUrl,
+  sourceUrl,
+  title,
+  outputDir,
+  archivePath = "",
+  registerCancel = null,
+  onProgress,
+  forceDownload = false,
+  audioFormat = "mp3",
+  audioQuality = "",
+  dedupeMode = "source-id",
+  normalizeLoudness = true
+}) {
   const inputUrl = String(sourceUrl || manifestUrl || "").trim();
   if (!inputUrl) {
     throw new Error("No source URL provided to yt-dlp download.");
   }
 
   const safeTitle = sanitizeFilename(title) || "rte-audio";
-  const existingTarget = path.join(outputDir, `${safeTitle}.mp3`);
-  if (!forceDownload && fs.existsSync(existingTarget)) {
+  const safeFormat = String(audioFormat || "mp3").toLowerCase();
+  const outputExt = safeFormat.startsWith(".") ? safeFormat : `.${safeFormat}`;
+  const skipByTitle = dedupeMode === "title-date";
+  const skipBySource = dedupeMode === "source-id";
+  const existingTarget = path.join(outputDir, `${safeTitle}${outputExt}`);
+  if (!forceDownload && (skipByTitle || skipBySource) && fs.existsSync(existingTarget)) {
+    ensureWorldWritablePath(outputDir, true);
+    ensureWorldWritablePath(existingTarget, false);
     return Promise.resolve({
       fileName: path.basename(existingTarget),
       existing: true,
@@ -408,9 +436,12 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
   }
   const tempDir = path.join(outputDir, `.ytmp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
   fs.mkdirSync(tempDir, { recursive: true });
+  ensureWorldWritablePath(outputDir, true);
+  ensureWorldWritablePath(tempDir, true);
   const outputTemplate = path.join(tempDir, "%(title).180B.%(ext)s");
-  const archivePath = path.join(outputDir, ".yt-dlp-archive.txt");
-  const targetAudioQuality = process.env.RTE_AUDIO_QUALITY || "128K";
+  const normalizedArchivePath = String(archivePath || "").trim() || path.join(outputDir, ".yt-dlp-archive.txt");
+  fs.mkdirSync(path.dirname(normalizedArchivePath), { recursive: true });
+  const targetAudioQuality = String(audioQuality || process.env.RTE_AUDIO_QUALITY || "128K");
 
   const runner = resolveYtDlpCommand();
   const ffmpegLocation = resolveBundledFfmpegDir();
@@ -430,7 +461,7 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
     "bestaudio/best",
     "--extract-audio",
     "--audio-format",
-    "mp3",
+    safeFormat,
     "--audio-quality",
     targetAudioQuality,
     "--ffmpeg-location",
@@ -440,8 +471,16 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
     shellSafeOutputTemplate,
     inputUrl
   ];
-  if (!forceDownload) {
-    args.splice(args.indexOf("--ffmpeg-location"), 0, "--download-archive", archivePath);
+  if (normalizeLoudness) {
+    args.splice(
+      args.indexOf("--no-part"),
+      0,
+      "--postprocessor-args",
+      "ExtractAudio+ffmpeg_o:-af loudnorm=I=-16:TP=-1.5:LRA=11"
+    );
+  }
+  if (!forceDownload && skipBySource) {
+    args.splice(args.indexOf("--ffmpeg-location"), 0, "--download-archive", normalizedArchivePath);
   }
 
   return new Promise((resolve, reject) => {
@@ -449,6 +488,22 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
       cwd: runner.cwd,
       shell: Boolean(runner.shell)
     });
+    let cancelled = false;
+    if (typeof registerCancel === "function") {
+      registerCancel(() => {
+        cancelled = true;
+        try {
+          child.kill("SIGTERM");
+        } catch {}
+        setTimeout(() => {
+          if (!child.killed) {
+            try {
+              child.kill("SIGKILL");
+            } catch {}
+          }
+        }, 2000);
+      });
+    }
 
     let log = "";
     let stdoutRemainder = "";
@@ -493,6 +548,11 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
     });
 
     child.on("close", (code) => {
+      if (cancelled) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        reject(new Error("Download cancelled."));
+        return;
+      }
       const trailing = [stdoutRemainder, stderrRemainder]
         .map((item) => item.trim())
         .filter(Boolean);
@@ -506,29 +566,35 @@ function runYtDlpDownload({ manifestUrl, sourceUrl, title, outputDir, onProgress
       const downloadedFile = pickFinalMediaFile(tempDir);
       const maxDownloadsExit = code === 101 && /Maximum number of downloads reached/i.test(log);
       if (code !== 0 && !(maxDownloadsExit && downloadedFile)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
         reject(new Error(`yt-dlp exited with code ${code}\n${log}`));
         return;
       }
 
       if (!downloadedFile) {
         const archiveSkip = /has already been recorded in the archive/i.test(log);
-        if (!forceDownload && archiveSkip) {
-          const existingFile = pickExistingMp3(outputDir, safeTitle);
+        if (!forceDownload && skipBySource && archiveSkip) {
+          const existingFile = pickExistingByExt(outputDir, safeTitle, outputExt);
           fs.rmSync(tempDir, { recursive: true, force: true });
+          ensureWorldWritablePath(outputDir, true);
+          ensureWorldWritablePath(existingFile, false);
           resolve({
-            fileName: existingFile ? path.basename(existingFile) : `${safeTitle}.mp3`,
+            fileName: existingFile ? path.basename(existingFile) : `${safeTitle}${outputExt}`,
             existing: true,
             log: log.trim() || `Skipped download; URL already in archive: ${inputUrl}`
           });
           return;
         }
+        fs.rmSync(tempDir, { recursive: true, force: true });
         reject(new Error("yt-dlp finished but no output media file was found."));
         return;
       }
 
-      const finalPath = makeUniquePath(outputDir, safeTitle, ".mp3");
+      const finalPath = makeUniquePath(outputDir, safeTitle, outputExt);
       fs.renameSync(downloadedFile, finalPath);
       fs.rmSync(tempDir, { recursive: true, force: true });
+      ensureWorldWritablePath(outputDir, true);
+      ensureWorldWritablePath(finalPath, false);
 
       resolve({
         fileName: path.basename(finalPath),
