@@ -22,7 +22,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Get-TrimmedOutput {
-  param([Parameter(Mandatory = $true)][string]$Value)
+  param([AllowNull()][string]$Value)
   return ([string]$Value).Trim()
 }
 
