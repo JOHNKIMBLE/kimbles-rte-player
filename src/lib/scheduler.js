@@ -284,6 +284,7 @@ function createSchedulerStore({
     schedule.lastDownloaded = {
       title: String(payload.title || "").trim(),
       clipId: String(payload.clipId || "").trim(),
+      episodeUrl: String(payload.episodeUrl || "").trim(),
       image: String(payload.image || "").trim(),
       outputDir,
       fileName,
@@ -367,6 +368,7 @@ function createSchedulerStore({
         setLastDownloaded(schedule, {
           title: episode.title,
           clipId: episode.clipId,
+          episodeUrl: episode.episodeUrl,
           image: episode.image || latest?.episodes?.[0]?.image || schedule.latestEpisodeImage || schedule.image || "",
           outputDir: result.outputDir,
           fileName: result.fileName
@@ -578,6 +580,7 @@ function createSchedulerStore({
         setLastDownloaded(schedule, {
           title: retry.title,
           clipId: retry.clipId,
+          episodeUrl: retry.episodeUrl,
           image: schedule.latestEpisodeImage || schedule.image || "",
           outputDir: result.outputDir,
           fileName: result.fileName
@@ -621,6 +624,7 @@ function createSchedulerStore({
         setLastDownloaded(schedule, {
           title: episode.title,
           clipId: episode.clipId,
+          episodeUrl: episode.episodeUrl,
           image: episode.image || schedule.latestEpisodeImage || schedule.image || "",
           outputDir: result.outputDir,
           fileName: result.fileName

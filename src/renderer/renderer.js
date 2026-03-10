@@ -432,7 +432,16 @@ async function getLocalCueChaptersSafe(outputDir, fileName) {
   }
 }
 
-async function playFromDownloadedFile({ outputDir, fileName, title = "", source = "Local", subtitle = "", image = "" }) {
+async function playFromDownloadedFile({
+  outputDir,
+  fileName,
+  title = "",
+  source = "Local",
+  subtitle = "",
+  image = "",
+  episodeUrl = "",
+  sourceType = ""
+}) {
   const safeOutputDir = String(outputDir || "").trim();
   const safeFileName = String(fileName || "").trim();
   if (!safeOutputDir || !safeFileName) {
@@ -440,6 +449,17 @@ async function playFromDownloadedFile({ outputDir, fileName, title = "", source 
   }
   const url = await window.rteDownloader.getLocalPlaybackUrl(safeOutputDir, safeFileName);
   const cueChapters = await getLocalCueChaptersSafe(safeOutputDir, safeFileName);
+  let tracks = [];
+  const safeEpisodeUrl = String(episodeUrl || "").trim();
+  const safeSourceType = String(sourceType || "").trim().toLowerCase();
+  if (!cueChapters.length && safeEpisodeUrl) {
+    try {
+      const payload = safeSourceType === "bbc"
+        ? await window.rteDownloader.getBbcEpisodePlaylist(safeEpisodeUrl)
+        : await window.rteDownloader.getEpisodePlaylist(safeEpisodeUrl);
+      tracks = normalizeTracks(payload?.tracks || []);
+    } catch {}
+  }
   await startGlobalNowPlaying({
     source,
     title: title || safeFileName,
@@ -447,7 +467,7 @@ async function playFromDownloadedFile({ outputDir, fileName, title = "", source 
     image,
     streamUrl: url,
     chapters: cueChapters,
-    tracks: []
+    tracks
   });
 }
 
@@ -944,6 +964,15 @@ async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl
   }
   pendingNowPlayingVisible = true;
   nowPlayingBar.classList.add("hidden");
+  const revealPendingPlayer = () => {
+    if (pendingNowPlayingVisible) {
+      nowPlayingBar.classList.remove("hidden");
+      pendingNowPlayingVisible = false;
+    }
+    if (!String(nowPlayingMeta.textContent || "").trim()) {
+      nowPlayingMeta.textContent = "Press Play to start";
+    }
+  };
 
   const hlsCtor = typeof window !== "undefined" ? window.Hls : null;
   const looksLikeHls = /(^|[/?&])[^#]*\.m3u8($|[?#&])/i.test(url) || /manifest\.m3u8/i.test(url);
@@ -958,7 +987,9 @@ async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl
     activeHls.loadSource(url);
     activeHls.attachMedia(nowPlayingAudio);
     activeHls.on(hlsCtor.Events.MANIFEST_PARSED, () => {
-      nowPlayingAudio.play().catch(() => {});
+      nowPlayingAudio.play().catch(() => {
+        revealPendingPlayer();
+      });
     });
     activeHls.on(hlsCtor.Events.ERROR, (_event, data) => {
       if (data?.fatal) {
@@ -970,13 +1001,17 @@ async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl
 
   if (!looksLikeHls) {
     nowPlayingAudio.src = url;
-    nowPlayingAudio.play().catch(() => {});
+    nowPlayingAudio.play().catch(() => {
+      revealPendingPlayer();
+    });
     return;
   }
 
   if (nowPlayingAudio.canPlayType("application/vnd.apple.mpegurl")) {
     nowPlayingAudio.src = url;
-    nowPlayingAudio.play().catch(() => {});
+    nowPlayingAudio.play().catch(() => {
+      revealPendingPlayer();
+    });
     return;
   }
 
@@ -1537,6 +1572,8 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const playFileAttr = isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
   const playTitleAttr = isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
   const playImageAttr = isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
+  const playEpisodeUrlAttr = isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
+  const playSourceTypeAttr = isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
   const statusAttr = isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
 
   return `
@@ -1566,7 +1603,7 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
       <div class="item-actions">
         <button class="secondary" ${toggleAttr}="${escapeHtml(schedule.id)}" data-enabled="${schedule.enabled ? "1" : "0"}">${schedule.enabled ? "Pause" : "Enable"}</button>
         <button class="secondary" ${runAttr}="${escapeHtml(schedule.id)}">Run Now</button>
-        ${schedule?.lastDownloaded?.outputDir && schedule?.lastDownloaded?.fileName ? `<button class="secondary" ${playOutputAttr}="${escapeHtml(schedule.lastDownloaded.outputDir)}" ${playFileAttr}="${escapeHtml(schedule.lastDownloaded.fileName)}" ${playTitleAttr}="${escapeHtml(schedule.lastDownloaded.title || schedule.title)}" ${playImageAttr}="${escapeHtml(schedule.lastDownloaded.image || schedule.latestEpisodeImage || schedule.image || "")}">Play Latest</button>` : ""}
+        ${schedule?.lastDownloaded?.outputDir && schedule?.lastDownloaded?.fileName ? `<button class="secondary" ${playOutputAttr}="${escapeHtml(schedule.lastDownloaded.outputDir)}" ${playFileAttr}="${escapeHtml(schedule.lastDownloaded.fileName)}" ${playTitleAttr}="${escapeHtml(schedule.lastDownloaded.title || schedule.title)}" ${playImageAttr}="${escapeHtml(schedule.lastDownloaded.image || schedule.latestEpisodeImage || schedule.image || "")}" ${playEpisodeUrlAttr}="${escapeHtml(schedule.lastDownloaded.episodeUrl || "")}" ${playSourceTypeAttr}="${escapeHtml(isBbc ? "bbc" : "rte")}">Play Latest</button>` : ""}
         <button class="secondary" ${removeAttr}="${escapeHtml(schedule.id)}">Remove</button>
       </div>
       <div class="item-meta episode-status" ${statusAttr}="${escapeHtml(schedule.id)}" style="display:none;"></div>
@@ -2653,7 +2690,9 @@ scheduleList.addEventListener("click", async (event) => {
         title: playLatestBtn.getAttribute("data-schedule-play-title") || "",
         source: "RTE Local",
         subtitle: "Latest scheduled download",
-        image: playLatestBtn.getAttribute("data-schedule-play-image") || ""
+        image: playLatestBtn.getAttribute("data-schedule-play-image") || "",
+        episodeUrl: playLatestBtn.getAttribute("data-schedule-play-episode-url") || "",
+        sourceType: playLatestBtn.getAttribute("data-schedule-play-source-type") || "rte"
       });
     } catch (error) {
       setSettingsStatus(`Scheduler play failed: ${error.message}`, true);
@@ -2704,7 +2743,9 @@ bbcScheduleList.addEventListener("click", async (event) => {
         title: playLatestBtn.getAttribute("data-bbc-schedule-play-title") || "",
         source: "BBC Local",
         subtitle: "Latest scheduled download",
-        image: playLatestBtn.getAttribute("data-bbc-schedule-play-image") || ""
+        image: playLatestBtn.getAttribute("data-bbc-schedule-play-image") || "",
+        episodeUrl: playLatestBtn.getAttribute("data-bbc-schedule-play-episode-url") || "",
+        sourceType: playLatestBtn.getAttribute("data-bbc-schedule-play-source-type") || "bbc"
       });
     } catch (error) {
       setSettingsStatus(`Scheduler play failed: ${error.message}`, true);
