@@ -21,6 +21,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Get-TrimmedOutput {
+  param([Parameter(Mandatory = $true)][string]$Value)
+  return ([string]$Value).Trim()
+}
+
 function Invoke-Step {
   param(
     [Parameter(Mandatory = $true)][string]$Name,
@@ -69,9 +74,9 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
 $resolvedBranch = if ([string]::IsNullOrWhiteSpace($GitBranch)) {
-  (git branch --show-current).Trim()
+  Get-TrimmedOutput -Value (git branch --show-current)
 } else {
-  $GitBranch.Trim()
+  Get-TrimmedOutput -Value $GitBranch
 }
 if (-not $resolvedBranch) {
   throw "Could not determine git branch. Pass -GitBranch explicitly."
@@ -101,7 +106,7 @@ Write-Host "  Tag release       : $TagRelease"
 if (-not $SkipGit) {
   Invoke-Step -Name "Git add" -Command "git add -A"
 
-  $hasStaged = (git diff --cached --name-only).Trim()
+  $hasStaged = Get-TrimmedOutput -Value (git diff --cached --name-only)
   if ($hasStaged) {
     Invoke-Step -Name "Git commit" -Command "git commit -m `"$CommitMessage`""
   } else {
@@ -113,7 +118,7 @@ if (-not $SkipGit) {
   Invoke-Step -Name "Git push" -Command "git push $GitRemote $resolvedBranch"
 
   if ($TagRelease -and $resolvedVersionTag) {
-    $tagExists = (git tag --list $resolvedVersionTag).Trim()
+    $tagExists = Get-TrimmedOutput -Value (git tag --list $resolvedVersionTag)
     if ($tagExists) {
       Write-Host ""
       Write-Host "==> Git tag" -ForegroundColor Cyan
