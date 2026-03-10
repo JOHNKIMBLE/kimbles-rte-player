@@ -225,6 +225,10 @@
       const payload = await API.sendJson("/api/local-playback-url", "POST", { outputDir, fileName });
       return String(payload?.url || "");
     },
+    getLocalCueChapters: async (outputDir, fileName) => {
+      const payload = await API.sendJson("/api/local-cue-chapters", "POST", { outputDir, fileName });
+      return Array.isArray(payload?.chapters) ? payload.chapters : [];
+    },
 
     listSchedules: () => API.getJson("/api/scheduler"),
     addSchedule: (programUrl, options = {}) =>

@@ -163,13 +163,19 @@ async function extractRteInfo(pageUrl) {
   }
 
   const playlist = await getPlaylist(clipId);
+  const image =
+    findFirstMatch(html, [
+      /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i,
+      /<meta\s+name=["']twitter:image(?::src)?["']\s+content=["']([^"']+)["']/i
+    ]) || "";
 
   return {
     pageUrl,
     title,
     clipId: String(clipId),
     playlistApiUrl: playlist.apiUrl,
-    m3u8Url: playlist.m3u8Url
+    m3u8Url: playlist.m3u8Url,
+    image: image ? toAbsoluteRteUrl(image) : ""
   };
 }
 

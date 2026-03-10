@@ -284,6 +284,7 @@ function createSchedulerStore({
     schedule.lastDownloaded = {
       title: String(payload.title || "").trim(),
       clipId: String(payload.clipId || "").trim(),
+      image: String(payload.image || "").trim(),
       outputDir,
       fileName,
       filePath: path.join(outputDir, fileName),
@@ -328,6 +329,87 @@ function createSchedulerStore({
     schedule.retryQueue = schedule.retryQueue.filter((item) => item.clipId !== String(clipId || "").trim());
   }
 
+  async function runInitialBackfill(schedule, summary, latest, episodes) {
+    const rows = Array.isArray(episodes) ? episodes.filter((episode) => episode?.clipId) : [];
+    if (!rows.length) {
+      return;
+    }
+    const known = new Set((schedule.downloadedClipIds || []).map((id) => String(id)));
+    let completed = 0;
+    let failed = 0;
+    const downloaded = [];
+    schedule.backfillInProgress = true;
+    schedule.backfillTotal = rows.length;
+    schedule.backfillCompleted = 0;
+    schedule.backfillFailed = 0;
+    schedule.lastStatus = `Backfill queued 0/${rows.length}`;
+    writeStore();
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const episode = rows[index];
+      const current = index + 1;
+      schedule.lastStatus = `Backfill ${current}/${rows.length}: Downloading ${episode.title || episode.clipId}`;
+      writeStore();
+      try {
+        const result = await runEpisodeDownload({
+          ...episode,
+          title: String(episode.fullTitle || episode.title || ""),
+          programTitle: summary.title
+        });
+        completed += 1;
+        known.add(String(episode.clipId));
+        downloaded.push({
+          clipId: episode.clipId,
+          title: episode.title,
+          fileName: result.fileName,
+          outputDir: result.outputDir
+        });
+        setLastDownloaded(schedule, {
+          title: episode.title,
+          clipId: episode.clipId,
+          image: episode.image || latest?.episodes?.[0]?.image || schedule.latestEpisodeImage || schedule.image || "",
+          outputDir: result.outputDir,
+          fileName: result.fileName
+        });
+        removeRetry(schedule, episode.clipId);
+        schedule.backfillCompleted = completed;
+        schedule.lastRunAt = new Date().toISOString();
+        schedule.lastStatus = `Backfill ${completed}/${rows.length}: Downloaded ${result.fileName}`;
+      } catch (error) {
+        failed += 1;
+        const meta = upsertRetry(schedule, episode, error);
+        if (meta?.dropped) {
+          schedule.lastStatus = `Backfill ${current}/${rows.length}: Failed (max retries) - ${episode.title || episode.clipId}`;
+        } else {
+          schedule.lastStatus = `Backfill ${current}/${rows.length}: Failed (queued retry) - ${episode.title || episode.clipId}`;
+        }
+        schedule.backfillFailed = failed;
+      }
+      writeStore();
+    }
+
+    schedule.downloadedClipIds = Array.from(known).slice(-400);
+    schedule.backfillInProgress = false;
+    schedule.backfillCompleted = completed;
+    schedule.backfillFailed = failed;
+    const retryPending = Array.isArray(schedule.retryQueue) ? schedule.retryQueue.length : 0;
+    if (completed > 0) {
+      schedule.lastStatus = `Created and backfilled ${completed}/${rows.length} episode(s)`;
+    } else {
+      schedule.lastStatus = `Backfill finished with no completed downloads (0/${rows.length})`;
+    }
+    if (failed > 0) {
+      schedule.lastStatus += ` • ${failed} failed`;
+    }
+    if (retryPending > 0) {
+      schedule.lastStatus += ` • ${retryPending} retry pending`;
+    }
+    writeStore();
+    if (downloaded.length > 0 && typeof onScheduleRunComplete === "function") {
+      await onScheduleRunComplete(schedule, downloaded);
+    }
+  }
+
   async function add(programUrl, options = {}) {
     const existing = schedules.find((item) => item.programUrl === programUrl);
     if (existing) {
@@ -338,29 +420,7 @@ function createSchedulerStore({
     const latest = await getProgramEpisodes(programUrl, 1);
     const backfillCount = Math.max(0, Math.floor(Number(options.backfillCount || 0)));
     const known = new Set();
-    const downloadedNow = [];
-
-    if (backfillCount > 0) {
-      const toBackfill = latest.episodes
-        .filter((episode) => episode.clipId)
-        .slice(0, backfillCount)
-        .reverse();
-
-      for (const episode of toBackfill) {
-        const result = await runEpisodeDownload({
-          ...episode,
-          title: String(episode.fullTitle || episode.title || ""),
-          programTitle: summary.title
-        });
-        downloadedNow.push({
-          clipId: episode.clipId,
-          title: episode.title,
-          fileName: result.fileName,
-          outputDir: result.outputDir
-        });
-        known.add(String(episode.clipId));
-      }
-    } else if (latest.episodes[0]?.clipId) {
+    if (latest.episodes[0]?.clipId) {
       known.add(String(latest.episodes[0].clipId));
     }
 
@@ -383,25 +443,35 @@ function createSchedulerStore({
       downloadedClipIds: Array.from(known),
       retryQueue: [],
       initialBackfillCount: backfillCount,
+      backfillInProgress: false,
+      backfillTotal: 0,
+      backfillCompleted: 0,
+      backfillFailed: 0,
       lastCheckedAt: null,
-      lastRunAt: downloadedNow.length ? new Date().toISOString() : null,
-      lastStatus: downloadedNow.length
-        ? `Created and backfilled ${downloadedNow.length} episode(s)`
+      lastRunAt: null,
+      lastStatus: backfillCount > 0
+        ? `Created (backfill queued: 0/${backfillCount})`
         : "Created (new episodes only)"
     };
     setLatestEpisodeFields(schedule, latest);
-    if (downloadedNow.length) {
-      const latestDownload = downloadedNow[downloadedNow.length - 1];
-      setLastDownloaded(schedule, {
-        title: latestDownload.title,
-        clipId: latestDownload.clipId,
-        outputDir: latestDownload.outputDir,
-        fileName: latestDownload.fileName
-      });
-    }
 
     schedules.push(schedule);
     writeStore();
+
+    if (backfillCount > 0) {
+      const toBackfill = latest.episodes
+        .filter((episode) => episode.clipId)
+        .slice(0, backfillCount)
+        .reverse();
+      Promise.resolve()
+        .then(() => runInitialBackfill(schedule, summary, latest, toBackfill))
+        .catch((error) => {
+          schedule.backfillInProgress = false;
+          schedule.lastStatus = `Backfill error: ${error.message}`;
+          writeStore();
+        });
+    }
+
     return schedule;
   }
 
@@ -432,6 +502,13 @@ function createSchedulerStore({
   }
 
   async function runSchedule(schedule, { force = false } = {}) {
+    if (schedule.backfillInProgress) {
+      return {
+        scheduleId: schedule.id,
+        status: schedule.lastStatus || "Backfill in progress",
+        downloaded: []
+      };
+    }
     if (!schedule.enabled && !force) {
       return { scheduleId: schedule.id, status: "Skipped (paused)", downloaded: [] };
     }
@@ -501,6 +578,7 @@ function createSchedulerStore({
         setLastDownloaded(schedule, {
           title: retry.title,
           clipId: retry.clipId,
+          image: schedule.latestEpisodeImage || schedule.image || "",
           outputDir: result.outputDir,
           fileName: result.fileName
         });
@@ -543,6 +621,7 @@ function createSchedulerStore({
         setLastDownloaded(schedule, {
           title: episode.title,
           clipId: episode.clipId,
+          image: episode.image || schedule.latestEpisodeImage || schedule.image || "",
           outputDir: result.outputDir,
           fileName: result.fileName
         });

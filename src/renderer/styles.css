@@ -472,6 +472,17 @@ button:disabled {
   margin-top: 0.35rem;
 }
 
+.now-playing-chapter-controls {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.now-playing-chapter-controls button {
+  padding: 0.35rem 0.55rem;
+  min-width: 92px;
+}
+
 .now-playing-close {
   min-width: 40px;
   padding: 0.5rem 0.6rem;
@@ -505,16 +516,16 @@ button:disabled {
 
 .scheduler-head {
   display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  margin-bottom: 0.4rem;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-bottom: 0.65rem;
 }
 
 .scheduler-thumb {
-  width: 76px;
-  height: 52px;
+  width: 88px;
+  height: 62px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: #697685;
   flex: 0 0 auto;
@@ -522,6 +533,77 @@ button:disabled {
 
 .scheduler-thumb-placeholder {
   background: linear-gradient(135deg, #4f5c6b, #3a4654);
+}
+
+.scheduler-card {
+  background: linear-gradient(180deg, rgba(12, 19, 32, 0.75), rgba(15, 23, 38, 0.92));
+}
+
+.scheduler-head-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.scheduler-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.scheduler-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.52rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.76rem;
+  color: var(--muted);
+  background: rgba(26, 40, 62, 0.62);
+}
+
+.scheduler-badge-status {
+  color: var(--ink);
+  background: rgba(39, 56, 82, 0.7);
+}
+
+.scheduler-badge-progress {
+  color: #d2f6ef;
+  border-color: rgba(26, 199, 203, 0.42);
+  background: rgba(26, 199, 203, 0.14);
+}
+
+.scheduler-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.48rem 0.9rem;
+  padding: 0.15rem 0 0.35rem;
+}
+
+.scheduler-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.14rem;
+}
+
+.scheduler-k {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scheduler-v {
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.32;
+}
+
+.scheduler-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.83rem;
+  color: var(--muted);
+  word-break: break-all;
 }
 
 .playlist-grid {
