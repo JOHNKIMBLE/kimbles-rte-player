@@ -275,6 +275,22 @@ function createSchedulerStore({
       .filter((item) => item.clipId);
   }
 
+  function setLastDownloaded(schedule, payload = {}) {
+    const outputDir = String(payload.outputDir || "").trim();
+    const fileName = String(payload.fileName || "").trim();
+    if (!outputDir || !fileName) {
+      return;
+    }
+    schedule.lastDownloaded = {
+      title: String(payload.title || "").trim(),
+      clipId: String(payload.clipId || "").trim(),
+      outputDir,
+      fileName,
+      filePath: path.join(outputDir, fileName),
+      at: new Date().toISOString()
+    };
+  }
+
   function upsertRetry(schedule, episode, error) {
     normalizeRetryQueue(schedule);
     const clipId = String(episode?.clipId || "").trim();
@@ -339,7 +355,8 @@ function createSchedulerStore({
         downloadedNow.push({
           clipId: episode.clipId,
           title: episode.title,
-          fileName: result.fileName
+          fileName: result.fileName,
+          outputDir: result.outputDir
         });
         known.add(String(episode.clipId));
       }
@@ -362,6 +379,7 @@ function createSchedulerStore({
       latestEpisodeTitle: "",
       latestEpisodePublishedTime: "",
       latestEpisodeImage: "",
+      lastDownloaded: null,
       downloadedClipIds: Array.from(known),
       retryQueue: [],
       initialBackfillCount: backfillCount,
@@ -372,6 +390,15 @@ function createSchedulerStore({
         : "Created (new episodes only)"
     };
     setLatestEpisodeFields(schedule, latest);
+    if (downloadedNow.length) {
+      const latestDownload = downloadedNow[downloadedNow.length - 1];
+      setLastDownloaded(schedule, {
+        title: latestDownload.title,
+        clipId: latestDownload.clipId,
+        outputDir: latestDownload.outputDir,
+        fileName: latestDownload.fileName
+      });
+    }
 
     schedules.push(schedule);
     writeStore();
@@ -468,6 +495,13 @@ function createSchedulerStore({
         downloaded.push({
           clipId: retry.clipId,
           title: retry.title,
+          fileName: result.fileName,
+          outputDir: result.outputDir
+        });
+        setLastDownloaded(schedule, {
+          title: retry.title,
+          clipId: retry.clipId,
+          outputDir: result.outputDir,
           fileName: result.fileName
         });
         known.add(String(retry.clipId));
@@ -503,6 +537,13 @@ function createSchedulerStore({
         downloaded.push({
           clipId: episode.clipId,
           title: episode.title,
+          fileName: result.fileName,
+          outputDir: result.outputDir
+        });
+        setLastDownloaded(schedule, {
+          title: episode.title,
+          clipId: episode.clipId,
+          outputDir: result.outputDir,
           fileName: result.fileName
         });
         known.add(String(episode.clipId));

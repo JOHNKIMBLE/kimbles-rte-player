@@ -226,6 +226,36 @@ function setSettingsStatus(text, isError = false) {
   settingsStatus.textContent = text;
 }
 
+function formatLocalDateTime(input) {
+  const text = String(input || "").trim();
+  if (!text) {
+    return "";
+  }
+  const dt = new Date(text);
+  if (!Number.isFinite(dt.getTime())) {
+    return text;
+  }
+  return dt.toLocaleString();
+}
+
+async function playFromDownloadedFile({ outputDir, fileName, title = "", source = "Local", subtitle = "" }) {
+  const safeOutputDir = String(outputDir || "").trim();
+  const safeFileName = String(fileName || "").trim();
+  if (!safeOutputDir || !safeFileName) {
+    throw new Error("No downloaded file path available.");
+  }
+  const url = await window.rteDownloader.getLocalPlaybackUrl(safeOutputDir, safeFileName);
+  await startGlobalNowPlaying({
+    source,
+    title: title || safeFileName,
+    subtitle,
+    image: "",
+    streamUrl: url,
+    chapters: [],
+    tracks: []
+  });
+}
+
 function renderQueueItems(container, rows, allowCancel = false) {
   if (!container) {
     return;
@@ -240,7 +270,12 @@ function renderQueueItems(container, rows, allowCancel = false) {
       <div class="item">
         <div class="item-title">${escapeHtml(String(row.label || "Download"))}</div>
         <div class="item-meta">${escapeHtml(String(row.sourceType || "").toUpperCase() || "MEDIA")} • ${escapeHtml(String(row.status || ""))}</div>
-        ${allowCancel ? `<div class="item-actions"><button class="secondary" data-queue-cancel="${escapeHtml(String(row.id || ""))}">Cancel</button></div>` : ""}
+        ${row.endedAt ? `<div class="item-meta">Finished: ${escapeHtml(formatLocalDateTime(row.endedAt))}</div>` : ""}
+        ${row.filePath ? `<div class="item-meta">Path: ${escapeHtml(row.filePath)}</div>` : ""}
+        <div class="item-actions">
+          ${allowCancel ? `<button class="secondary" data-queue-cancel="${escapeHtml(String(row.id || ""))}">Cancel</button>` : ""}
+          ${row.outputDir && row.fileName ? `<button class="secondary" data-queue-play="${escapeHtml(String(row.outputDir || ""))}" data-queue-file="${escapeHtml(String(row.fileName || ""))}" data-queue-title="${escapeHtml(String(row.label || row.fileName || "Download"))}" data-queue-source="${escapeHtml(String(row.sourceType || "local").toUpperCase())}">Play</button>` : ""}
+        </div>
       </div>
     `)
     .join("");
@@ -1221,12 +1256,14 @@ async function refreshSchedules() {
             ${s.runSchedule ? `Runs: ${escapeHtml(addLocalTimeHint(s.runSchedule))}<br>` : ""}
             Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
             Retry queue: ${escapeHtml(String((Array.isArray(s.retryQueue) ? s.retryQueue.length : 0)))} pending<br>
-            Backfill setting: ${s.initialBackfillCount ? `latest ${escapeHtml(s.initialBackfillCount)} on create` : "new episodes only"}<br>
-            Last checked: ${escapeHtml(s.lastCheckedAt || "never")} - Last run: ${escapeHtml(s.lastRunAt || "never")}
+            ${s.lastDownloaded?.filePath ? `Latest file: ${escapeHtml(s.lastDownloaded.filePath)}<br>` : ""}
+            ${s.lastDownloaded?.at ? `Latest file time: ${escapeHtml(formatLocalDateTime(s.lastDownloaded.at))}<br>` : ""}
+            Last checked: ${escapeHtml(formatLocalDateTime(s.lastCheckedAt || "never"))} - Last run: ${escapeHtml(formatLocalDateTime(s.lastRunAt || "never"))}
           </div>
           <div class="item-actions">
             <button class="secondary" data-schedule-toggle="${escapeHtml(s.id)}" data-enabled="${s.enabled ? "1" : "0"}">${s.enabled ? "Pause" : "Enable"}</button>
             <button class="secondary" data-schedule-run="${escapeHtml(s.id)}">Run Now</button>
+            ${s.lastDownloaded?.outputDir && s.lastDownloaded?.fileName ? `<button class="secondary" data-schedule-play-output="${escapeHtml(s.lastDownloaded.outputDir)}" data-schedule-play-file="${escapeHtml(s.lastDownloaded.fileName)}" data-schedule-play-title="${escapeHtml(s.lastDownloaded.title || s.title)}">Play Latest</button>` : ""}
             <button class="secondary" data-schedule-remove="${escapeHtml(s.id)}">Remove</button>
           </div>
           <div class="item-meta episode-status" data-schedule-status="${escapeHtml(s.id)}" style="display:none;"></div>
@@ -1257,12 +1294,14 @@ async function refreshBbcSchedules() {
             ${s.nextBroadcastAt ? `Next show: ${escapeHtml(s.nextBroadcastAt)}${s.nextBroadcastTitle ? ` - ${escapeHtml(s.nextBroadcastTitle)}` : ""}<br>` : ""}
             Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
             Retry queue: ${escapeHtml(String((Array.isArray(s.retryQueue) ? s.retryQueue.length : 0)))} pending<br>
-            Backfill setting: ${s.initialBackfillCount ? `latest ${escapeHtml(s.initialBackfillCount)} on create` : "new episodes only"}<br>
-            Last checked: ${escapeHtml(s.lastCheckedAt || "never")} - Last run: ${escapeHtml(s.lastRunAt || "never")}
+            ${s.lastDownloaded?.filePath ? `Latest file: ${escapeHtml(s.lastDownloaded.filePath)}<br>` : ""}
+            ${s.lastDownloaded?.at ? `Latest file time: ${escapeHtml(formatLocalDateTime(s.lastDownloaded.at))}<br>` : ""}
+            Last checked: ${escapeHtml(formatLocalDateTime(s.lastCheckedAt || "never"))} - Last run: ${escapeHtml(formatLocalDateTime(s.lastRunAt || "never"))}
           </div>
           <div class="item-actions">
             <button class="secondary" data-bbc-schedule-toggle="${escapeHtml(s.id)}" data-enabled="${s.enabled ? "1" : "0"}">${s.enabled ? "Pause" : "Enable"}</button>
             <button class="secondary" data-bbc-schedule-run="${escapeHtml(s.id)}">Run Now</button>
+            ${s.lastDownloaded?.outputDir && s.lastDownloaded?.fileName ? `<button class="secondary" data-bbc-schedule-play-output="${escapeHtml(s.lastDownloaded.outputDir)}" data-bbc-schedule-play-file="${escapeHtml(s.lastDownloaded.fileName)}" data-bbc-schedule-play-title="${escapeHtml(s.lastDownloaded.title || s.title)}">Play Latest</button>` : ""}
             <button class="secondary" data-bbc-schedule-remove="${escapeHtml(s.id)}">Remove</button>
           </div>
           <div class="item-meta episode-status" data-bbc-schedule-status="${escapeHtml(s.id)}" style="display:none;"></div>
@@ -2288,6 +2327,21 @@ nowPlayingAudio.addEventListener("ended", () => {
 });
 
 scheduleList.addEventListener("click", async (event) => {
+  const playLatestBtn = event.target.closest("button[data-schedule-play-output]");
+  if (playLatestBtn) {
+    try {
+      await playFromDownloadedFile({
+        outputDir: playLatestBtn.getAttribute("data-schedule-play-output"),
+        fileName: playLatestBtn.getAttribute("data-schedule-play-file"),
+        title: playLatestBtn.getAttribute("data-schedule-play-title") || "",
+        source: "RTE Local",
+        subtitle: "Latest scheduled download"
+      });
+    } catch (error) {
+      setSettingsStatus(`Scheduler play failed: ${error.message}`, true);
+    }
+    return;
+  }
   const toggleBtn = event.target.closest("button[data-schedule-toggle]");
   if (toggleBtn) {
     const id = toggleBtn.getAttribute("data-schedule-toggle");
@@ -2323,6 +2377,21 @@ scheduleList.addEventListener("click", async (event) => {
 });
 
 bbcScheduleList.addEventListener("click", async (event) => {
+  const playLatestBtn = event.target.closest("button[data-bbc-schedule-play-output]");
+  if (playLatestBtn) {
+    try {
+      await playFromDownloadedFile({
+        outputDir: playLatestBtn.getAttribute("data-bbc-schedule-play-output"),
+        fileName: playLatestBtn.getAttribute("data-bbc-schedule-play-file"),
+        title: playLatestBtn.getAttribute("data-bbc-schedule-play-title") || "",
+        source: "BBC Local",
+        subtitle: "Latest scheduled download"
+      });
+    } catch (error) {
+      setSettingsStatus(`Scheduler play failed: ${error.message}`, true);
+    }
+    return;
+  }
   const toggleBtn = event.target.closest("button[data-bbc-schedule-toggle]");
   if (toggleBtn) {
     const id = toggleBtn.getAttribute("data-bbc-schedule-toggle");
@@ -2386,6 +2455,21 @@ if (queueClearBtn) {
 
 if (downloadQueueActive) {
   downloadQueueActive.addEventListener("click", async (event) => {
+    const playBtn = event.target.closest("button[data-queue-play]");
+    if (playBtn) {
+      try {
+        await playFromDownloadedFile({
+          outputDir: playBtn.getAttribute("data-queue-play"),
+          fileName: playBtn.getAttribute("data-queue-file"),
+          title: playBtn.getAttribute("data-queue-title") || "",
+          source: playBtn.getAttribute("data-queue-source") || "Local",
+          subtitle: "From Queue"
+        });
+      } catch (error) {
+        setSettingsStatus(`Queue play failed: ${error.message}`, true);
+      }
+      return;
+    }
     const cancelBtn = event.target.closest("button[data-queue-cancel]");
     if (!cancelBtn) {
       return;
@@ -2403,6 +2487,21 @@ if (downloadQueueActive) {
 
 if (downloadQueuePending) {
   downloadQueuePending.addEventListener("click", async (event) => {
+    const playBtn = event.target.closest("button[data-queue-play]");
+    if (playBtn) {
+      try {
+        await playFromDownloadedFile({
+          outputDir: playBtn.getAttribute("data-queue-play"),
+          fileName: playBtn.getAttribute("data-queue-file"),
+          title: playBtn.getAttribute("data-queue-title") || "",
+          source: playBtn.getAttribute("data-queue-source") || "Local",
+          subtitle: "From Queue"
+        });
+      } catch (error) {
+        setSettingsStatus(`Queue play failed: ${error.message}`, true);
+      }
+      return;
+    }
     const cancelBtn = event.target.closest("button[data-queue-cancel]");
     if (!cancelBtn) {
       return;
@@ -2415,6 +2514,26 @@ if (downloadQueuePending) {
       await window.rteDownloader.cancelDownloadQueueTask(taskId);
       await refreshDownloadQueueSnapshot();
     } catch {}
+  });
+}
+
+if (downloadQueueRecent) {
+  downloadQueueRecent.addEventListener("click", async (event) => {
+    const playBtn = event.target.closest("button[data-queue-play]");
+    if (!playBtn) {
+      return;
+    }
+    try {
+      await playFromDownloadedFile({
+        outputDir: playBtn.getAttribute("data-queue-play"),
+        fileName: playBtn.getAttribute("data-queue-file"),
+        title: playBtn.getAttribute("data-queue-title") || "",
+        source: playBtn.getAttribute("data-queue-source") || "Local",
+        subtitle: "From Queue"
+      });
+    } catch (error) {
+      setSettingsStatus(`Queue play failed: ${error.message}`, true);
+    }
   });
 }
 

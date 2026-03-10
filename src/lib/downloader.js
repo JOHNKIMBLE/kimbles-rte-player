@@ -82,6 +82,14 @@ function pickExistingByExt(outputDir, preferredBaseName, ext) {
   return files[0]?.filePath || null;
 }
 
+function pickExistingExact(outputDir, preferredBaseName, ext) {
+  const candidate = path.join(outputDir, `${preferredBaseName}${ext}`);
+  if (fs.existsSync(candidate)) {
+    return candidate;
+  }
+  return null;
+}
+
 function makeUniquePath(baseDir, baseName, ext) {
   let index = 0;
   while (true) {
@@ -574,7 +582,12 @@ function runYtDlpDownload({
       if (!downloadedFile) {
         const archiveSkip = /has already been recorded in the archive/i.test(log);
         if (!forceDownload && skipBySource && archiveSkip) {
-          const existingFile = pickExistingByExt(outputDir, safeTitle, outputExt);
+          const existingFile = pickExistingExact(outputDir, safeTitle, outputExt);
+          if (!existingFile) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            reject(new Error("Archive says already downloaded, but matching file was not found in this target folder. Click Download again to force."));
+            return;
+          }
           fs.rmSync(tempDir, { recursive: true, force: true });
           ensureWorldWritablePath(outputDir, true);
           ensureWorldWritablePath(existingFile, false);

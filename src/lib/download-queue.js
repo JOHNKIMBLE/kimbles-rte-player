@@ -1,3 +1,5 @@
+const path = require("node:path");
+
 function createDownloadQueue(getConcurrency) {
   const pending = [];
   const active = new Map();
@@ -22,7 +24,11 @@ function createDownloadQueue(getConcurrency) {
       createdAt: task.createdAt,
       startedAt: task.startedAt || null,
       endedAt: task.endedAt || null,
-      status: task.status
+      status: task.status,
+      outputDir: String(task.outputDir || ""),
+      fileName: String(task.fileName || ""),
+      filePath: task.outputDir && task.fileName ? `${task.outputDir}${path.sep}${task.fileName}` : "",
+      message: String(task.message || "")
     };
   }
 
@@ -102,10 +108,16 @@ function createDownloadQueue(getConcurrency) {
         run: runFn,
         resolve: (value) => {
           task.status = task.cancelRequested ? "cancelled" : "done";
+          if (value && typeof value === "object") {
+            task.outputDir = String(value.outputDir || "");
+            task.fileName = String(value.fileName || "");
+            task.message = String(value.log || "");
+          }
           resolve(value);
         },
         reject: (error) => {
           task.status = task.cancelRequested ? "cancelled" : "failed";
+          task.message = String(error?.message || error || "");
           reject(error);
         },
         cancelRequested: false,
