@@ -336,6 +336,9 @@ async function maybeApplyId3({
   if (!settings.id3Tagging) {
     return null;
   }
+  if (downloadResult?.existing) {
+    return null;
+  }
   const outputDir = String(downloadResult?.outputDir || "");
   const fileName = String(downloadResult?.fileName || "");
   if (!outputDir || !fileName) {
