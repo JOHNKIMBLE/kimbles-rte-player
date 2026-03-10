@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const { Readable } = require("node:stream");
 const express = require("express");
 const {
   LIVE_STATIONS,
@@ -416,8 +417,45 @@ async function resolveRteEpisodeStream(clipId) {
   const playlist = await getPlaylist(id);
   return {
     clipId: id,
-    streamUrl: playlist.m3u8Url
+    streamUrl: `/api/rte/stream-proxy?url=${encodeURIComponent(playlist.m3u8Url)}`
   };
+}
+
+function isAllowedRteProxyUrl(inputUrl) {
+  try {
+    const parsed = new URL(String(inputUrl || ""));
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return false;
+    }
+    const host = String(parsed.hostname || "").toLowerCase();
+    return (
+      host.endsWith("rasset.ie")
+      || host.endsWith("rte.ie")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rewriteHlsManifest(text, baseUrl) {
+  const base = new URL(baseUrl);
+  const wrapUrl = (value) => `/api/rte/stream-proxy?url=${encodeURIComponent(value)}`;
+  const lines = String(text || "").split(/\r?\n/);
+  const rewritten = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return line;
+    }
+    if (trimmed.startsWith("#")) {
+      return line.replace(/URI="([^"]+)"/gi, (_m, uri) => {
+        const absolute = new URL(uri, base).toString();
+        return `URI="${wrapUrl(absolute)}"`;
+      });
+    }
+    const absolute = new URL(trimmed, base).toString();
+    return wrapUrl(absolute);
+  });
+  return rewritten.join("\n");
 }
 
 async function resolveBbcEpisodeStream(episodeUrl) {
@@ -668,6 +706,61 @@ app.get("/api/rte/episode/stream", async (req, res) => {
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/rte/stream-proxy", async (req, res) => {
+  try {
+    const targetUrl = String(req.query.url || "").trim();
+    if (!targetUrl) {
+      throw new Error("url is required.");
+    }
+    if (!isAllowedRteProxyUrl(targetUrl)) {
+      throw new Error("Proxy target host is not allowed.");
+    }
+
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    };
+    const reqRange = String(req.headers.range || "").trim();
+    if (reqRange) {
+      headers.Range = reqRange;
+    }
+
+    const upstream = await fetch(targetUrl, { headers });
+    if (!upstream.ok && upstream.status !== 206) {
+      const bodyText = await upstream.text().catch(() => "");
+      res.status(upstream.status).send(bodyText || `Upstream error: ${upstream.status}`);
+      return;
+    }
+
+    const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
+    const isManifest = contentType.includes("mpegurl") || /\.m3u8($|[?#])/i.test(targetUrl);
+    if (isManifest) {
+      const text = await upstream.text();
+      const rewritten = rewriteHlsManifest(text, targetUrl);
+      res.status(upstream.status);
+      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(rewritten);
+      return;
+    }
+
+    res.status(upstream.status);
+    const passHeaders = ["content-type", "content-length", "accept-ranges", "content-range", "cache-control"];
+    for (const key of passHeaders) {
+      const value = upstream.headers.get(key);
+      if (value) {
+        res.setHeader(key, value);
+      }
+    }
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (error) {
+    res.status(400).json({ error: String(error?.message || error || "Stream proxy failed") });
   }
 });
 
