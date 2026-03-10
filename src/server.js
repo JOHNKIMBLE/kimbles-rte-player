@@ -28,6 +28,7 @@ const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format"
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
 const { writeProgramFeedFiles } = require("./lib/feeds");
+const { readCueChaptersForAudio } = require("./lib/cue-reader");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -346,7 +347,23 @@ async function maybeGenerateCue({
   }
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, progressToken, forceDownload = false }) {
+async function resolveBbcArtwork(episodeUrl) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) {
+    return "";
+  }
+  try {
+    const json = await runYtDlpJson({
+      url,
+      args: ["-J", "--no-playlist", "--playlist-items", "1"]
+    });
+    return String(json?.thumbnail || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
   const playlist = await getPlaylist(String(clipId));
   const resolvedTitle = title || `rte-episode-${clipId}`;
   const download = await downloadFromManifest({
@@ -374,7 +391,7 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     programTitle,
     publishedTime: publishedTime || resolvedTitle,
     sourceUrl: episodeUrl,
-    artworkUrl: "",
+    artworkUrl: String(artworkUrl || "").trim(),
     episodeUrl,
     clipId: String(clipId || "")
   });
@@ -499,7 +516,8 @@ const scheduler = createSchedulerStore({
       title: episode.title,
       programTitle: episode.programTitle,
       episodeUrl: episode.episodeUrl,
-      publishedTime: episode.publishedTime
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || ""
     })
 });
 
@@ -529,7 +547,7 @@ const bbcScheduler = createSchedulerStore({
         programTitle: String(episode.programTitle || "BBC"),
         publishedTime: String(episode.publishedTime || episode.title || ""),
         sourceUrl: String(episode.episodeUrl || ""),
-        artworkUrl: "",
+        artworkUrl: String(episode.image || ""),
         episodeUrl: String(episode.episodeUrl || ""),
         clipId: String(episode.clipId || "")
       });
@@ -727,7 +745,7 @@ app.post("/api/download/url", async (req, res) => {
       programTitle: inferProgramNameFromUrl(pageUrl),
       publishedTime: info.title,
       sourceUrl: pageUrl,
-      artworkUrl: "",
+      artworkUrl: String(info.image || "").trim(),
       episodeUrl: pageUrl,
       clipId: String(info.clipId || "")
     });
@@ -745,6 +763,7 @@ app.post("/api/download/bbc/url", async (req, res) => {
     const providedTitle = String(req.body.title || "").trim();
     const providedProgramTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
+    const providedImage = String(req.body.image || "").trim();
     const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
     const canonicalUrl = toCanonicalBbcEpisodeUrl(pageUrl);
     const attemptUrls = Array.from(new Set([canonicalUrl, String(pageUrl).trim()].filter(Boolean)));
@@ -780,6 +799,7 @@ app.post("/api/download/bbc/url", async (req, res) => {
     if (!download) {
       throw lastError || new Error("BBC download failed.");
     }
+    const resolvedArtwork = providedImage || await resolveBbcArtwork(usedUrl);
     const cue = await maybeGenerateCue({
       downloadResult: download,
       sourceType: "bbc",
@@ -794,7 +814,7 @@ app.post("/api/download/bbc/url", async (req, res) => {
       programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
       publishedTime: publishedTime || inferredTitle,
       sourceUrl: usedUrl,
-      artworkUrl: "",
+      artworkUrl: resolvedArtwork,
       episodeUrl: usedUrl
     });
     res.json({ pageUrl, sourceUrlUsed: usedUrl, title: inferredTitle, tags, cue, ...download });
@@ -810,9 +830,10 @@ app.post("/api/download/episode", async (req, res) => {
     const programTitle = String(req.body.programTitle || "");
     const publishedTime = String(req.body.publishedTime || "");
     const episodeUrl = String(req.body.episodeUrl || "");
+    const artworkUrl = String(req.body.artworkUrl || "");
     const progressToken = String(req.body.progressToken || "");
     const forceDownload = Boolean(req.body.forceDownload);
-    const data = await downloadEpisodeByClip({ clipId, title, programTitle, episodeUrl, publishedTime, progressToken, forceDownload });
+    const data = await downloadEpisodeByClip({ clipId, title, programTitle, episodeUrl, publishedTime, artworkUrl, progressToken, forceDownload });
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -869,6 +890,25 @@ app.get("/api/local-audio/:token", (req, res) => {
     return;
   }
   res.sendFile(fullPath);
+});
+
+app.post("/api/local-cue-chapters", (req, res) => {
+  try {
+    const outputDir = path.resolve(String(req.body.outputDir || "").trim());
+    const fileName = String(req.body.fileName || "").trim();
+    if (!outputDir || !fileName) {
+      throw new Error("outputDir and fileName are required.");
+    }
+    const fullPath = path.resolve(outputDir, fileName);
+    const baseDir = path.resolve(readSettings().downloadDir || DOWNLOAD_DIR);
+    if (!isPathInside(baseDir, fullPath)) {
+      throw new Error("Requested file is outside download directory.");
+    }
+    const chapters = readCueChaptersForAudio(outputDir, fileName);
+    res.json({ chapters });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.get("/api/download-queue/stats", (_req, res) => {

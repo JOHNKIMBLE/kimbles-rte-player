@@ -28,6 +28,7 @@ const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format"
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
 const { writeProgramFeedFiles } = require("./lib/feeds");
+const { readCueChaptersForAudio } = require("./lib/cue-reader");
 
 let scheduler;
 let bbcScheduler;
@@ -399,7 +400,23 @@ async function maybeGenerateCue({
   }
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, onProgress, forceDownload = false }) {
+async function resolveBbcArtwork(episodeUrl) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) {
+    return "";
+  }
+  try {
+    const json = await runYtDlpJson({
+      url,
+      args: ["-J", "--no-playlist", "--playlist-items", "1"]
+    });
+    return String(json?.thumbnail || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
   if (!clipId) {
     throw new Error("clipId is required.");
   }
@@ -428,7 +445,7 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     programTitle,
     publishedTime: publishedTime || resolvedTitle,
     sourceUrl: episodeUrl,
-    artworkUrl: "",
+    artworkUrl: String(artworkUrl || "").trim(),
     episodeUrl,
     clipId: String(clipId || "")
   });
@@ -452,7 +469,7 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
   };
 }
 
-async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTime, onProgress, forceDownload = false }) {
+async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) {
     throw new Error("episodeUrl is required.");
@@ -470,6 +487,7 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceType: "bbc",
     forceDownload
   });
+  const resolvedArtwork = String(artworkUrl || "").trim() || await resolveBbcArtwork(sourceUrl);
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "bbc",
@@ -477,7 +495,7 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTi
     programTitle: programTitle || "BBC",
     publishedTime: publishedTime || resolvedTitle,
     sourceUrl,
-    artworkUrl: "",
+    artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl
   });
   const cue = await maybeGenerateCue({
@@ -578,7 +596,7 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
     programTitle: inferProgramNameFromUrl(pageUrl),
     publishedTime: info.title,
     sourceUrl: pageUrl,
-    artworkUrl: "",
+    artworkUrl: String(info.image || "").trim(),
     episodeUrl: pageUrl,
     clipId: String(info.clipId || "")
   });
@@ -591,7 +609,7 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
   };
 });
 
-ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, forceDownload = false }) => {
+ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid BBC page URL is required.");
   }
@@ -641,6 +659,7 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
   if (!download) {
     throw lastError || new Error("BBC download failed.");
   }
+  const resolvedArtwork = String(image || "").trim() || await resolveBbcArtwork(usedUrl);
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "bbc",
@@ -648,7 +667,7 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
     programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
     publishedTime: publishedTime || inferredTitle,
     sourceUrl: usedUrl,
-    artworkUrl: "",
+    artworkUrl: resolvedArtwork,
     episodeUrl: usedUrl
   });
   const cue = await maybeGenerateCue({
@@ -751,6 +770,10 @@ ipcMain.handle("local-playback-url", async (_event, { outputDir, fileName }) => 
     throw new Error(`File not found: ${fullPath}`);
   }
   return pathToFileURL(fullPath).toString();
+});
+
+ipcMain.handle("local-cue-chapters", async (_event, { outputDir, fileName }) => {
+  return readCueChaptersForAudio(outputDir, fileName);
 });
 
 ipcMain.handle("scheduler-list", async () => {
@@ -957,7 +980,8 @@ app.whenReady().then(() => {
         title: episode.title,
         programTitle: episode.programTitle,
         episodeUrl: episode.episodeUrl,
-        publishedTime: episode.publishedTime
+        publishedTime: episode.publishedTime,
+        artworkUrl: episode.image || ""
       })
   });
 
@@ -973,7 +997,9 @@ app.whenReady().then(() => {
       downloadBbcEpisode({
         episodeUrl: episode.episodeUrl,
         title: episode.title,
-        programTitle: episode.programTitle
+        programTitle: episode.programTitle,
+        publishedTime: episode.publishedTime,
+        artworkUrl: episode.image || ""
       })
   });
 

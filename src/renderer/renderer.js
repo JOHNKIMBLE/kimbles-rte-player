@@ -83,6 +83,9 @@ const nowPlayingTrack = document.getElementById("nowPlayingTrack");
 const nowPlayingImage = document.getElementById("nowPlayingImage");
 const nowPlayingAudio = document.getElementById("nowPlayingAudio");
 const nowPlayingCloseBtn = document.getElementById("nowPlayingCloseBtn");
+const nowPlayingChapterControls = document.getElementById("nowPlayingChapterControls");
+const nowPlayingPrevChapterBtn = document.getElementById("nowPlayingPrevChapterBtn");
+const nowPlayingNextChapterBtn = document.getElementById("nowPlayingNextChapterBtn");
 const DEFAULT_NOW_PLAYING_ART = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='8' fill='%231f2a3a'/%3E%3Ccircle cx='28' cy='28' r='17' fill='%2335445a'/%3E%3Cpath d='M21 20h4v16h-4zM31 20l10 8-10 8z' fill='%23c9d6e8'/%3E%3C/svg%3E";
 
 const state = {
@@ -127,6 +130,7 @@ let searchDebounceTimer = null;
 let bbcSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
 let queueRefreshTimer = null;
+let scheduleRefreshTimer = null;
 let activeNowPlaying = null;
 let activeHls = null;
 let pendingNowPlayingVisible = false;
@@ -226,6 +230,10 @@ function setSettingsStatus(text, isError = false) {
   settingsStatus.textContent = text;
 }
 
+function shouldArmForceRetry(message) {
+  return /click\s+download\s+again\s+to\s+force/i.test(String(message || ""));
+}
+
 function formatLocalDateTime(input) {
   const text = String(input || "").trim();
   if (!text) {
@@ -238,20 +246,207 @@ function formatLocalDateTime(input) {
   return dt.toLocaleString();
 }
 
-async function playFromDownloadedFile({ outputDir, fileName, title = "", source = "Local", subtitle = "" }) {
+function formatLocalDate(input) {
+  const text = String(input || "").trim();
+  if (!text) {
+    return "";
+  }
+  const dt = new Date(text);
+  if (!Number.isFinite(dt.getTime())) {
+    return text;
+  }
+  return dt.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function parseDatePartsFromText(input) {
+  const text = String(input || "");
+  const monthMap = new Map([
+    ["jan", 1], ["january", 1],
+    ["feb", 2], ["february", 2],
+    ["mar", 3], ["march", 3],
+    ["apr", 4], ["april", 4],
+    ["may", 5],
+    ["jun", 6], ["june", 6],
+    ["jul", 7], ["july", 7],
+    ["aug", 8], ["august", 8],
+    ["sep", 9], ["sept", 9], ["september", 9],
+    ["oct", 10], ["october", 10],
+    ["nov", 11], ["november", 11],
+    ["dec", 12], ["december", 12]
+  ]);
+
+  const dmyWord = text.match(/\b(\d{1,2})\s+([A-Za-z]{3,10})\s+(\d{4})\b/);
+  if (dmyWord) {
+    const day = Number(dmyWord[1]);
+    const month = monthMap.get(String(dmyWord[2] || "").toLowerCase()) || 0;
+    const year = Number(dmyWord[3]);
+    if (day > 0 && month > 0 && year > 0) {
+      return { year, month, day };
+    }
+  }
+
+  const dmySlash = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (dmySlash) {
+    const day = Number(dmySlash[1]);
+    const month = Number(dmySlash[2]);
+    const year = Number(dmySlash[3]);
+    if (day > 0 && month > 0 && year > 0) {
+      return { year, month, day };
+    }
+  }
+
+  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) {
+    const year = Number(iso[1]);
+    const month = Number(iso[2]);
+    const day = Number(iso[3]);
+    if (day > 0 && month > 0 && year > 0) {
+      return { year, month, day };
+    }
+  }
+
+  return null;
+}
+
+function dublinDateTimeToLocalString({ year, month, day, hour, minute }) {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute);
+  const dublinOffset = getTimeZoneOffsetMinutes("Europe/Dublin", new Date(utcGuess));
+  const utcTimestamp = utcGuess - dublinOffset * 60 * 1000;
+  const localDate = new Date(utcTimestamp);
+  if (!Number.isFinite(localDate.getTime())) {
+    return "";
+  }
+  return localDate.toLocaleString(undefined, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: state.timeFormat === "12h"
+  });
+}
+
+function localizeNextBroadcast(nextBroadcastAt) {
+  const text = String(nextBroadcastAt || "").trim();
+  if (!text) {
+    return "";
+  }
+  const dateParts = parseDatePartsFromText(text);
+  const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+  if (!dateParts || !timeMatch) {
+    return "";
+  }
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return "";
+  }
+  return dublinDateTimeToLocalString({ ...dateParts, hour, minute }) || "";
+}
+
+function formatRunScheduleLocalOnly(runScheduleText) {
+  const text = String(runScheduleText || "").trim();
+  if (!text) {
+    return "";
+  }
+  return text.replace(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g, (_all, start, end) => {
+    return `${dublinTimeToLocal(start)} - ${dublinTimeToLocal(end)}`;
+  });
+}
+
+function hhmmToMinutes(hhmm) {
+  const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    return null;
+  }
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) {
+    return null;
+  }
+  return h * 60 + min;
+}
+
+function minutesToHhMm(totalMinutes) {
+  const minutesInDay = 24 * 60;
+  let value = Number(totalMinutes || 0);
+  while (value < 0) {
+    value += minutesInDay;
+  }
+  value %= minutesInDay;
+  const h = Math.floor(value / 60);
+  const m = value % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function formatSchedulerCheckWindowLocal(runScheduleText) {
+  const text = String(runScheduleText || "").trim();
+  if (!text) {
+    return "";
+  }
+  const segments = text.split(/\s*,\s*/g);
+  const windows = [];
+  for (const segment of segments) {
+    const match = segment.match(/^(.*?)\s*[•]\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/i);
+    if (!match) {
+      continue;
+    }
+    const dayText = String(match[1] || "").trim();
+    const endMin = hhmmToMinutes(match[3]);
+    if (endMin == null) {
+      continue;
+    }
+    const checkStart = minutesToHhMm(endMin + 30);
+    const checkEnd = minutesToHhMm(endMin + 6 * 60);
+    windows.push(`${dayText} • ${dublinTimeToLocal(checkStart)} - ${dublinTimeToLocal(checkEnd)}`);
+  }
+  return windows.join(", ");
+}
+
+function looksLikeDateOnlyText(input) {
+  const text = String(input || "").trim();
+  if (!text) {
+    return false;
+  }
+  return (
+    /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text) ||
+    /^\d{4}-\d{2}-\d{2}$/.test(text) ||
+    /^[A-Za-z]{3},?\s+\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}$/i.test(text)
+  );
+}
+
+async function getLocalCueChaptersSafe(outputDir, fileName) {
+  if (!window.rteDownloader?.getLocalCueChapters) {
+    return [];
+  }
+  try {
+    const chapters = await window.rteDownloader.getLocalCueChapters(outputDir, fileName);
+    return normalizeChapters(chapters || []);
+  } catch {
+    return [];
+  }
+}
+
+async function playFromDownloadedFile({ outputDir, fileName, title = "", source = "Local", subtitle = "", image = "" }) {
   const safeOutputDir = String(outputDir || "").trim();
   const safeFileName = String(fileName || "").trim();
   if (!safeOutputDir || !safeFileName) {
     throw new Error("No downloaded file path available.");
   }
   const url = await window.rteDownloader.getLocalPlaybackUrl(safeOutputDir, safeFileName);
+  const cueChapters = await getLocalCueChaptersSafe(safeOutputDir, safeFileName);
   await startGlobalNowPlaying({
     source,
     title: title || safeFileName,
     subtitle,
-    image: "",
+    image,
     streamUrl: url,
-    chapters: [],
+    chapters: cueChapters,
     tracks: []
   });
 }
@@ -274,7 +469,7 @@ function renderQueueItems(container, rows, allowCancel = false) {
         ${row.filePath ? `<div class="item-meta">Path: ${escapeHtml(row.filePath)}</div>` : ""}
         <div class="item-actions">
           ${allowCancel ? `<button class="secondary" data-queue-cancel="${escapeHtml(String(row.id || ""))}">Cancel</button>` : ""}
-          ${row.outputDir && row.fileName ? `<button class="secondary" data-queue-play="${escapeHtml(String(row.outputDir || ""))}" data-queue-file="${escapeHtml(String(row.fileName || ""))}" data-queue-title="${escapeHtml(String(row.label || row.fileName || "Download"))}" data-queue-source="${escapeHtml(String(row.sourceType || "local").toUpperCase())}">Play</button>` : ""}
+          ${row.outputDir && row.fileName ? `<button class="secondary" data-queue-play="${escapeHtml(String(row.outputDir || ""))}" data-queue-file="${escapeHtml(String(row.fileName || ""))}" data-queue-title="${escapeHtml(String(row.label || row.fileName || "Download"))}" data-queue-source="${escapeHtml(String(row.sourceType || "local").toUpperCase())}" data-queue-image="${escapeHtml(String(row.image || ""))}">Play</button>` : ""}
         </div>
       </div>
     `)
@@ -712,6 +907,9 @@ function clearGlobalNowPlaying() {
   nowPlayingTitle.textContent = "Now Playing";
   nowPlayingMeta.textContent = "";
   nowPlayingTrack.textContent = "";
+  if (nowPlayingChapterControls) {
+    nowPlayingChapterControls.classList.add("hidden");
+  }
   nowPlayingBar.classList.add("hidden");
   activeNowPlaying = null;
 }
@@ -734,6 +932,7 @@ async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl
   nowPlayingTitle.textContent = `${activeNowPlaying.source || "Audio"}: ${activeNowPlaying.title || "Now Playing"}`;
   nowPlayingMeta.textContent = String(subtitle || "").trim();
   refreshNowPlayingTrackLabel();
+  updateNowPlayingChapterControls();
 
   const img = String(image || "").trim();
   if (img) {
@@ -968,9 +1167,63 @@ function findChapterAtTime(chapters, seconds) {
   return current;
 }
 
+function updateNowPlayingChapterControls() {
+  const hasChapters = Boolean(
+    activeNowPlaying
+    && Array.isArray(activeNowPlaying.chapters)
+    && activeNowPlaying.chapters.length > 1
+  );
+  if (nowPlayingChapterControls) {
+    nowPlayingChapterControls.classList.toggle("hidden", !hasChapters);
+  }
+  if (nowPlayingPrevChapterBtn) {
+    nowPlayingPrevChapterBtn.disabled = !hasChapters;
+  }
+  if (nowPlayingNextChapterBtn) {
+    nowPlayingNextChapterBtn.disabled = !hasChapters;
+  }
+}
+
+function jumpToAdjacentChapter(direction) {
+  if (!activeNowPlaying || !Array.isArray(activeNowPlaying.chapters) || !activeNowPlaying.chapters.length) {
+    return;
+  }
+  const rows = activeNowPlaying.chapters;
+  const currentTime = Number(nowPlayingAudio.currentTime || 0);
+  const epsilon = 0.35;
+  let target = null;
+  if (direction < 0) {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      if (Number(rows[i].startSec || 0) < currentTime - epsilon) {
+        target = rows[i];
+        break;
+      }
+    }
+    if (!target) {
+      target = rows[0];
+    }
+  } else {
+    for (let i = 0; i < rows.length; i += 1) {
+      if (Number(rows[i].startSec || 0) > currentTime + epsilon) {
+        target = rows[i];
+        break;
+      }
+    }
+    if (!target) {
+      target = rows[rows.length - 1];
+    }
+  }
+  if (!target) {
+    return;
+  }
+  nowPlayingAudio.currentTime = Math.max(0, Number(target.startSec || 0));
+  refreshNowPlayingTrackLabel();
+}
+
 function refreshNowPlayingTrackLabel() {
   if (!activeNowPlaying) {
     nowPlayingTrack.textContent = "";
+    updateNowPlayingChapterControls();
     return;
   }
   if ((!Array.isArray(activeNowPlaying.chapters) || !activeNowPlaying.chapters.length) && Array.isArray(activeNowPlaying.tracks) && activeNowPlaying.tracks.length) {
@@ -979,14 +1232,17 @@ function refreshNowPlayingTrackLabel() {
   }
   if (!Array.isArray(activeNowPlaying.chapters) || !activeNowPlaying.chapters.length) {
     nowPlayingTrack.textContent = "";
+    updateNowPlayingChapterControls();
     return;
   }
   const row = findChapterAtTime(activeNowPlaying.chapters, nowPlayingAudio.currentTime || 0);
   if (!row) {
     nowPlayingTrack.textContent = "";
+    updateNowPlayingChapterControls();
     return;
   }
   nowPlayingTrack.textContent = row.artist ? `Track: ${row.title} — ${row.artist}` : `Track: ${row.title}`;
+  updateNowPlayingChapterControls();
 }
 
 async function loadEpisodePlaylistInto(episodeUrl, clipId) {
@@ -1109,7 +1365,7 @@ function renderEpisodes(payload) {
               data-play-local-duration="${escapeHtml(episode.durationString || "")}"
               data-play-local-episode-url="${escapeHtml(episode.episodeUrl || "")}"
             >Play Local</button>
-            <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.fullTitle || episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}" data-download-published="${escapeHtml(episode.publishedTime || episode.publishedTimeFormatted || "")}">Download</button>
+            <button data-download-clip="${escapeHtml(clipId)}" data-download-title="${escapeHtml(episode.fullTitle || episode.title)}" data-download-program-title="${escapeHtml(payload.title || "")}" data-download-url="${escapeHtml(episode.episodeUrl || "")}" data-download-published="${escapeHtml(episode.publishedTime || episode.publishedTimeFormatted || "")}" data-download-image="${escapeHtml(episode.image || payload.image || "")}">Download</button>
             <button class="secondary" data-generate-cue-clip="${escapeHtml(clipId)}" data-generate-cue-title="${escapeHtml(episode.fullTitle || episode.title)}" data-generate-cue-program-title="${escapeHtml(payload.title || "")}" data-generate-cue-url="${escapeHtml(episode.episodeUrl || "")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-episode-status="${escapeHtml(clipId)}" style="display:none;"></div>
@@ -1171,7 +1427,7 @@ function renderBbcEpisodes(payload) {
               data-bbc-play-local-image="${escapeHtml(episode.image || "")}"
               data-bbc-play-local-duration="${escapeHtml(String(episode.durationSeconds || 0))}"
             >Play Local</button>
-            <button data-bbc-episode-url="${escapeHtml(episodeUrl)}" data-bbc-download-url="${escapeHtml(downloadUrl)}" data-bbc-episode-title="${escapeHtml(episode.title)}" data-bbc-program-title="${escapeHtml(payload.title || "BBC")}" data-bbc-published="${escapeHtml(published)}">Download</button>
+            <button data-bbc-episode-url="${escapeHtml(episodeUrl)}" data-bbc-download-url="${escapeHtml(downloadUrl)}" data-bbc-episode-title="${escapeHtml(episode.title)}" data-bbc-program-title="${escapeHtml(payload.title || "BBC")}" data-bbc-published="${escapeHtml(published)}" data-bbc-image="${escapeHtml(episode.image || payload.image || "")}">Download</button>
             <button class="secondary" data-bbc-generate-cue-url="${escapeHtml(episodeUrl)}" data-bbc-generate-cue-title="${escapeHtml(episode.title)}" data-bbc-generate-cue-program-title="${escapeHtml(payload.title || "BBC")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-bbc-episode-status="${episodeStatusKey}" style="display:none;"></div>
@@ -1236,6 +1492,88 @@ async function loadProgram(programUrl, page = 1) {
   renderEpisodes(payload);
 }
 
+function formatBackfillSummary(schedule) {
+  const total = Number(schedule?.backfillTotal || 0);
+  const completed = Number(schedule?.backfillCompleted || 0);
+  const failed = Number(schedule?.backfillFailed || 0);
+  if (!schedule?.backfillInProgress && total <= 0) {
+    return "";
+  }
+  const text = `${completed}/${total > 0 ? total : completed}`;
+  return failed > 0 ? `${text} (${failed} failed)` : text;
+}
+
+function formatSchedulerNextShowLocal(schedule) {
+  const local = localizeNextBroadcast(schedule?.nextBroadcastAt || "");
+  if (!local) {
+    return "";
+  }
+  const title = String(schedule?.nextBroadcastTitle || "").trim();
+  if (!title || looksLikeDateOnlyText(title)) {
+    return local;
+  }
+  return `${local} — ${title}`;
+}
+
+function renderSchedulerCard(schedule, sourceType = "rte") {
+  const isBbc = sourceType === "bbc";
+  const latestImage = schedule?.latestEpisodeImage || schedule?.image || "";
+  const latestPublished = formatLocalDate(schedule?.latestEpisodePublishedTime || "");
+  const runLocal = formatRunScheduleLocalOnly(schedule?.runSchedule || "");
+  const checkWindowLocal = formatSchedulerCheckWindowLocal(schedule?.runSchedule || "");
+  const nextShowLocal = formatSchedulerNextShowLocal(schedule);
+  const retryPending = Array.isArray(schedule?.retryQueue) ? schedule.retryQueue.length : 0;
+  const cadence = String(schedule?.cadence || "unknown");
+  const backfillSummary = formatBackfillSummary(schedule);
+  const checked = formatLocalDateTime(schedule?.lastCheckedAt || "never");
+  const ran = formatLocalDateTime(schedule?.lastRunAt || "never");
+  const latestFileTime = schedule?.lastDownloaded?.at ? formatLocalDateTime(schedule.lastDownloaded.at) : "";
+  const latestFilePath = String(schedule?.lastDownloaded?.filePath || "").trim();
+  const status = String(schedule?.lastStatus || "Idle");
+  const toggleAttr = isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
+  const runAttr = isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
+  const removeAttr = isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
+  const playOutputAttr = isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
+  const playFileAttr = isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
+  const playTitleAttr = isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
+  const playImageAttr = isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
+  const statusAttr = isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
+
+  return `
+    <div class="item scheduler-card">
+      <div class="scheduler-head">
+        ${latestImage ? `<img class="scheduler-thumb" src="${escapeHtml(latestImage)}" alt="${escapeHtml(schedule?.latestEpisodeTitle || schedule?.title || "Program")}" loading="lazy" />` : `<div class="scheduler-thumb scheduler-thumb-placeholder"></div>`}
+        <div class="scheduler-head-main">
+          <div class="item-title">${escapeHtml(schedule?.title || "Program")}</div>
+          <div class="scheduler-badges">
+            <span class="scheduler-badge">${escapeHtml(cadence)}</span>
+            <span class="scheduler-badge scheduler-badge-status">${escapeHtml(status)}</span>
+            ${backfillSummary ? `<span class="scheduler-badge scheduler-badge-progress">Backfill ${escapeHtml(backfillSummary)}</span>` : ""}
+          </div>
+        </div>
+      </div>
+      <div class="scheduler-grid">
+        ${schedule?.latestEpisodeTitle ? `<div><span class="scheduler-k">Latest</span><span class="scheduler-v">${escapeHtml(schedule.latestEpisodeTitle)}${latestPublished ? ` • ${escapeHtml(latestPublished)}` : ""}</span></div>` : ""}
+        ${runLocal ? `<div><span class="scheduler-k">Airs (Local)</span><span class="scheduler-v">${escapeHtml(runLocal)}</span></div>` : ""}
+        ${checkWindowLocal ? `<div><span class="scheduler-k">Check Window (Local)</span><span class="scheduler-v">${escapeHtml(checkWindowLocal)}</span></div>` : ""}
+        ${nextShowLocal ? `<div><span class="scheduler-k">Next Broadcast (Local)</span><span class="scheduler-v">${escapeHtml(nextShowLocal)}</span></div>` : ""}
+        <div><span class="scheduler-k">Retry Queue</span><span class="scheduler-v">${escapeHtml(String(retryPending))} pending</span></div>
+        ${latestFilePath ? `<div><span class="scheduler-k">Latest File</span><span class="scheduler-v scheduler-path">${escapeHtml(latestFilePath)}</span></div>` : ""}
+        ${latestFileTime ? `<div><span class="scheduler-k">Saved</span><span class="scheduler-v">${escapeHtml(latestFileTime)}</span></div>` : ""}
+        <div><span class="scheduler-k">Last Checked</span><span class="scheduler-v">${escapeHtml(checked)}</span></div>
+        <div><span class="scheduler-k">Last Run</span><span class="scheduler-v">${escapeHtml(ran)}</span></div>
+      </div>
+      <div class="item-actions">
+        <button class="secondary" ${toggleAttr}="${escapeHtml(schedule.id)}" data-enabled="${schedule.enabled ? "1" : "0"}">${schedule.enabled ? "Pause" : "Enable"}</button>
+        <button class="secondary" ${runAttr}="${escapeHtml(schedule.id)}">Run Now</button>
+        ${schedule?.lastDownloaded?.outputDir && schedule?.lastDownloaded?.fileName ? `<button class="secondary" ${playOutputAttr}="${escapeHtml(schedule.lastDownloaded.outputDir)}" ${playFileAttr}="${escapeHtml(schedule.lastDownloaded.fileName)}" ${playTitleAttr}="${escapeHtml(schedule.lastDownloaded.title || schedule.title)}" ${playImageAttr}="${escapeHtml(schedule.lastDownloaded.image || schedule.latestEpisodeImage || schedule.image || "")}">Play Latest</button>` : ""}
+        <button class="secondary" ${removeAttr}="${escapeHtml(schedule.id)}">Remove</button>
+      </div>
+      <div class="item-meta episode-status" ${statusAttr}="${escapeHtml(schedule.id)}" style="display:none;"></div>
+    </div>
+  `;
+}
+
 async function refreshSchedules() {
   const schedules = await window.rteDownloader.listSchedules();
   if (!schedules.length) {
@@ -1243,34 +1581,7 @@ async function refreshSchedules() {
     return;
   }
 
-  scheduleList.innerHTML = schedules
-    .map(
-      (s) => `
-        <div class="item">
-          <div class="scheduler-head">
-            ${(s.latestEpisodeImage || s.image) ? `<img class="scheduler-thumb" src="${escapeHtml(s.latestEpisodeImage || s.image)}" alt="${escapeHtml(s.latestEpisodeTitle || s.title || "Program")}" loading="lazy" />` : `<div class="scheduler-thumb scheduler-thumb-placeholder"></div>`}
-            <div class="item-title">${escapeHtml(s.title)}</div>
-          </div>
-          <div class="item-meta">
-            ${s.latestEpisodeTitle ? `Latest episode: ${escapeHtml(s.latestEpisodeTitle)}${s.latestEpisodePublishedTime ? ` (${escapeHtml(s.latestEpisodePublishedTime)})` : ""}<br>` : ""}
-            ${s.runSchedule ? `Runs: ${escapeHtml(addLocalTimeHint(s.runSchedule))}<br>` : ""}
-            Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
-            Retry queue: ${escapeHtml(String((Array.isArray(s.retryQueue) ? s.retryQueue.length : 0)))} pending<br>
-            ${s.lastDownloaded?.filePath ? `Latest file: ${escapeHtml(s.lastDownloaded.filePath)}<br>` : ""}
-            ${s.lastDownloaded?.at ? `Latest file time: ${escapeHtml(formatLocalDateTime(s.lastDownloaded.at))}<br>` : ""}
-            Last checked: ${escapeHtml(formatLocalDateTime(s.lastCheckedAt || "never"))} - Last run: ${escapeHtml(formatLocalDateTime(s.lastRunAt || "never"))}
-          </div>
-          <div class="item-actions">
-            <button class="secondary" data-schedule-toggle="${escapeHtml(s.id)}" data-enabled="${s.enabled ? "1" : "0"}">${s.enabled ? "Pause" : "Enable"}</button>
-            <button class="secondary" data-schedule-run="${escapeHtml(s.id)}">Run Now</button>
-            ${s.lastDownloaded?.outputDir && s.lastDownloaded?.fileName ? `<button class="secondary" data-schedule-play-output="${escapeHtml(s.lastDownloaded.outputDir)}" data-schedule-play-file="${escapeHtml(s.lastDownloaded.fileName)}" data-schedule-play-title="${escapeHtml(s.lastDownloaded.title || s.title)}">Play Latest</button>` : ""}
-            <button class="secondary" data-schedule-remove="${escapeHtml(s.id)}">Remove</button>
-          </div>
-          <div class="item-meta episode-status" data-schedule-status="${escapeHtml(s.id)}" style="display:none;"></div>
-        </div>
-      `
-    )
-    .join("");
+  scheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "rte")).join("");
 }
 
 async function refreshBbcSchedules() {
@@ -1280,35 +1591,7 @@ async function refreshBbcSchedules() {
     return;
   }
 
-  bbcScheduleList.innerHTML = schedules
-    .map(
-      (s) => `
-        <div class="item">
-          <div class="scheduler-head">
-            ${(s.latestEpisodeImage || s.image) ? `<img class="scheduler-thumb" src="${escapeHtml(s.latestEpisodeImage || s.image)}" alt="${escapeHtml(s.latestEpisodeTitle || s.title || "Program")}" loading="lazy" />` : `<div class="scheduler-thumb scheduler-thumb-placeholder"></div>`}
-            <div class="item-title">${escapeHtml(s.title)}</div>
-          </div>
-          <div class="item-meta">
-            ${s.latestEpisodeTitle ? `Latest episode: ${escapeHtml(s.latestEpisodeTitle)}${s.latestEpisodePublishedTime ? ` (${escapeHtml(s.latestEpisodePublishedTime)})` : ""}<br>` : ""}
-            ${s.runSchedule ? `Runs: ${escapeHtml(addLocalTimeHint(s.runSchedule))}<br>` : ""}
-            ${s.nextBroadcastAt ? `Next show: ${escapeHtml(s.nextBroadcastAt)}${s.nextBroadcastTitle ? ` - ${escapeHtml(s.nextBroadcastTitle)}` : ""}<br>` : ""}
-            Status: ${escapeHtml(s.lastStatus || "Idle")} - Cadence: ${escapeHtml(s.cadence || "unknown")}<br>
-            Retry queue: ${escapeHtml(String((Array.isArray(s.retryQueue) ? s.retryQueue.length : 0)))} pending<br>
-            ${s.lastDownloaded?.filePath ? `Latest file: ${escapeHtml(s.lastDownloaded.filePath)}<br>` : ""}
-            ${s.lastDownloaded?.at ? `Latest file time: ${escapeHtml(formatLocalDateTime(s.lastDownloaded.at))}<br>` : ""}
-            Last checked: ${escapeHtml(formatLocalDateTime(s.lastCheckedAt || "never"))} - Last run: ${escapeHtml(formatLocalDateTime(s.lastRunAt || "never"))}
-          </div>
-          <div class="item-actions">
-            <button class="secondary" data-bbc-schedule-toggle="${escapeHtml(s.id)}" data-enabled="${s.enabled ? "1" : "0"}">${s.enabled ? "Pause" : "Enable"}</button>
-            <button class="secondary" data-bbc-schedule-run="${escapeHtml(s.id)}">Run Now</button>
-            ${s.lastDownloaded?.outputDir && s.lastDownloaded?.fileName ? `<button class="secondary" data-bbc-schedule-play-output="${escapeHtml(s.lastDownloaded.outputDir)}" data-bbc-schedule-play-file="${escapeHtml(s.lastDownloaded.fileName)}" data-bbc-schedule-play-title="${escapeHtml(s.lastDownloaded.title || s.title)}">Play Latest</button>` : ""}
-            <button class="secondary" data-bbc-schedule-remove="${escapeHtml(s.id)}">Remove</button>
-          </div>
-          <div class="item-meta episode-status" data-bbc-schedule-status="${escapeHtml(s.id)}" style="display:none;"></div>
-        </div>
-      `
-    )
-    .join("");
+  bbcScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "bbc")).join("");
 }
 
 async function loadSettings() {
@@ -1385,6 +1668,9 @@ quickDownloadBtn.addEventListener("click", async () => {
     }
     quickLog.textContent = data.log || "Done.";
   } catch (error) {
+    if (shouldArmForceRetry(error?.message)) {
+      quickDownloadBtn.dataset.forceNext = "1";
+    }
     setQuickStatus(error.message, true);
   } finally {
     detachProgress();
@@ -1435,6 +1721,9 @@ bbcDownloadBtn.addEventListener("click", async () => {
     }
     bbcLog.textContent = data.log || "Done.";
   } catch (error) {
+    if (shouldArmForceRetry(error?.message)) {
+      bbcDownloadBtn.dataset.forceNext = "1";
+    }
     setBbcStatus(error.message, true);
   } finally {
     detachProgress();
@@ -1901,8 +2190,11 @@ addScheduleBtn.addEventListener("click", async () => {
   setButtonBusy(addScheduleBtn, true, "Add Scheduler", "Adding...");
 
   try {
-    await window.rteDownloader.addSchedule(state.currentProgramUrl, { backfillCount });
+    const added = await window.rteDownloader.addSchedule(state.currentProgramUrl, { backfillCount });
     await refreshSchedules();
+    if (added?.id && backfillCount > 0) {
+      setScheduleStatus(added.id, `Backfill queued: 0/${backfillCount}`);
+    }
   } catch (error) {
     programMeta.textContent = error.message;
   } finally {
@@ -1923,8 +2215,11 @@ bbcAddScheduleBtn.addEventListener("click", async () => {
   setButtonBusy(bbcAddScheduleBtn, true, "Add Scheduler", "Adding...");
 
   try {
-    await window.rteDownloader.addBbcSchedule(state.bbcProgramUrl, { backfillCount });
+    const added = await window.rteDownloader.addBbcSchedule(state.bbcProgramUrl, { backfillCount });
     await refreshBbcSchedules();
+    if (added?.id && backfillCount > 0) {
+      setBbcScheduleStatus(added.id, `Backfill queued: 0/${backfillCount}`);
+    }
   } catch (error) {
     bbcProgramMeta.textContent = error.message;
   } finally {
@@ -1963,13 +2258,14 @@ episodesResult.addEventListener("click", async (event) => {
         chapters = estimateChaptersFromTracks(tracks || [], parseRteDurationSeconds(playDurationText));
       }
       const url = await window.rteDownloader.getLocalPlaybackUrl(saved.outputDir, saved.fileName);
+      const localCueChapters = await getLocalCueChaptersSafe(saved.outputDir, saved.fileName);
       await startGlobalNowPlaying({
         source: "RTE Local",
         title: playTitle || saved.fileName,
         subtitle: playSubtitle,
         image: playImage,
         streamUrl: url,
-        chapters,
+        chapters: localCueChapters.length ? localCueChapters : chapters,
         tracks: tracksForNowPlaying
       });
     } catch (error) {
@@ -2065,6 +2361,7 @@ episodesResult.addEventListener("click", async (event) => {
   const programTitle = downloadBtn.getAttribute("data-download-program-title") || "";
   const episodeUrl = downloadBtn.getAttribute("data-download-url") || "";
   const publishedTime = downloadBtn.getAttribute("data-download-published") || "";
+  const artworkUrl = downloadBtn.getAttribute("data-download-image") || "";
 
   if (!clipId) {
     return;
@@ -2082,7 +2379,7 @@ episodesResult.addEventListener("click", async (event) => {
   });
 
   try {
-    const data = await window.rteDownloader.downloadEpisode({ clipId, title, programTitle, episodeUrl, publishedTime, progressToken, forceDownload });
+    const data = await window.rteDownloader.downloadEpisode({ clipId, title, programTitle, episodeUrl, publishedTime, artworkUrl, progressToken, forceDownload });
     state.rteDownloadedAudioByClip[String(clipId)] = {
       outputDir: data.outputDir,
       fileName: data.fileName,
@@ -2103,6 +2400,9 @@ episodesResult.addEventListener("click", async (event) => {
       delete downloadBtn.dataset.forceNext;
     }
   } catch (error) {
+    if (shouldArmForceRetry(error?.message)) {
+      downloadBtn.dataset.forceNext = "1";
+    }
     setEpisodeStatus(clipId, `Download failed: ${error.message}`, true);
   } finally {
     detachProgress();
@@ -2140,13 +2440,14 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
         chapters = estimateChaptersFromTracks(tracks || [], playDurationSeconds);
       }
       const url = await window.rteDownloader.getLocalPlaybackUrl(saved.outputDir, saved.fileName);
+      const localCueChapters = await getLocalCueChaptersSafe(saved.outputDir, saved.fileName);
       await startGlobalNowPlaying({
         source: "BBC Local",
         title: playTitle || saved.fileName,
         subtitle: playSubtitle,
         image: playImage,
         streamUrl: url,
-        chapters,
+        chapters: localCueChapters.length ? localCueChapters : chapters,
         tracks: tracksForNowPlaying
       });
     } catch (error) {
@@ -2238,6 +2539,7 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   const title = downloadBtn.getAttribute("data-bbc-episode-title") || "bbc-episode";
   const programTitle = downloadBtn.getAttribute("data-bbc-program-title") || "BBC";
   const publishedTime = downloadBtn.getAttribute("data-bbc-published") || "";
+  const image = downloadBtn.getAttribute("data-bbc-image") || "";
   if (!episodeUrl) {
     return;
   }
@@ -2254,7 +2556,7 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   });
 
   try {
-    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle, publishedTime, forceDownload });
+    const data = await window.rteDownloader.downloadFromBbcUrl(downloadUrl, progressToken, { title, programTitle, publishedTime, image, forceDownload });
     state.bbcDownloadedAudioByEpisode[episodeUrl] = {
       outputDir: data.outputDir,
       fileName: data.fileName,
@@ -2277,6 +2579,9 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
       delete downloadBtn.dataset.forceNext;
     }
   } catch (error) {
+    if (shouldArmForceRetry(error?.message)) {
+      downloadBtn.dataset.forceNext = "1";
+    }
     setBbcEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
   } finally {
     detachProgress();
@@ -2287,6 +2592,18 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
 nowPlayingCloseBtn.addEventListener("click", () => {
   clearGlobalNowPlaying();
 });
+
+if (nowPlayingPrevChapterBtn) {
+  nowPlayingPrevChapterBtn.addEventListener("click", () => {
+    jumpToAdjacentChapter(-1);
+  });
+}
+
+if (nowPlayingNextChapterBtn) {
+  nowPlayingNextChapterBtn.addEventListener("click", () => {
+    jumpToAdjacentChapter(1);
+  });
+}
 
 nowPlayingImage.addEventListener("error", () => {
   if (nowPlayingImage.src.startsWith("data:image/svg+xml")) {
@@ -2335,7 +2652,8 @@ scheduleList.addEventListener("click", async (event) => {
         fileName: playLatestBtn.getAttribute("data-schedule-play-file"),
         title: playLatestBtn.getAttribute("data-schedule-play-title") || "",
         source: "RTE Local",
-        subtitle: "Latest scheduled download"
+        subtitle: "Latest scheduled download",
+        image: playLatestBtn.getAttribute("data-schedule-play-image") || ""
       });
     } catch (error) {
       setSettingsStatus(`Scheduler play failed: ${error.message}`, true);
@@ -2385,7 +2703,8 @@ bbcScheduleList.addEventListener("click", async (event) => {
         fileName: playLatestBtn.getAttribute("data-bbc-schedule-play-file"),
         title: playLatestBtn.getAttribute("data-bbc-schedule-play-title") || "",
         source: "BBC Local",
-        subtitle: "Latest scheduled download"
+        subtitle: "Latest scheduled download",
+        image: playLatestBtn.getAttribute("data-bbc-schedule-play-image") || ""
       });
     } catch (error) {
       setSettingsStatus(`Scheduler play failed: ${error.message}`, true);
@@ -2463,7 +2782,8 @@ if (downloadQueueActive) {
           fileName: playBtn.getAttribute("data-queue-file"),
           title: playBtn.getAttribute("data-queue-title") || "",
           source: playBtn.getAttribute("data-queue-source") || "Local",
-          subtitle: "From Queue"
+          subtitle: "From Queue",
+          image: playBtn.getAttribute("data-queue-image") || ""
         });
       } catch (error) {
         setSettingsStatus(`Queue play failed: ${error.message}`, true);
@@ -2495,7 +2815,8 @@ if (downloadQueuePending) {
           fileName: playBtn.getAttribute("data-queue-file"),
           title: playBtn.getAttribute("data-queue-title") || "",
           source: playBtn.getAttribute("data-queue-source") || "Local",
-          subtitle: "From Queue"
+          subtitle: "From Queue",
+          image: playBtn.getAttribute("data-queue-image") || ""
         });
       } catch (error) {
         setSettingsStatus(`Queue play failed: ${error.message}`, true);
@@ -2529,7 +2850,8 @@ if (downloadQueueRecent) {
         fileName: playBtn.getAttribute("data-queue-file"),
         title: playBtn.getAttribute("data-queue-title") || "",
         source: playBtn.getAttribute("data-queue-source") || "Local",
-        subtitle: "From Queue"
+        subtitle: "From Queue",
+        image: playBtn.getAttribute("data-queue-image") || ""
       });
     } catch (error) {
       setSettingsStatus(`Queue play failed: ${error.message}`, true);
@@ -2541,6 +2863,7 @@ if (downloadQueueRecent) {
   try {
     const savedTheme = localStorage.getItem("kimble_theme") || "dark";
     applyTheme(savedTheme);
+    clearGlobalNowPlaying();
     try {
       state.canPickDownloadDirectory = Boolean(await window.rteDownloader.canPickDownloadDirectory());
     } catch {
@@ -2559,6 +2882,12 @@ if (downloadQueueRecent) {
     queueRefreshTimer = setInterval(() => {
       refreshDownloadQueueSnapshot().catch(() => {});
     }, 1500);
+    if (scheduleRefreshTimer) {
+      clearInterval(scheduleRefreshTimer);
+    }
+    scheduleRefreshTimer = setInterval(() => {
+      Promise.all([refreshSchedules(), refreshBbcSchedules()]).catch(() => {});
+    }, 5000);
     setSettingsStatus("Loaded.");
     setQuickStatus("Ready");
     setBbcStatus("Ready");

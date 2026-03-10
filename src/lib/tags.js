@@ -52,6 +52,7 @@ async function applyId3Tags({
   const tmpDir = path.join(path.dirname(inputPath), `.tagtmp-${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
   const taggedPath = path.join(tmpDir, path.basename(inputPath));
+  const ext = String(path.extname(inputPath) || "").toLowerCase();
 
   const tagTitle = clean(title);
   const tagAlbum = clean(programTitle);
@@ -70,7 +71,6 @@ async function applyId3Tags({
     "-i", inputPath,
     "-map", "0:a",
     "-c:a", "copy",
-    "-id3v2_version", "3",
     "-metadata", `title=${tagTitle}`,
     "-metadata", `album=${tagAlbum}`,
     "-metadata", `artist=${tagArtist}`,
@@ -81,6 +81,9 @@ async function applyId3Tags({
     "-metadata", `comment=${tagComment}`,
     "-metadata", `encoded_by=Kimble RTE/BBC Downloader`
   ];
+  if (ext === ".mp3") {
+    args.push("-id3v2_version", "3");
+  }
   if (tagYear) {
     args.push("-metadata", `year=${tagYear}`);
   }
@@ -100,6 +103,7 @@ async function applyId3Tags({
       "-i", coverPath,
       "-map", "1:v",
       "-c:v", "mjpeg",
+      "-disposition:v:0", "attached_pic",
       "-metadata:s:v", "title=Album cover",
       "-metadata:s:v", "comment=Cover (front)"
     );

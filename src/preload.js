@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getEpisodePlaylist: (episodeUrl) => ipcRenderer.invoke("rte-episode-playlist", { episodeUrl }),
   getRteEpisodeStream: (clipId) => ipcRenderer.invoke("rte-episode-stream", { clipId }),
   getLocalPlaybackUrl: (outputDir, fileName) => ipcRenderer.invoke("local-playback-url", { outputDir, fileName }),
+  getLocalCueChapters: (outputDir, fileName) => ipcRenderer.invoke("local-cue-chapters", { outputDir, fileName }),
 
   listSchedules: () => ipcRenderer.invoke("scheduler-list"),
   addSchedule: (programUrl, options = {}) => ipcRenderer.invoke("scheduler-add", { programUrl, options }),
