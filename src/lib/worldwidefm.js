@@ -229,6 +229,59 @@ function parseRscEpisodes(html) {
   return episodes;
 }
 
+/**
+ * Parse the episode archive embedded in an episode detail page's RSC data.
+ * Episode detail pages contain the host's full show list as a component prop,
+ * but episodes use RSC references (e.g. "type":"$undefined") instead of literal
+ * "type":"episode", so parseRscEpisodes() misses them.  This function extracts
+ * slug + broadcast_date pairs directly from the raw RSC payload text.
+ */
+function parseRscEpisodeArchive(html) {
+  const payloads = extractRscPayloads(html);
+  const combined = payloads.join("");
+  const datePattern = /"broadcast_date":"(\d{4}-\d{2}-\d{2})"/g;
+  const episodes = [];
+  const seen = new Set();
+  let m;
+
+  while ((m = datePattern.exec(combined)) !== null) {
+    const date = m[1];
+    const pos = m.index;
+    const before = combined.slice(Math.max(0, pos - 500), pos);
+    const slugMatch = before.match(/"slug":"([^"]+)"[^}]*$/);
+    if (!slugMatch) continue;
+    const slug = slugMatch[1];
+    const key = slug + "|" + date;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const titleMatch = before.match(/"title":"([^"]+)"/);
+    const title = titleMatch ? cleanText(titleMatch[1]) : "";
+    const after = combined.slice(pos, pos + 2000);
+    const imgMatch = after.match(/"image":\{[^}]*"url":"([^"]+)"/) || after.match(/"image":"(https:[^"]+)"/);
+    const imgRaw = imgMatch ? imgMatch[1] : "";
+    const image = imgRaw ? imgRaw.split("?")[0] + "?w=600&h=600&fit=crop&auto=format,compress&q=60" : "";
+    const { showName, episodeName } = parseTitleParts(title);
+    const episodeUrl = `${BASE_URL}/episode/${slug}`;
+
+    episodes.push({
+      clipId: slug,
+      id: slug,
+      title: episodeName || title,
+      fullTitle: title,
+      showName: showName || title,
+      episodeName: episodeName || title,
+      episodeUrl,
+      downloadUrl: episodeUrl,
+      publishedTime: date,
+      image,
+      source: "rsc-archive"
+    });
+  }
+
+  return episodes;
+}
+
 /** Parse a single episode detail from its dedicated RSC page. */
 function parseRscEpisodeDetail(html) {
   const payloads = extractRscPayloads(html);
@@ -1133,23 +1186,79 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
           }
         }
 
-        // Supplement with related episodes from the most recent episode's detail page
-        // (host pages may only show a limited set; episode pages have "Related Episodes")
+        // Supplement with sub-host pages — shows like "Breakfast Club Coco" have
+        // rotating sub-hosts (e.g. "Coco Maria", "Palo Santo Discos") whose own host
+        // pages contain episodes not listed on the main host page.  Collect unique
+        // sub-host names from the `hosts` field, generate slug guesses, and fetch
+        // their host pages in parallel.  Only include episodes whose title matches
+        // the main show name.
         try {
-          // Use the most recent episode (from schedule/shows or host page)
-          const allHostEps = [...byUrl.values()].sort((a, b) => {
+          const mainHostLower = hostSlugFromUrl.replace(/-/g, " ");
+          const subHostNames = new Set();
+          for (const ep of [...byUrl.values()]) {
+            if (ep.hosts) {
+              for (const h of ep.hosts) {
+                const hl = h.toLowerCase().trim();
+                if (hl && hl !== mainHostLower && hl !== hostShowName) subHostNames.add(hl);
+              }
+            }
+          }
+          if (subHostNames.size > 0) {
+            // Generate slug guesses and fetch up to 6 sub-host pages in parallel
+            const subSlugs = [...subHostNames].slice(0, 6).map(
+              (name) => name.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+            ).filter((s) => s.length > 2);
+            const subResults = await Promise.all(
+              subSlugs.map((slug) => fetchWwfHostPageEpisodes(slug).catch(() => []))
+            );
+            for (const subEps of subResults) {
+              for (const se2 of subEps) {
+                if (se2.episodeUrl && !byUrl.has(se2.episodeUrl)) {
+                  const show = (se2.showName || "").toLowerCase();
+                  const full = (se2.fullTitle || "").toLowerCase();
+                  if (show === hostShowName || full.startsWith(hostShowName + ":") || full.startsWith(hostShowName + " ")) {
+                    const schedE = schedMap.get(se2.episodeUrl);
+                    byUrl.set(se2.episodeUrl, schedE ? {
+                      ...se2,
+                      showTime: se2.showTime || schedE.showTime,
+                      durationMinutes: se2.durationMinutes || schedE.durationMinutes,
+                      genres: (se2.genres && se2.genres.length) ? se2.genres : schedE.genres,
+                      image: se2.image || schedE.image,
+                    } : se2);
+                  }
+                }
+              }
+            }
+          }
+        } catch {}
+
+        // Supplement with the most recent episode's detail page archive.
+        // Episode detail pages embed the full show episode list in their RSC data,
+        // including episodes too new for any host page.
+        try {
+          const sortedSoFar = [...byUrl.values()].sort((a, b) => {
             const aTs = a.startTimestamp != null ? a.startTimestamp : (a.publishedTime ? new Date(a.publishedTime + "T12:00:00Z").getTime() : 0);
             const bTs = b.startTimestamp != null ? b.startTimestamp : (b.publishedTime ? new Date(b.publishedTime + "T12:00:00Z").getTime() : 0);
             return bTs - aTs;
           });
-          const firstEpUrl = allHostEps[0]?.episodeUrl;
-          if (firstEpUrl) {
-            const epHtml = await fetchText(firstEpUrl);
-            const relatedEps = parseRscEpisodes(epHtml);
-            for (const re of relatedEps) {
-              if (re.episodeUrl && !byUrl.has(re.episodeUrl)) {
-                const se = schedMap.get(re.episodeUrl);
-                byUrl.set(re.episodeUrl, se ? { ...re, image: re.image || se.image, showTime: re.showTime || se.showTime, durationMinutes: re.durationMinutes || se.durationMinutes, genres: (re.genres && re.genres.length) ? re.genres : se.genres } : re);
+          const newestUrl = sortedSoFar[0]?.episodeUrl;
+          if (newestUrl) {
+            const epHtml = await fetchText(newestUrl);
+            const archiveEps = parseRscEpisodeArchive(epHtml);
+            for (const ae of archiveEps) {
+              if (ae.episodeUrl && !byUrl.has(ae.episodeUrl)) {
+                const show = (ae.showName || "").toLowerCase();
+                const full = (ae.fullTitle || "").toLowerCase();
+                if (show === hostShowName || full.startsWith(hostShowName + ":") || full.startsWith(hostShowName + " ")) {
+                  const schedE = schedMap.get(ae.episodeUrl);
+                  byUrl.set(ae.episodeUrl, schedE ? {
+                    ...ae,
+                    showTime: ae.showTime || schedE.showTime,
+                    durationMinutes: ae.durationMinutes || schedE.durationMinutes,
+                    genres: (ae.genres && ae.genres.length) ? ae.genres : schedE.genres,
+                    image: ae.image || schedE.image,
+                  } : ae);
+                }
               }
             }
           }
