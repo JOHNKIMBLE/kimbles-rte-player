@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -19,6 +19,8 @@
       <div class="row tab-row">
         <button id="tabRteBtn" class="secondary">RTE</button>
         <button id="tabBbcBtn" class="secondary">BBC</button>
+        <button id="tabWwfBtn" class="secondary">Worldwide FM</button>
+        <button id="tabNtsBtn" class="secondary">NTS</button>
         <button id="tabSettingsBtn" class="secondary">Settings</button>
       </div>
     </header>
@@ -154,18 +156,156 @@
       </section>
     </div>
 
+    <div id="wwfTabContent" class="hidden">
+      <section class="panel">
+        <h2>Worldwide FM Live</h2>
+        <div class="row">
+          <select id="wwfStationSelect"></select>
+          <button id="wwfRefreshLiveBtn" class="secondary">Refresh</button>
+        </div>
+        <div class="wwf-live-section-wrap nts-live-section-wrap">
+          <div id="wwfLiveNow" class="wwf-live-card-wrap nts-live-card-wrap status muted">Loading…</div>
+          <div class="nts-live-audio-wrap nts-live-audio-hidden wwf-live-audio-wrap">
+            <audio id="wwfLiveAudio" controls preload="none" style="width:100%;"></audio>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Worldwide FM Quick Download</h2>
+        <div class="row">
+          <input id="wwfUrlInput" type="url" placeholder="https://www.worldwidefm.net/episode/..." />
+          <button id="wwfDownloadBtn">Download</button>
+        </div>
+        <div id="wwfResult" class="status muted">Idle</div>
+        <pre id="wwfLog" class="log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Worldwide FM Explorer</h2>
+        <div class="subheading">Search Shows / Programs</div>
+        <div class="search-box">
+          <div class="row">
+            <input id="wwfProgramSearchInput" type="text" placeholder="e.g. Worldwide Breakfast" />
+            <button id="wwfProgramSearchBtn">Search</button>
+          </div>
+          <div id="wwfProgramSearchResult" class="list search-dropdown hidden"></div>
+        </div>
+
+        <div class="subheading">Load program by name</div>
+        <div class="row">
+          <input id="wwfProgramUrlInput" type="text" placeholder="e.g. Worldwide Breakfast or paste show name" />
+          <button id="wwfLoadProgramBtn">Load Episodes</button>
+        </div>
+        <div id="wwfProgramMeta" class="status muted">No program loaded.</div>
+        <div class="row">
+          <button id="wwfPrevPageBtn" class="secondary">Prev Page</button>
+          <button id="wwfNextPageBtn" class="secondary">Next Page</button>
+        </div>
+        <div class="row">
+          <label for="wwfScheduleBackfillMode">Scheduler Backfill</label>
+          <select id="wwfScheduleBackfillMode">
+            <option value="new-only">New episodes only</option>
+            <option value="backfill">Download latest N episodes now</option>
+          </select>
+          <input id="wwfScheduleBackfillCount" type="number" min="1" max="100" value="5" />
+          <button id="wwfAddScheduleBtn" class="secondary">Add Scheduler</button>
+        </div>
+        <div id="wwfEpisodesResult" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Worldwide FM Schedulers</h2>
+        <p class="hint">Scheduler checks for new Worldwide FM episodes in background and auto-downloads unseen ones.</p>
+        <div id="wwfScheduleList" class="list"></div>
+      </section>
+    </div>
+
+    <div id="ntsTabContent" class="hidden">
+      <section class="panel">
+        <h2>NTS Live</h2>
+        <div class="row">
+          <select id="ntsStationSelect"></select>
+          <button id="ntsRefreshLiveBtn" class="secondary">Refresh</button>
+        </div>
+        <div class="nts-live-section-wrap">
+          <div id="ntsLiveNow" class="nts-live-card-wrap status muted">Select a station below to stream. Or <a href="https://www.nts.live/" target="_blank" rel="noopener noreferrer">open nts.live</a> in your browser.</div>
+          <div class="nts-live-audio-wrap nts-live-audio-hidden">
+            <audio id="ntsLiveAudio" controls preload="none" style="width:100%;"></audio>
+          </div>
+        </div>
+        <div class="live-embed-wrap live-embed-wrap--optional hidden" id="ntsLiveEmbedWrap">
+          <iframe id="ntsLivePlayerFrame" title="NTS Live" allow="autoplay; encrypted-media"></iframe>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>NTS Quick Download</h2>
+        <div class="row">
+          <input id="ntsUrlInput" type="url" placeholder="https://www.nts.live/shows/.../episodes/..." />
+          <button id="ntsDownloadBtn">Download</button>
+        </div>
+        <div id="ntsResult" class="status muted">Idle</div>
+        <pre id="ntsLog" class="log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>NTS Explorer</h2>
+        <div class="subheading">Search Shows</div>
+        <div class="search-box">
+          <div class="row">
+            <input id="ntsProgramSearchInput" type="text" placeholder="e.g. The Breakfast Show" />
+            <button id="ntsProgramSearchBtn">Search</button>
+          </div>
+          <div id="ntsProgramSearchResult" class="list search-dropdown hidden"></div>
+        </div>
+
+        <div class="subheading">Load show by URL or slug</div>
+        <div class="row">
+          <input id="ntsProgramUrlInput" type="text" placeholder="e.g. the-breakfast-show-flo or full show URL" />
+          <button id="ntsLoadProgramBtn">Load Episodes</button>
+        </div>
+        <div id="ntsProgramMeta" class="status muted">No show loaded.</div>
+        <div class="row">
+          <button id="ntsPrevPageBtn" class="secondary">Prev Page</button>
+          <button id="ntsNextPageBtn" class="secondary">Next Page</button>
+        </div>
+        <div class="row">
+          <label for="ntsScheduleBackfillMode">Scheduler Backfill</label>
+          <select id="ntsScheduleBackfillMode">
+            <option value="new-only">New episodes only</option>
+            <option value="backfill">Download latest N episodes now</option>
+          </select>
+          <input id="ntsScheduleBackfillCount" type="number" min="1" max="100" value="5" />
+          <button id="ntsAddScheduleBtn" class="secondary">Add Scheduler</button>
+        </div>
+        <div id="ntsEpisodesResult" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>NTS Schedulers</h2>
+        <p class="hint">Scheduler checks for new NTS episodes in background and auto-downloads unseen ones.</p>
+        <div id="ntsScheduleList" class="list"></div>
+      </section>
+    </div>
+
     <div id="settingsTabContent" class="hidden">
       <section class="panel">
         <h2>Settings</h2>
         <div class="settings-group">
           <div class="subheading">General</div>
-        <div class="row">
-          <label for="timeFormatSelect">Time Format</label>
-          <select id="timeFormatSelect">
-            <option value="24h">24-hour</option>
-            <option value="12h">12-hour (AM/PM)</option>
-          </select>
-        </div>
+          <div class="row setting-row">
+            <label for="timeFormatSelect">Time Format</label>
+            <select id="timeFormatSelect">
+              <option value="24h">24-hour</option>
+              <option value="12h">12-hour (AM/PM)</option>
+            </select>
+          </div>
+          <div class="row setting-row">
+            <label for="episodesPerPageInput">Episodes Per Page</label>
+            <input id="episodesPerPageInput" type="number" min="1" max="50" step="1" value="5" />
+          </div>
+          <div class="hint">Number of episodes shown per page in all program explorers (RTE, BBC, NTS, WWF). Default: 5.</div>
         </div>
         <div class="settings-group">
           <div class="subheading">Download Path</div>
@@ -204,59 +344,103 @@
         </div>
         <div class="settings-group">
           <div class="subheading">Download Engine</div>
-        <div class="row">
-          <label for="cueAutoGenerateCheckbox">Generate CUE/Chapters on download</label>
-          <input id="cueAutoGenerateCheckbox" type="checkbox" />
-        </div>
-        <div class="row">
-          <label for="outputFormatSelect">Audio Format</label>
-          <select id="outputFormatSelect">
-            <option value="mp3">MP3</option>
-            <option value="m4a">M4A</option>
-            <option value="aac">AAC</option>
-            <option value="opus">Opus</option>
-            <option value="vorbis">Vorbis</option>
-          </select>
-        </div>
-        <div class="row">
-          <label for="outputQualitySelect">Audio Quality</label>
-          <select id="outputQualitySelect">
-            <option value="128K">128 kbps</option>
-            <option value="192K">192 kbps</option>
-            <option value="256K">256 kbps</option>
-            <option value="320K">320 kbps</option>
-            <option value="0">Best VBR</option>
-          </select>
-        </div>
-        <div class="row">
-          <label for="normalizeLoudnessCheckbox">Normalize Loudness (recommended)</label>
-          <input id="normalizeLoudnessCheckbox" type="checkbox" />
-        </div>
-        <div class="row">
-          <label for="maxConcurrentInput">Concurrent Downloads</label>
-          <input id="maxConcurrentInput" type="number" min="1" max="8" step="1" value="2" />
-        </div>
-        <div class="row">
-          <label for="dedupeModeSelect">Duplicate Handling</label>
-          <select id="dedupeModeSelect">
-            <option value="source-id">Skip by source ID + archive</option>
-            <option value="title-date">Skip by title/date filename</option>
-            <option value="none">Always download</option>
-          </select>
-        </div>
-        <div class="row">
-          <label for="id3TaggingCheckbox">Write ID3 tags on download</label>
-          <input id="id3TaggingCheckbox" type="checkbox" />
-        </div>
-        <div class="row">
-          <label for="feedExportCheckbox">Export program feeds (JSON/RSS)</label>
-          <input id="feedExportCheckbox" type="checkbox" />
-        </div>
-        <div class="row">
-          <label for="webhookUrlInput">Webhook URL (optional)</label>
-          <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" />
-        </div>
-        <div class="hint">CUE mode: auto (try episode tracklists, then estimate chapter times).</div>
+          <div class="settings-subgroup">
+            <div class="hint">Core download settings</div>
+            <div class="row setting-row setting-switch">
+              <label for="cueAutoGenerateCheckbox">Generate CUE/Chapters on download</label>
+              <input id="cueAutoGenerateCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row">
+              <label for="outputFormatSelect">Audio Format</label>
+              <select id="outputFormatSelect">
+                <option value="m4a" selected>M4A</option>
+                <option value="mp3">MP3</option>
+              </select>
+            </div>
+            <div class="row setting-row">
+              <label for="outputQualitySelect">Audio Quality</label>
+              <select id="outputQualitySelect">
+                <option value="128K">128 kbps</option>
+                <option value="192K">192 kbps</option>
+                <option value="256K">256 kbps</option>
+                <option value="320K">320 kbps</option>
+                <option value="0">Best VBR</option>
+              </select>
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="normalizeLoudnessCheckbox">Normalize Loudness (recommended)</label>
+              <input id="normalizeLoudnessCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row">
+              <label for="maxConcurrentInput">Concurrent Downloads</label>
+              <input id="maxConcurrentInput" type="number" min="1" max="8" step="1" value="2" />
+            </div>
+            <div class="row setting-row">
+              <label for="dedupeModeSelect">Duplicate Handling</label>
+              <select id="dedupeModeSelect">
+                <option value="source-id">Skip by source ID + archive</option>
+                <option value="title-date">Skip by title/date filename</option>
+                <option value="none">Always download</option>
+              </select>
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="id3TaggingCheckbox">Write ID3 tags on download</label>
+              <input id="id3TaggingCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="feedExportCheckbox">Export program feeds (JSON/RSS)</label>
+              <input id="feedExportCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row">
+              <label for="webhookUrlInput">Webhook URL (optional)</label>
+              <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" />
+            </div>
+          </div>
+          <div class="settings-subgroup">
+            <div class="hint">Optional track alignment</div>
+            <div class="row setting-row setting-switch">
+              <label for="auddTrackMatchingCheckbox">AudD mix recognition (recommended for mixes)</label>
+              <input id="auddTrackMatchingCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row">
+              <label for="auddApiTokenInput">AudD API Token (required when enabled)</label>
+              <input id="auddApiTokenInput" type="password" placeholder="Your AudD API token" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="fingerprintTrackMatchingCheckbox">Fingerprint-assisted track matching (AcoustID)</label>
+              <input id="fingerprintTrackMatchingCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row">
+              <label for="acoustidApiKeyInput">AcoustID API Key (required when enabled)</label>
+              <input id="acoustidApiKeyInput" type="password" placeholder="Your AcoustID client key" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="songrecTrackMatchingCheckbox">Songrec window recognition (free, optional)</label>
+              <input id="songrecTrackMatchingCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row">
+              <label for="songrecSampleSecondsInput">Recognition sample length (sec)</label>
+              <input id="songrecSampleSecondsInput" type="number" min="8" max="45" step="1" value="20" />
+            </div>
+            <div class="hint">Used for AudD, AcoustID, and Songrec window scans. AudD windows are capped to 12 seconds.</div>
+            <div class="hint">Sample count is automatic per episode (based on track count and duration).</div>
+          </div>
+          <div class="settings-subgroup">
+            <div class="hint">FFmpeg cue landmark filters</div>
+            <div class="row setting-row setting-switch">
+              <label for="ffmpegCueSilenceCheckbox">Silence break detection (silencedetect)</label>
+              <input id="ffmpegCueSilenceCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="ffmpegCueLoudnessCheckbox">Loudness landmarks (ebur128)</label>
+              <input id="ffmpegCueLoudnessCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="ffmpegCueSpectralCheckbox">Spectral flux landmarks (aspectralstats)</label>
+              <input id="ffmpegCueSpectralCheckbox" type="checkbox" />
+            </div>
+            <div class="hint">These filters estimate chapter/break landmarks only. They do not identify songs.</div>
+          </div>
         </div>
         <div class="settings-group">
           <div class="subheading">Download Queue</div>

@@ -1,4 +1,4 @@
-﻿const quickUrlInput = document.getElementById("quickUrlInput");
+const quickUrlInput = document.getElementById("quickUrlInput");
 const quickDownloadBtn = document.getElementById("quickDownloadBtn");
 const quickResult = document.getElementById("quickResult");
 const quickLog = document.getElementById("quickLog");
@@ -24,6 +24,55 @@ const bbcRefreshLiveBtn = document.getElementById("bbcRefreshLiveBtn");
 const bbcLiveNow = document.getElementById("bbcLiveNow");
 const bbcLivePlayerFrame = document.getElementById("bbcLivePlayerFrame");
 const bbcLiveOverlayPlayBtn = document.getElementById("bbcLiveOverlayPlayBtn");
+
+const tabWwfBtn = document.getElementById("tabWwfBtn");
+const wwfTabContent = document.getElementById("wwfTabContent");
+const wwfStationSelect = document.getElementById("wwfStationSelect");
+const wwfRefreshLiveBtn = document.getElementById("wwfRefreshLiveBtn");
+const wwfLiveNow = document.getElementById("wwfLiveNow");
+const wwfLivePlayerFrame = document.getElementById("wwfLivePlayerFrame");
+const wwfUrlInput = document.getElementById("wwfUrlInput");
+const wwfDownloadBtn = document.getElementById("wwfDownloadBtn");
+const wwfResult = document.getElementById("wwfResult");
+const wwfLog = document.getElementById("wwfLog");
+const wwfProgramUrlInput = document.getElementById("wwfProgramUrlInput");
+const wwfLoadProgramBtn = document.getElementById("wwfLoadProgramBtn");
+const wwfProgramMeta = document.getElementById("wwfProgramMeta");
+const wwfPrevPageBtn = document.getElementById("wwfPrevPageBtn");
+const wwfNextPageBtn = document.getElementById("wwfNextPageBtn");
+const wwfEpisodesResult = document.getElementById("wwfEpisodesResult");
+const wwfProgramSearchInput = document.getElementById("wwfProgramSearchInput");
+const wwfProgramSearchBtn = document.getElementById("wwfProgramSearchBtn");
+const wwfProgramSearchResult = document.getElementById("wwfProgramSearchResult");
+const wwfAddScheduleBtn = document.getElementById("wwfAddScheduleBtn");
+const wwfScheduleBackfillMode = document.getElementById("wwfScheduleBackfillMode");
+const wwfScheduleBackfillCount = document.getElementById("wwfScheduleBackfillCount");
+const wwfScheduleList = document.getElementById("wwfScheduleList");
+
+const tabNtsBtn = document.getElementById("tabNtsBtn");
+const ntsTabContent = document.getElementById("ntsTabContent");
+const ntsStationSelect = document.getElementById("ntsStationSelect");
+const ntsRefreshLiveBtn = document.getElementById("ntsRefreshLiveBtn");
+const ntsLiveNow = document.getElementById("ntsLiveNow");
+const ntsLiveAudio = document.getElementById("ntsLiveAudio");
+const ntsLivePlayerFrame = document.getElementById("ntsLivePlayerFrame");
+const ntsUrlInput = document.getElementById("ntsUrlInput");
+const ntsDownloadBtn = document.getElementById("ntsDownloadBtn");
+const ntsResult = document.getElementById("ntsResult");
+const ntsLog = document.getElementById("ntsLog");
+const ntsProgramUrlInput = document.getElementById("ntsProgramUrlInput");
+const ntsLoadProgramBtn = document.getElementById("ntsLoadProgramBtn");
+const ntsProgramMeta = document.getElementById("ntsProgramMeta");
+const ntsPrevPageBtn = document.getElementById("ntsPrevPageBtn");
+const ntsNextPageBtn = document.getElementById("ntsNextPageBtn");
+const ntsEpisodesResult = document.getElementById("ntsEpisodesResult");
+const ntsProgramSearchInput = document.getElementById("ntsProgramSearchInput");
+const ntsProgramSearchBtn = document.getElementById("ntsProgramSearchBtn");
+const ntsProgramSearchResult = document.getElementById("ntsProgramSearchResult");
+const ntsAddScheduleBtn = document.getElementById("ntsAddScheduleBtn");
+const ntsScheduleBackfillMode = document.getElementById("ntsScheduleBackfillMode");
+const ntsScheduleBackfillCount = document.getElementById("ntsScheduleBackfillCount");
+const ntsScheduleList = document.getElementById("ntsScheduleList");
 
 const stationSelect = document.getElementById("stationSelect");
 const refreshLiveBtn = document.getElementById("refreshLiveBtn");
@@ -60,6 +109,15 @@ const dedupeModeSelect = document.getElementById("dedupeModeSelect");
 const id3TaggingCheckbox = document.getElementById("id3TaggingCheckbox");
 const feedExportCheckbox = document.getElementById("feedExportCheckbox");
 const webhookUrlInput = document.getElementById("webhookUrlInput");
+const auddTrackMatchingCheckbox = document.getElementById("auddTrackMatchingCheckbox");
+const auddApiTokenInput = document.getElementById("auddApiTokenInput");
+const fingerprintTrackMatchingCheckbox = document.getElementById("fingerprintTrackMatchingCheckbox");
+const acoustidApiKeyInput = document.getElementById("acoustidApiKeyInput");
+const songrecTrackMatchingCheckbox = document.getElementById("songrecTrackMatchingCheckbox");
+const songrecSampleSecondsInput = document.getElementById("songrecSampleSecondsInput");
+const ffmpegCueSilenceCheckbox = document.getElementById("ffmpegCueSilenceCheckbox");
+const ffmpegCueLoudnessCheckbox = document.getElementById("ffmpegCueLoudnessCheckbox");
+const ffmpegCueSpectralCheckbox = document.getElementById("ffmpegCueSpectralCheckbox");
 const downloadQueueStatus = document.getElementById("downloadQueueStatus");
 const downloadQueueActive = document.getElementById("downloadQueueActive");
 const downloadQueuePending = document.getElementById("downloadQueuePending");
@@ -68,6 +126,7 @@ const queuePauseBtn = document.getElementById("queuePauseBtn");
 const queueResumeBtn = document.getElementById("queueResumeBtn");
 const queueClearBtn = document.getElementById("queueClearBtn");
 const chooseDownloadDirBtn = document.getElementById("chooseDownloadDirBtn");
+const episodesPerPageInput = document.getElementById("episodesPerPageInput");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const settingsStatus = document.getElementById("settingsStatus");
 const tabRteBtn = document.getElementById("tabRteBtn");
@@ -106,7 +165,7 @@ const state = {
   downloadDir: "",
   pathFormat: "{radio}/{program}/{episode_short} {release_date}",
   cueAutoGenerate: false,
-  outputFormat: "mp3",
+  outputFormat: "m4a",
   outputQuality: "128K",
   normalizeLoudness: true,
   maxConcurrentDownloads: 2,
@@ -114,6 +173,15 @@ const state = {
   id3Tagging: true,
   feedExportEnabled: true,
   webhookUrl: "",
+  auddTrackMatching: false,
+  auddApiToken: "",
+  fingerprintTrackMatching: false,
+  acoustidApiKey: "",
+  songrecTrackMatching: false,
+  songrecSampleSeconds: 20,
+  ffmpegCueSilenceDetect: true,
+  ffmpegCueLoudnessDetect: true,
+  ffmpegCueSpectralDetect: true,
   activeTab: "rte",
   lastSourceTab: "rte",
   canPickDownloadDirectory: true,
@@ -121,12 +189,33 @@ const state = {
   bbcDownloadedAudioByEpisode: {},
   rteTracksByClip: {},
   bbcTracksByEpisode: {},
+  wwfTracksByEpisode: {},
   rteChaptersByClip: {},
-  bbcChaptersByEpisode: {}
+  bbcChaptersByEpisode: {},
+  wwfChaptersByEpisode: {},
+  wwfLiveStations: [],
+  wwfProgramUrl: "",
+  wwfProgramPage: 1,
+  wwfProgramMaxPages: 1,
+  wwfEpisodesPayload: null,
+  wwfDownloadedAudioByEpisode: {},
+  ntsTracksByEpisode: {},
+  ntsChaptersByEpisode: {},
+  ntsLiveStations: [],
+  ntsProgramUrl: "",
+  ntsProgramPage: 1,
+  ntsProgramMaxPages: 1,
+  ntsEpisodesPayload: null,
+  ntsDownloadedAudioByEpisode: {},
+  episodesPerPage: 5
 };
-const PROGRAM_EPISODES_PER_PAGE = 10;
-const BBC_EPISODES_PER_PAGE = 10;
+const DEFAULT_EPISODES_PER_PAGE = 5;
+function getEpisodesPerPage() {
+  return state.episodesPerPage || DEFAULT_EPISODES_PER_PAGE;
+}
 let searchDebounceTimer = null;
+let wwfSearchDebounceTimer = null;
+let ntsSearchDebounceTimer = null;
 let bbcSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
 let queueRefreshTimer = null;
@@ -134,6 +223,8 @@ let scheduleRefreshTimer = null;
 let activeNowPlaying = null;
 let activeHls = null;
 let pendingNowPlayingVisible = false;
+const cuePreviewInflight = new Map();
+const cueDebugState = new Map();
 
 window.rteDownloader.onDownloadProgress((payload) => {
   const token = payload?.token;
@@ -179,6 +270,10 @@ function formatProgressText(progress, fallbackText) {
     return "Finalizing stream container...";
   }
 
+  if (progress.kind === "cue") {
+    return progress.message || fallbackText;
+  }
+
   if (progress.kind === "generic" || progress.kind === "info" || progress.kind === "hlsnative") {
     return progress.message || fallbackText;
   }
@@ -195,6 +290,15 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
+/** Format NTS live time slot in user's local timezone (e.g. CST). */
+function formatNtsTimeSlotLocal(startTimestamp, endTimestamp) {
+  if (!startTimestamp || !endTimestamp) return "";
+  const start = new Date(startTimestamp);
+  const end = new Date(endTimestamp);
+  const opts = { hour: "2-digit", minute: "2-digit", hour12: false };
+  return `${start.toLocaleTimeString(undefined, opts)} – ${end.toLocaleTimeString(undefined, opts)}`;
+}
+
 function decodeHtmlEntities(input) {
   let value = String(input || "");
   // Decode a couple of rounds to handle nested encodings like &amp;#x27;
@@ -208,6 +312,10 @@ function decodeHtmlEntities(input) {
     value = decoded;
   }
   return value;
+}
+
+function normalizeOutputFormatValue(input) {
+  return String(input || "").trim().toLowerCase() === "mp3" ? "mp3" : "m4a";
 }
 
 function setQuickStatus(text, isError = false) {
@@ -232,6 +340,80 @@ function setSettingsStatus(text, isError = false) {
 
 function shouldArmForceRetry(message) {
   return /click\s+download\s+again\s+to\s+force/i.test(String(message || ""));
+}
+
+function formatCueAlignment(cue) {
+  const method = String(cue?.alignment?.method || "").trim();
+  const confidenceRaw = Number(cue?.alignment?.confidence);
+  const confidence = Number.isFinite(confidenceRaw) ? `${Math.round(confidenceRaw * 100)}%` : "";
+  const reason = String(cue?.alignment?.reason || "").trim();
+  const auddDetections = Number(cue?.alignment?.auddWindows?.detections || 0);
+  const acoustidScoreRaw = Number(cue?.alignment?.acoustid?.score ?? cue?.acoustid?.score);
+  const acoustidScore = Number.isFinite(acoustidScoreRaw) ? `acoustid ${Math.round(acoustidScoreRaw * 100)}%` : "";
+  const songrecDetections = Number(cue?.alignment?.songrec?.detections || 0);
+  const songrecMatched = Number(cue?.alignment?.songrec?.matched || 0);
+  const insertedRecognitionTracks = Number(cue?.alignment?.insertedRecognitionTracks || 0);
+  const landmarkSummary = cue?.alignment?.landmarks || null;
+  const silenceCount = Number(landmarkSummary?.silenceCount || 0);
+  const loudnessCount = Number(landmarkSummary?.loudnessCount || 0);
+  const spectralCount = Number(landmarkSummary?.spectralCount || 0);
+  const mergedCount = Number(landmarkSummary?.mergedCount || 0);
+  const parts = [];
+  if (method) {
+    parts.push(method.replace(/[-_]+/g, " "));
+  }
+  if (confidence) {
+    parts.push(confidence);
+  }
+  if (auddDetections > 0) {
+    parts.push(`audd ${auddDetections}`);
+  }
+  if (acoustidScore) {
+    parts.push(acoustidScore);
+  }
+  if (songrecDetections > 0) {
+    parts.push(`songrec ${songrecMatched}/${songrecDetections}`);
+  }
+  if (insertedRecognitionTracks > 0) {
+    parts.push(`inferred +${insertedRecognitionTracks}`);
+  }
+  if (mergedCount > 0) {
+    parts.push(`landmarks ${mergedCount} (s${silenceCount}/l${loudnessCount}/f${spectralCount})`);
+  }
+  if (reason) {
+    parts.push(reason);
+  }
+  if (!parts.length) {
+    return "";
+  }
+  return ` (${parts.join(", ")})`;
+}
+
+function formatCueSource(cue) {
+  const source = String(cue?.source || "").trim().toLowerCase();
+  if (!source || source === "none") {
+    return "";
+  }
+  const labels = {
+    "external-tracklist": "external tracklist",
+    "rte-episode-playlist": "RTE episode playlist",
+    "bbc-music-played": "BBC music played",
+    "common-tracklist-sites": "common tracklist sites",
+    "common-tracklist-sites+acoustid": "common tracklist sites + AcoustID",
+    "window-recognition-audd": "AudD window recognition",
+    "window-recognition-audd+acoustid": "AudD + AcoustID window recognition",
+    "window-recognition-audd+songrec": "AudD + Songrec window recognition",
+    "window-recognition-audd+acoustid+songrec": "AudD + AcoustID + Songrec window recognition",
+    "window-recognition-songrec": "Songrec window recognition",
+    "window-recognition-acoustid": "AcoustID window recognition",
+    "window-recognition-songrec+acoustid": "Songrec + AcoustID window recognition",
+    "window-recognition-acoustid+songrec": "AcoustID + Songrec window recognition",
+    "window-recognition-acoustid+audd": "AcoustID + AudD window recognition",
+    "window-recognition-songrec+audd": "Songrec + AudD window recognition",
+    "window-recognition-acoustid+songrec+audd": "AcoustID + Songrec + AudD window recognition"
+  };
+  const label = labels[source] || source.replace(/[-_]+/g, " ");
+  return ` from ${label}`;
 }
 
 function formatLocalDateTime(input) {
@@ -312,10 +494,8 @@ function parseDatePartsFromText(input) {
   return null;
 }
 
-function dublinDateTimeToLocalString({ year, month, day, hour, minute }) {
-  const utcGuess = Date.UTC(year, month - 1, day, hour, minute);
-  const dublinOffset = getTimeZoneOffsetMinutes("Europe/Dublin", new Date(utcGuess));
-  const utcTimestamp = utcGuess - dublinOffset * 60 * 1000;
+function utcDateTimeToLocalString({ year, month, day, hour, minute }) {
+  const utcTimestamp = Date.UTC(year, month - 1, day, hour, minute);
   const localDate = new Date(utcTimestamp);
   if (!Number.isFinite(localDate.getTime())) {
     return "";
@@ -336,6 +516,20 @@ function localizeNextBroadcast(nextBroadcastAt) {
   if (!text) {
     return "";
   }
+  // Try ISO date first (e.g. "2026-03-11T14:00:00.000Z")
+  const isoDate = new Date(text);
+  if (Number.isFinite(isoDate.getTime())) {
+    return isoDate.toLocaleString(undefined, {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: state.timeFormat === "12h"
+    });
+  }
+  // Fallback: parse date parts + time from text (UTC)
   const dateParts = parseDatePartsFromText(text);
   const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
   if (!dateParts || !timeMatch) {
@@ -346,7 +540,7 @@ function localizeNextBroadcast(nextBroadcastAt) {
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
     return "";
   }
-  return dublinDateTimeToLocalString({ ...dateParts, hour, minute }) || "";
+  return utcDateTimeToLocalString({ ...dateParts, hour, minute }) || "";
 }
 
 function formatRunScheduleLocalOnly(runScheduleText) {
@@ -355,7 +549,7 @@ function formatRunScheduleLocalOnly(runScheduleText) {
     return "";
   }
   return text.replace(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g, (_all, start, end) => {
-    return `${dublinTimeToLocal(start)} - ${dublinTimeToLocal(end)}`;
+    return `${utcTimeToLocal(start)} - ${utcTimeToLocal(end)}`;
   });
 }
 
@@ -403,7 +597,7 @@ function formatSchedulerCheckWindowLocal(runScheduleText) {
     }
     const checkStart = minutesToHhMm(endMin + 30);
     const checkEnd = minutesToHhMm(endMin + 6 * 60);
-    windows.push(`${dayText} • ${dublinTimeToLocal(checkStart)} - ${dublinTimeToLocal(checkEnd)}`);
+    windows.push(`${dayText} • ${utcTimeToLocal(checkStart)} - ${utcTimeToLocal(checkEnd)}`);
   }
   return windows.join(", ");
 }
@@ -447,19 +641,28 @@ async function playFromDownloadedFile({
   if (!safeOutputDir || !safeFileName) {
     throw new Error("No downloaded file path available.");
   }
-  const url = await window.rteDownloader.getLocalPlaybackUrl(safeOutputDir, safeFileName);
-  const cueChapters = await getLocalCueChaptersSafe(safeOutputDir, safeFileName);
-  let tracks = [];
   const safeEpisodeUrl = String(episodeUrl || "").trim();
   const safeSourceType = String(sourceType || "").trim().toLowerCase();
-  if (!cueChapters.length && safeEpisodeUrl) {
-    try {
-      const payload = safeSourceType === "bbc"
-        ? await window.rteDownloader.getBbcEpisodePlaylist(safeEpisodeUrl)
-        : await window.rteDownloader.getEpisodePlaylist(safeEpisodeUrl);
-      tracks = normalizeTracks(payload?.tracks || []);
-    } catch {}
+  if (safeEpisodeUrl && (safeSourceType === "rte" || safeSourceType === "bbc" || safeSourceType === "wwf" || safeSourceType === "nts")) {
+    const cacheKey = safeEpisodeUrl;
+    await playEpisodeWithBackgroundCue({
+      sourceType: safeSourceType,
+      cacheKey,
+      sourceLabel: source,
+      title: title || safeFileName,
+      subtitle,
+      image,
+      episodeUrl: safeEpisodeUrl,
+      durationSeconds: 0,
+      outputDir: safeOutputDir,
+      fileName: safeFileName,
+      playbackKey: `${safeSourceType}:local:${cacheKey}`
+    });
+    return;
   }
+
+  const url = await window.rteDownloader.getLocalPlaybackUrl(safeOutputDir, safeFileName);
+  const cueChapters = await getLocalCueChaptersSafe(safeOutputDir, safeFileName);
   await startGlobalNowPlaying({
     source,
     title: title || safeFileName,
@@ -467,8 +670,232 @@ async function playFromDownloadedFile({
     image,
     streamUrl: url,
     chapters: cueChapters,
-    tracks
+    tracks: []
   });
+}
+
+function getTracksCache(sourceType) {
+  if (sourceType === "bbc") return state.bbcTracksByEpisode;
+  if (sourceType === "wwf") return state.wwfTracksByEpisode;
+  if (sourceType === "nts") return state.ntsTracksByEpisode;
+  return state.rteTracksByClip;
+}
+
+function getChaptersCache(sourceType) {
+  if (sourceType === "bbc") return state.bbcChaptersByEpisode;
+  if (sourceType === "wwf") return state.wwfChaptersByEpisode;
+  if (sourceType === "nts") return state.ntsChaptersByEpisode;
+  return state.rteChaptersByClip;
+}
+
+function setCachedTracks(sourceType, cacheKey, tracks) {
+  getTracksCache(sourceType)[String(cacheKey || "")] = Array.isArray(tracks) ? tracks : [];
+}
+
+function getCachedTracks(sourceType, cacheKey) {
+  return Array.isArray(getTracksCache(sourceType)[String(cacheKey || "")])
+    ? getTracksCache(sourceType)[String(cacheKey || "")]
+    : [];
+}
+
+function getCachedChapters(sourceType, cacheKey) {
+  return normalizeChapters(getChaptersCache(sourceType)[String(cacheKey || "")] || []);
+}
+
+function setCachedChapters(sourceType, cacheKey, chapters) {
+  if (sourceType === "bbc") {
+    setBbcEpisodeChapters(cacheKey, chapters);
+    return;
+  }
+  if (sourceType === "wwf") {
+    state.wwfChaptersByEpisode[String(cacheKey || "")] = Array.isArray(chapters) ? chapters : [];
+    return;
+  }
+  if (sourceType === "nts") {
+    state.ntsChaptersByEpisode[String(cacheKey || "")] = Array.isArray(chapters) ? chapters : [];
+    return;
+  }
+  setEpisodeChapters(cacheKey, chapters);
+}
+
+async function ensureEpisodeTracks(sourceType, cacheKey, episodeUrl) {
+  const cached = normalizeTracks(getCachedTracks(sourceType, cacheKey));
+  if (cached.length || !episodeUrl) {
+    return cached;
+  }
+  try {
+    let payload;
+    if (sourceType === "bbc") {
+      payload = await window.rteDownloader.getBbcEpisodePlaylist(episodeUrl);
+    } else if (sourceType === "wwf") {
+      payload = await window.rteDownloader.getWwfEpisodePlaylist(episodeUrl);
+    } else if (sourceType === "nts") {
+      payload = await window.rteDownloader.getNtsEpisodePlaylist(episodeUrl);
+    } else {
+      payload = await window.rteDownloader.getEpisodePlaylist(episodeUrl);
+    }
+    const tracks = normalizeTracks(payload?.tracks || []);
+    setCachedTracks(sourceType, cacheKey, tracks);
+    return tracks;
+  } catch {
+    return [];
+  }
+}
+
+function updateActiveNowPlayingChapters(playbackKey, chapters) {
+  if (!activeNowPlaying || activeNowPlaying.playbackKey !== String(playbackKey || "")) {
+    return;
+  }
+  activeNowPlaying.chapters = normalizeChapters(chapters || []);
+  activeNowPlaying.chaptersFromTracks = false;
+  refreshNowPlayingTrackLabel();
+}
+
+async function queueBackgroundCuePreview({
+  sourceType,
+  cacheKey,
+  playbackKey,
+  episodeUrl = "",
+  clipId = "",
+  title = "",
+  programTitle = "",
+  streamUrl = "",
+  durationSeconds = 0,
+  outputDir = "",
+  fileName = "",
+  statusUpdater = null
+}) {
+  const inflightKey = `${sourceType}:${cacheKey}:${outputDir && fileName ? "local" : "remote"}`;
+  if (cuePreviewInflight.has(inflightKey)) {
+    return cuePreviewInflight.get(inflightKey);
+  }
+
+  clearCueDebugLog(sourceType, cacheKey);
+  const progressToken = createProgressToken(`cue-${sourceType}`);
+  const detachProgress = attachDownloadProgress(progressToken, (progress) => {
+    if (progress?.kind === "cue" && progress?.message) {
+      appendCueDebugLog(sourceType, cacheKey, progress.message);
+    }
+    if (typeof statusUpdater === "function") {
+      statusUpdater(formatProgressText(progress, "Cue: Building chapters..."));
+    }
+  });
+
+  const job = (async () => {
+    try {
+      if (typeof statusUpdater === "function") {
+        statusUpdater("Playback started. Building chapters in background...");
+      }
+      const cue = await window.rteDownloader.previewCue({
+        sourceType,
+        episodeUrl,
+        clipId,
+        title,
+        programTitle,
+        streamUrl,
+        durationSeconds,
+        outputDir,
+        fileName,
+        progressToken
+      });
+      if (Array.isArray(cue?.chapters) && cue.chapters.length) {
+        setCachedChapters(sourceType, cacheKey, cue.chapters);
+        updateActiveNowPlayingChapters(playbackKey, cue.chapters);
+        if (typeof statusUpdater === "function") {
+          statusUpdater(`Chapters ready${formatCueSource(cue)}${formatCueAlignment(cue)}`);
+        }
+      } else if (typeof statusUpdater === "function") {
+        statusUpdater("No tracklist or recognition matches found yet. Playback will continue without chapter skips.");
+      }
+      return cue;
+    } catch (error) {
+      if (typeof statusUpdater === "function") {
+        statusUpdater(`Chapter alignment failed: ${error.message}`, true);
+      }
+      return null;
+    } finally {
+      detachProgress();
+      cuePreviewInflight.delete(inflightKey);
+    }
+  })();
+
+  cuePreviewInflight.set(inflightKey, job);
+  return job;
+}
+
+async function playEpisodeWithBackgroundCue({
+  sourceType,
+  cacheKey,
+  sourceLabel,
+  title,
+  programTitle = "",
+  subtitle = "",
+  image = "",
+  episodeUrl = "",
+  clipId = "",
+  durationSeconds = 0,
+  outputDir = "",
+  fileName = "",
+  streamUrl = "",
+  playbackKey = "",
+  statusUpdater = null
+}) {
+  const raw = String(sourceType || "").toLowerCase();
+  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : "rte";
+  const safeCacheKey = String(cacheKey || "").trim();
+  const safePlaybackKey = String(playbackKey || `${safeSourceType}:${safeCacheKey}`).trim();
+  const safeEpisodeUrl = String(episodeUrl || "").trim();
+  const safeOutputDir = String(outputDir || "").trim();
+  const safeFileName = String(fileName || "").trim();
+  const tracks = await ensureEpisodeTracks(safeSourceType, safeCacheKey, safeEpisodeUrl);
+  let chapters = getCachedChapters(safeSourceType, safeCacheKey);
+  let chaptersFromTracks = false;
+  let resolvedStreamUrl = String(streamUrl || "").trim();
+  let hasResolvedCue = chapters.length > 0;
+
+  if (safeOutputDir && safeFileName) {
+    resolvedStreamUrl = await window.rteDownloader.getLocalPlaybackUrl(safeOutputDir, safeFileName);
+    const localCueChapters = await getLocalCueChaptersSafe(safeOutputDir, safeFileName);
+    if (localCueChapters.length) {
+      chapters = localCueChapters;
+      hasResolvedCue = true;
+      setCachedChapters(safeSourceType, safeCacheKey, localCueChapters);
+    }
+  }
+
+  if (!chapters.length) {
+    chapters = estimateChaptersFromTracks(tracks, durationSeconds);
+    chaptersFromTracks = chapters.length > 0;
+  }
+
+  await startGlobalNowPlaying({
+    source: sourceLabel,
+    title,
+    subtitle,
+    image,
+    streamUrl: resolvedStreamUrl,
+    chapters,
+    tracks,
+    chaptersFromTracks,
+    playbackKey: safePlaybackKey
+  });
+
+  if (!hasResolvedCue) {
+    queueBackgroundCuePreview({
+      sourceType: safeSourceType,
+      cacheKey: safeCacheKey,
+      playbackKey: safePlaybackKey,
+      episodeUrl: safeEpisodeUrl,
+      clipId: String(clipId || "").trim(),
+      title,
+      programTitle: String(programTitle || "").trim(),
+      streamUrl: resolvedStreamUrl,
+      durationSeconds,
+      outputDir: safeOutputDir,
+      fileName: safeFileName,
+      statusUpdater
+    }).catch(() => {});
+  }
 }
 
 function renderQueueItems(container, rows, allowCancel = false) {
@@ -583,26 +1010,65 @@ function renderPathFormatPreview() {
     .replace(/\{day\}/gi, day)
     .replace(/\{date_compact\}/gi, `${year}${month}${day}`)
     .replace(/\{source_id\}/gi, "11783152");
-  const ext = String(outputFormatSelect?.value || state.outputFormat || "mp3")
+  const ext = String(outputFormatSelect?.value || state.outputFormat || "m4a")
     .replace(/^\./, "")
     .toLowerCase();
-  pathFormatPreview.textContent = `Preview: ${sample}.${ext || "mp3"}`;
+  pathFormatPreview.textContent = `Preview: ${sample}.${ext || "m4a"}`;
 }
 
 function setActiveTab(tabName) {
-  state.activeTab = tabName === "bbc" || tabName === "settings" ? tabName : "rte";
-  if (state.activeTab === "rte" || state.activeTab === "bbc") {
+  state.activeTab = tabName === "bbc" || tabName === "wwf" || tabName === "nts" || tabName === "settings" ? tabName : "rte";
+  if (state.activeTab === "rte" || state.activeTab === "bbc" || state.activeTab === "wwf" || state.activeTab === "nts") {
     state.lastSourceTab = state.activeTab;
   }
   const isRte = state.activeTab === "rte";
   const isBbc = state.activeTab === "bbc";
+  const isWwf = state.activeTab === "wwf";
+  const isNts = state.activeTab === "nts";
   const isSettings = state.activeTab === "settings";
   rteTabContent.classList.toggle("hidden", !isRte);
   bbcTabContent.classList.toggle("hidden", !isBbc);
-  settingsTabContent.classList.toggle("hidden", !isSettings);
+  if (wwfTabContent) wwfTabContent.classList.toggle("hidden", !isWwf);
+  if (ntsTabContent) ntsTabContent.classList.toggle("hidden", !isNts);
+  if (settingsTabContent) settingsTabContent.classList.toggle("hidden", !isSettings);
   tabRteBtn.classList.toggle("active-tab", isRte);
   tabBbcBtn.classList.toggle("active-tab", isBbc);
+  if (tabWwfBtn) tabWwfBtn.classList.toggle("active-tab", isWwf);
+  if (tabNtsBtn) tabNtsBtn.classList.toggle("active-tab", isNts);
   tabSettingsBtn.classList.toggle("active-tab", isSettings);
+  if (isWwf) {
+    if (wwfStationSelect && state.wwfLiveStations.length === 0 && window.rteDownloader?.getWwfLiveStations) {
+      window.rteDownloader.getWwfLiveStations().then((stations) => {
+        state.wwfLiveStations = stations || [];
+        if (wwfStationSelect && state.wwfLiveStations.length) {
+          wwfStationSelect.innerHTML = state.wwfLiveStations.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
+        }
+      }).catch(() => {});
+    }
+    refreshWwfLiveNow().catch(() => {});
+    renderWwfScheduleList().catch(() => {});
+  }
+  if (isNts) {
+    if (ntsStationSelect && state.ntsLiveStations.length === 0 && window.rteDownloader?.getNtsLiveStations) {
+      window.rteDownloader.getNtsLiveStations().then((stations) => {
+        state.ntsLiveStations = stations || [];
+        if (ntsStationSelect && state.ntsLiveStations.length) {
+          ntsStationSelect.innerHTML = state.ntsLiveStations.map((s) => {
+            const streamUrl = (s.streamUrl || "").trim();
+            return `<option value="${escapeHtml(s.id)}"${streamUrl ? ` data-stream-url="${escapeHtml(streamUrl)}"` : ""}>${escapeHtml(s.name)}</option>`;
+          }).join("");
+          const firstWithStream = state.ntsLiveStations.find((s) => (s.streamUrl || "").trim());
+          if (firstWithStream && ntsLiveAudio) {
+            ntsLiveAudio.src = firstWithStream.streamUrl || "";
+          }
+          refreshNtsLiveNow().catch(() => {});
+        }
+      }).catch(() => {});
+    } else if (ntsStationSelect && state.ntsLiveStations.length > 0) {
+      refreshNtsLiveNow().catch(() => {});
+    }
+    renderNtsScheduleList().catch(() => {});
+  }
   downloadDirInput.value = getActiveDownloadDir();
   renderPathFormatPreview();
 }
@@ -628,21 +1094,14 @@ function getTimeZoneOffsetMinutes(timeZone, date) {
   return parseOffsetToMinutes(tzName);
 }
 
-function dublinTimeToLocal(hhmm) {
+function utcTimeToLocal(hhmm) {
   const match = String(hhmm).match(/^(\d{1,2}):(\d{2})$/);
   if (!match) {
     return hhmm;
   }
 
   const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const day = now.getUTCDate();
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  const utcGuess = Date.UTC(year, month, day, hour, minute);
-  const dublinOffset = getTimeZoneOffsetMinutes("Europe/Dublin", new Date(utcGuess));
-  const utcTimestamp = utcGuess - dublinOffset * 60 * 1000;
+  const utcTimestamp = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), Number(match[1]), Number(match[2]));
   const localDate = new Date(utcTimestamp);
 
   return new Intl.DateTimeFormat(undefined, {
@@ -652,18 +1111,13 @@ function dublinTimeToLocal(hhmm) {
   }).format(localDate);
 }
 
-function addLocalTimeHint(runScheduleText) {
+function toLocalSchedule(runScheduleText) {
   if (!runScheduleText) {
     return "";
   }
 
-  const ranges = Array.from(runScheduleText.matchAll(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g));
-  if (!ranges.length) {
-    return runScheduleText;
-  }
-
-  const localRanges = ranges.map((entry) => `${dublinTimeToLocal(entry[1])}-${dublinTimeToLocal(entry[2])}`);
-  return `${runScheduleText} (Local: ${localRanges.join(", ")})`;
+  // Replace all HH:MM times with local equivalents
+  return runScheduleText.replace(/(\d{1,2}:\d{2})/g, (match) => utcTimeToLocal(match));
 }
 
 function applyTheme(theme) {
@@ -780,7 +1234,7 @@ function renderSearchPrograms(items) {
             <div>${imageHtml}</div>
             <div>
               <div class="item-title">${escapeHtml(item.title)}</div>
-              ${item.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(addLocalTimeHint(item.runSchedule))}</strong></div>` : ""}
+              ${item.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(item.runSchedule))}</strong></div>` : ""}
               ${item.description ? `<div class="item-meta">${escapeHtml(item.description)}</div>` : ""}
             </div>
           </div>
@@ -897,6 +1351,7 @@ function renderChapters(chapters) {
             <div>
               <div class="item-title">${escapeHtml(chapter.title || "")}</div>
               <div class="item-meta">${escapeHtml(chapter.artist || "")}</div>
+              ${chapter.inferred ? `<div class="item-meta">Inferred${chapter.inferredSource ? ` via ${escapeHtml(chapter.inferredSource)}` : ""}</div>` : ""}
             </div>
           </div>
         `)
@@ -934,7 +1389,17 @@ function clearGlobalNowPlaying() {
   activeNowPlaying = null;
 }
 
-async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl, chapters = [], tracks = [] }) {
+async function startGlobalNowPlaying({
+  source,
+  title,
+  subtitle,
+  image,
+  streamUrl,
+  chapters = [],
+  tracks = [],
+  chaptersFromTracks = false,
+  playbackKey = ""
+}) {
   const url = String(streamUrl || "").trim();
   if (!url) {
     throw new Error("No stream URL available.");
@@ -946,7 +1411,9 @@ async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl
     title: String(title || "").trim(),
     streamUrl: url,
     chapters: normalizeChapters(chapters),
-    tracks: normalizeTracks(tracks)
+    tracks: normalizeTracks(tracks),
+    chaptersFromTracks: Boolean(chaptersFromTracks),
+    playbackKey: String(playbackKey || "").trim()
   };
 
   nowPlayingTitle.textContent = `${activeNowPlaying.source || "Audio"}: ${activeNowPlaying.title || "Now Playing"}`;
@@ -962,8 +1429,8 @@ async function startGlobalNowPlaying({ source, title, subtitle, image, streamUrl
     nowPlayingImage.src = DEFAULT_NOW_PLAYING_ART;
     nowPlayingImage.style.display = "";
   }
-  pendingNowPlayingVisible = true;
-  nowPlayingBar.classList.add("hidden");
+  pendingNowPlayingVisible = false;
+  nowPlayingBar.classList.remove("hidden");
   const revealPendingPlayer = () => {
     if (pendingNowPlayingVisible) {
       nowPlayingBar.classList.remove("hidden");
@@ -1029,6 +1496,49 @@ function setEpisodeStatus(clipId, text, isError = false) {
   statusNode.textContent = safeText;
   statusNode.style.display = safeText ? "block" : "none";
   statusNode.className = `item-meta episode-status ${isError ? "episode-status-error" : ""}`;
+}
+
+function getCueDebugNode(sourceType, key) {
+  if (sourceType === "bbc") {
+    const encodedKey = encodeURIComponent(String(key || ""));
+    return document.querySelector(`[data-bbc-episode-cue-debug="${encodedKey}"]`);
+  }
+  return document.querySelector(`[data-episode-cue-debug="${String(key || "")}"]`);
+}
+
+function makeCueDebugStateKey(sourceType, key) {
+  return `${sourceType}:${String(key || "")}`;
+}
+
+function clearCueDebugLog(sourceType, key) {
+  cueDebugState.delete(makeCueDebugStateKey(sourceType, key));
+  const node = getCueDebugNode(sourceType, key);
+  if (!node) {
+    return;
+  }
+  node.innerHTML = "";
+  node.style.display = "none";
+}
+
+function appendCueDebugLog(sourceType, key, message) {
+  const text = String(message || "").trim();
+  if (!text) {
+    return;
+  }
+  const stateKey = makeCueDebugStateKey(sourceType, key);
+  const rows = cueDebugState.get(stateKey) || [];
+  if (rows[rows.length - 1] === text) {
+    return;
+  }
+  rows.push(text);
+  const trimmed = rows.slice(-8);
+  cueDebugState.set(stateKey, trimmed);
+  const node = getCueDebugNode(sourceType, key);
+  if (!node) {
+    return;
+  }
+  node.innerHTML = trimmed.map((row) => `<div class="cue-debug-line">${escapeHtml(row)}</div>`).join("");
+  node.style.display = trimmed.length ? "block" : "none";
 }
 
 function setBbcEpisodeStatus(episodeUrl, text, isError = false) {
@@ -1147,8 +1657,10 @@ function normalizeChapters(chapters) {
       startSec: Number.isFinite(Number(chapter?.startSeconds))
         ? Math.max(0, Number(chapter.startSeconds))
         : chapterStartToSeconds(chapter?.start),
-      title: String(chapter?.title || "").trim(),
-      artist: String(chapter?.artist || "").trim()
+      title: decodeHtmlEntities(String(chapter?.title || "")).trim(),
+      artist: decodeHtmlEntities(String(chapter?.artist || "")).trim(),
+      inferred: Boolean(chapter?.inferred),
+      inferredSource: decodeHtmlEntities(String(chapter?.inferredSource || "")).trim()
     }))
     .filter((chapter) => chapter.title)
     .sort((a, b) => a.startSec - b.startSec);
@@ -1162,8 +1674,10 @@ function normalizeTracks(tracks) {
   const rows = Array.isArray(tracks) ? tracks : [];
   return rows
     .map((track) => ({
-      title: String(track?.title || track?.name || track?.track || "").trim(),
-      artist: String(track?.artist || track?.performer || "").trim()
+      title: decodeHtmlEntities(String(track?.title || track?.name || track?.track || "")).trim(),
+      artist: decodeHtmlEntities(String(track?.artist || track?.performer || "")).trim(),
+      inferred: Boolean(track?.inferred),
+      inferredSource: decodeHtmlEntities(String(track?.inferredSource || "")).trim()
     }))
     .filter((track) => track.title);
 }
@@ -1173,7 +1687,7 @@ function estimateChaptersFromTracks(tracks, durationSeconds) {
   if (!rows.length) {
     return [];
   }
-  const total = Math.max(Number(durationSeconds || 0), rows.length * 60);
+  const total = Math.max(Number(durationSeconds || 0), rows.length * 180);
   const step = total / rows.length;
   return rows.map((track, index) => ({
     startSec: Math.floor(step * index),
@@ -1261,9 +1775,15 @@ function refreshNowPlayingTrackLabel() {
     updateNowPlayingChapterControls();
     return;
   }
+  const currentDuration = Number(nowPlayingAudio.duration || 0);
   if ((!Array.isArray(activeNowPlaying.chapters) || !activeNowPlaying.chapters.length) && Array.isArray(activeNowPlaying.tracks) && activeNowPlaying.tracks.length) {
-    const duration = Number(nowPlayingAudio.duration || 0);
-    activeNowPlaying.chapters = estimateChaptersFromTracks(activeNowPlaying.tracks, duration);
+    activeNowPlaying.chapters = estimateChaptersFromTracks(activeNowPlaying.tracks, currentDuration);
+    activeNowPlaying.chaptersFromTracks = true;
+  } else if (activeNowPlaying.chaptersFromTracks && currentDuration > 30 && Array.isArray(activeNowPlaying.tracks) && activeNowPlaying.tracks.length) {
+    const currentMax = Math.max(...(activeNowPlaying.chapters || []).map((row) => Number(row?.startSec || 0)), 0);
+    if (currentMax < currentDuration * 0.75) {
+      activeNowPlaying.chapters = estimateChaptersFromTracks(activeNowPlaying.tracks, currentDuration);
+    }
   }
   if (!Array.isArray(activeNowPlaying.chapters) || !activeNowPlaying.chapters.length) {
     nowPlayingTrack.textContent = "";
@@ -1276,7 +1796,11 @@ function refreshNowPlayingTrackLabel() {
     updateNowPlayingChapterControls();
     return;
   }
-  nowPlayingTrack.textContent = row.artist ? `Track: ${row.title} — ${row.artist}` : `Track: ${row.title}`;
+  const trackText = row.artist ? `Track: ${row.title} — ${row.artist}` : `Track: ${row.title}`;
+  const inferredText = row.inferred
+    ? ` (Inferred${row.inferredSource ? ` via ${row.inferredSource}` : ""})`
+    : "";
+  nowPlayingTrack.textContent = `${trackText}${inferredText}`;
   updateNowPlayingChapterControls();
 }
 
@@ -1359,10 +1883,10 @@ async function autoLoadVisibleBbcPlaylists(episodes) {
 
 function renderEpisodes(payload) {
   const rows = payload.episodes || [];
-  const totalPages = Math.max(1, Math.ceil(rows.length / PROGRAM_EPISODES_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(rows.length / getEpisodesPerPage()));
   const currentPage = Math.max(1, Math.min(totalPages, Number(state.currentProgramPage || 1)));
-  const start = (currentPage - 1) * PROGRAM_EPISODES_PER_PAGE;
-  const visibleRows = rows.slice(start, start + PROGRAM_EPISODES_PER_PAGE);
+  const start = (currentPage - 1) * getEpisodesPerPage();
+  const visibleRows = rows.slice(start, start + getEpisodesPerPage());
 
   if (!rows.length) {
     episodesResult.innerHTML = `<div class="item">No episodes returned for this page.</div>`;
@@ -1386,6 +1910,7 @@ function renderEpisodes(payload) {
               class="secondary"
               data-play-clip="${escapeHtml(clipId)}"
               data-play-title="${escapeHtml(episode.fullTitle || episode.title)}"
+              data-play-program-title="${escapeHtml(payload.title || "")}"
               data-play-subtitle="${escapeHtml((payload.title || "RTÉ Program") + (episode.publishedTimeFormatted ? ` • ${episode.publishedTimeFormatted}` : ""))}"
               data-play-image="${escapeHtml(episode.image || "")}"
               data-play-duration="${escapeHtml(episode.durationString || "")}"
@@ -1395,6 +1920,7 @@ function renderEpisodes(payload) {
               class="secondary"
               data-play-local-clip="${escapeHtml(clipId)}"
               data-play-local-title="${escapeHtml(episode.fullTitle || episode.title)}"
+              data-play-local-program-title="${escapeHtml(payload.title || "")}"
               data-play-local-subtitle="${escapeHtml((payload.title || "RTÉ Program") + (episode.publishedTimeFormatted ? ` • ${episode.publishedTimeFormatted}` : ""))}"
               data-play-local-image="${escapeHtml(episode.image || "")}"
               data-play-local-duration="${escapeHtml(episode.durationString || "")}"
@@ -1404,6 +1930,7 @@ function renderEpisodes(payload) {
             <button class="secondary" data-generate-cue-clip="${escapeHtml(clipId)}" data-generate-cue-title="${escapeHtml(episode.fullTitle || episode.title)}" data-generate-cue-program-title="${escapeHtml(payload.title || "")}" data-generate-cue-url="${escapeHtml(episode.episodeUrl || "")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-episode-status="${escapeHtml(clipId)}" style="display:none;"></div>
+          <div class="cue-debug-log" data-episode-cue-debug="${escapeHtml(clipId)}" style="display:none;"></div>
           <div class="episode-inline-playlist" data-episode-chapters="${escapeHtml(clipId)}"></div>
           <div class="episode-inline-playlist" data-episode-playlist="${escapeHtml(clipId)}">
             <div class="playlist-note">Queued playlist load...</div>
@@ -1418,10 +1945,10 @@ function renderEpisodes(payload) {
 
 function renderBbcEpisodes(payload) {
   const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
-  const totalPages = Math.max(1, Math.ceil(rows.length / BBC_EPISODES_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(rows.length / getEpisodesPerPage()));
   const currentPage = Math.max(1, Math.min(totalPages, Number(state.bbcProgramPage || 1)));
-  const start = (currentPage - 1) * BBC_EPISODES_PER_PAGE;
-  const visibleRows = rows.slice(start, start + BBC_EPISODES_PER_PAGE);
+  const start = (currentPage - 1) * getEpisodesPerPage();
+  const visibleRows = rows.slice(start, start + getEpisodesPerPage());
 
   if (!rows.length) {
     bbcEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
@@ -1450,6 +1977,7 @@ function renderBbcEpisodes(payload) {
               class="secondary"
               data-bbc-play-url="${escapeHtml(episodeUrl)}"
               data-bbc-play-title="${escapeHtml(episode.title)}"
+              data-bbc-play-program-title="${escapeHtml(payload.title || "BBC")}"
               data-bbc-play-subtitle="${escapeHtml((payload.title || "BBC Program") + (published ? ` • ${published}` : ""))}"
               data-bbc-play-image="${escapeHtml(episode.image || "")}"
               data-bbc-play-duration="${escapeHtml(String(episode.durationSeconds || 0))}"
@@ -1458,6 +1986,7 @@ function renderBbcEpisodes(payload) {
               class="secondary"
               data-bbc-play-local-url="${escapeHtml(episodeUrl)}"
               data-bbc-play-local-title="${escapeHtml(episode.title)}"
+              data-bbc-play-local-program-title="${escapeHtml(payload.title || "BBC")}"
               data-bbc-play-local-subtitle="${escapeHtml((payload.title || "BBC Program") + (published ? ` • ${published}` : ""))}"
               data-bbc-play-local-image="${escapeHtml(episode.image || "")}"
               data-bbc-play-local-duration="${escapeHtml(String(episode.durationSeconds || 0))}"
@@ -1466,6 +1995,7 @@ function renderBbcEpisodes(payload) {
             <button class="secondary" data-bbc-generate-cue-url="${escapeHtml(episodeUrl)}" data-bbc-generate-cue-title="${escapeHtml(episode.title)}" data-bbc-generate-cue-program-title="${escapeHtml(payload.title || "BBC")}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-bbc-episode-status="${episodeStatusKey}" style="display:none;"></div>
+          <div class="cue-debug-log" data-bbc-episode-cue-debug="${episodeStatusKey}" style="display:none;"></div>
           <div class="episode-inline-playlist" data-bbc-episode-chapters="${episodeStatusKey}"></div>
           <div class="episode-inline-playlist" data-bbc-episode-playlist="${episodeStatusKey}">
             <div class="playlist-note">Music Played: loading...</div>
@@ -1478,10 +2008,124 @@ function renderBbcEpisodes(payload) {
   autoLoadVisibleBbcPlaylists(visibleRows).catch(() => {});
 }
 
+function renderWwfEpisodes(payload) {
+  if (!wwfEpisodesResult) return;
+  const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
+
+  if (!rows.length) {
+    wwfEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
+    return;
+  }
+
+  wwfEpisodesResult.innerHTML = rows
+    .map((episode) => {
+      const episodeUrl = String(episode.episodeUrl || "").trim();
+      const statusKey = encodeURIComponent(episodeUrl);
+      const published = String(episode.publishedTime || "").trim();
+      const fullTitle = String(episode.fullTitle || episode.title || "").trim();
+      const programTitle = String(payload?.title || episode.showName || "Worldwide FM").trim();
+      const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+      const genresHtml = (episode.genres && episode.genres.length)
+        ? `<div class="genre-pills">${episode.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+        : "";
+      // Hide "Host: X" when all hosts match the program title (redundant)
+      const programTitleLower = String(payload?.title || "").toLowerCase();
+      const hostsRedundant = episode.hosts && episode.hosts.length
+        ? episode.hosts.every((h) => h.toLowerCase() === programTitleLower)
+        : true;
+      const hostsHtml = (episode.hosts && episode.hosts.length && !hostsRedundant)
+        ? `<div class="item-meta">Host: ${episode.hosts.map((h) => escapeHtml(h)).join(", ")}</div>`
+        : "";
+      const descHtml = episode.description
+        ? `<div class="item-meta muted" style="max-width:600px;">${escapeHtml(episode.description.slice(0, 200))}${episode.description.length > 200 ? "…" : ""}</div>`
+        : "";
+      const durationHtml = episode.durationMinutes
+        ? ` · ${episode.durationMinutes >= 60 ? Math.floor(episode.durationMinutes / 60) + "h" : ""}${episode.durationMinutes % 60 ? (episode.durationMinutes % 60) + "m" : ""}`
+        : "";
+      const runScheduleHtml = episode.runSchedule
+        ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(episode.runSchedule))}</strong></div>`
+        : episode.showTime ? `<div class="item-meta">${escapeHtml(utcTimeToLocal(episode.showTime))}${durationHtml}</div>` : "";
+      const locationHtml = episode.location ? `<div class="item-meta">${escapeHtml(episode.location)}</div>` : "";
+      return `
+        <div class="item">
+          ${img}
+          <div class="item-title">${escapeHtml(fullTitle)}</div>
+          <div class="item-meta">${published ? escapeHtml(published) : "Date unknown"}${!episode.runSchedule && !episode.showTime && durationHtml ? durationHtml : ""}</div>
+          ${hostsHtml}
+          ${runScheduleHtml}
+          ${locationHtml}
+          ${descHtml}
+          ${genresHtml}
+          <div class="item-actions">
+            <button class="secondary" data-wwf-play-url="${escapeHtml(episodeUrl)}" data-wwf-play-title="${escapeHtml(fullTitle)}" data-wwf-play-program-title="${escapeHtml(programTitle)}" data-wwf-play-image="${escapeHtml(episode.image || "")}">Play</button>
+            <button class="secondary" data-wwf-play-local-url="${escapeHtml(episodeUrl)}" data-wwf-play-local-title="${escapeHtml(fullTitle)}" data-wwf-play-local-program-title="${escapeHtml(programTitle)}" data-wwf-play-local-image="${escapeHtml(episode.image || "")}">Play Local</button>
+            <button data-wwf-download-url="${escapeHtml(episodeUrl)}" data-wwf-episode-title="${escapeHtml(fullTitle)}" data-wwf-program-title="${escapeHtml(programTitle)}" data-wwf-published="${escapeHtml(published)}" data-wwf-image="${escapeHtml(episode.image || "")}">Download</button>
+            <button class="secondary" data-wwf-generate-cue-url="${escapeHtml(episodeUrl)}" data-wwf-generate-cue-title="${escapeHtml(fullTitle)}" data-wwf-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
+          </div>
+          <div class="item-meta episode-status" data-wwf-episode-status="${statusKey}" style="display:none;"></div>
+          <div class="episode-inline-playlist" data-wwf-episode-playlist="${statusKey}">
+            <div class="playlist-note">Loading tracklist...</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  autoLoadWwfPlaylists(rows).catch(() => {});
+}
+
+async function loadWwfProgram(programNameOrUrl, page = 1) {
+  if (!window.rteDownloader?.getWwfProgramEpisodes) return;
+  const perPage = getEpisodesPerPage();
+  // WWF server pages are 20; map client page to server page
+  const serverPage = Math.max(1, Math.ceil((((Number(page) || 1) - 1) * perPage + 1) / 20));
+  const payload = await window.rteDownloader.getWwfProgramEpisodes(programNameOrUrl, serverPage);
+  const totalItems = Number(payload?.totalItems || 0);
+  const totalPages = Math.max(1, Math.ceil(totalItems / perPage));
+  const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
+  // Client-side offset within server response
+  const clientOffset = ((targetPage - 1) * perPage) % 20;
+  if (payload.episodes) payload.episodes = payload.episodes.slice(clientOffset, clientOffset + perPage);
+  state.wwfProgramUrl = payload.programUrl || programNameOrUrl;
+  state.wwfProgramPage = targetPage;
+  state.wwfProgramMaxPages = totalPages;
+  state.wwfEpisodesPayload = payload;
+  if (wwfProgramUrlInput) wwfProgramUrlInput.value = state.wwfProgramUrl;
+  if (wwfProgramMeta) {
+    const img = (payload.image || "").trim();
+    const genres = payload.genres || [];
+    const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    const locHtml = payload.location ? `<span class="item-meta">${escapeHtml(payload.location)}</span>` : "";
+    wwfProgramMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(payload.title || "Worldwide FM")}</strong><br>
+      ${payload.description ? `<span class="muted">${escapeHtml(payload.description.slice(0, 300))}${payload.description.length > 300 ? "…" : ""}</span><br>` : ""}
+      ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
+      ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
+      ${payload.cadence && payload.cadence !== "irregular" ? `Cadence: <strong>${escapeHtml(payload.cadence)}</strong>` : ""}
+      ${payload.averageDaysBetween ? ` (${escapeHtml(String(payload.averageDaysBetween))} day average)` : ""}
+      ${locHtml ? ` · ${locHtml}` : ""}<br>
+      ${genresHtml}
+      Page ${state.wwfProgramPage} of ${state.wwfProgramMaxPages} - ${Number(payload?.totalItems || 0)} episodes
+    `;
+  }
+  renderWwfEpisodes(payload);
+}
+
+function setWwfEpisodeStatus(episodeUrl, text, isError = false) {
+  if (!wwfEpisodesResult) return;
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const el = wwfEpisodesResult.querySelector(`[data-wwf-episode-status="${key}"]`);
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "block" : "none";
+  el.className = `item-meta episode-status ${isError ? "error" : ""}`;
+}
+
 async function loadBbcProgram(programUrl, page = 1) {
   const payload = await window.rteDownloader.getBbcProgramEpisodes(programUrl, 1);
   const totalRows = Number(payload?.episodes?.length || 0);
-  const totalPages = Math.max(1, Math.ceil(totalRows / BBC_EPISODES_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(totalRows / getEpisodesPerPage()));
   const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
 
   state.bbcProgramUrl = payload.programUrl;
@@ -1493,7 +2137,7 @@ async function loadBbcProgram(programUrl, page = 1) {
   bbcProgramMeta.innerHTML = `
     <strong>${escapeHtml(payload.title || "BBC Program")}</strong><br>
     ${escapeHtml(payload.description || "")}<br>
-    ${payload.runSchedule ? `${escapeHtml(addLocalTimeHint(payload.runSchedule))}<br>` : ""}
+    ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
     ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(payload.nextBroadcastAt)}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
     Cadence guess: <strong>${escapeHtml(payload.cadence || "unknown")}</strong>
     ${payload.averageDaysBetween ? ` (${escapeHtml(payload.averageDaysBetween)} day average)` : ""}<br>
@@ -1506,7 +2150,7 @@ async function loadBbcProgram(programUrl, page = 1) {
 async function loadProgram(programUrl, page = 1) {
   const payload = await window.rteDownloader.getProgramEpisodes(programUrl, 1);
   const totalRows = Number(payload.episodes?.length || 0);
-  const totalPages = Math.max(1, Math.ceil(totalRows / PROGRAM_EPISODES_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(totalRows / getEpisodesPerPage()));
   const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
 
   state.currentProgramUrl = payload.programUrl;
@@ -1517,7 +2161,7 @@ async function loadProgram(programUrl, page = 1) {
   programUrlInput.value = payload.programUrl;
   programMeta.innerHTML = `
     <strong>${escapeHtml(payload.title)}</strong><br>
-    ${payload.runSchedule ? `${escapeHtml(addLocalTimeHint(payload.runSchedule))}<br>` : ""}
+    ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
     ${escapeHtml(payload.description || "")}<br>
     Cadence guess: <strong>${escapeHtml(payload.cadence || "unknown")}</strong>
     ${payload.averageDaysBetween ? ` (${escapeHtml(payload.averageDaysBetween)} day average)` : ""}<br>
@@ -1552,6 +2196,8 @@ function formatSchedulerNextShowLocal(schedule) {
 
 function renderSchedulerCard(schedule, sourceType = "rte") {
   const isBbc = sourceType === "bbc";
+  const isWwf = sourceType === "wwf";
+  const isNts = sourceType === "nts";
   const latestImage = schedule?.latestEpisodeImage || schedule?.image || "";
   const latestPublished = formatLocalDate(schedule?.latestEpisodePublishedTime || "");
   const runLocal = formatRunScheduleLocalOnly(schedule?.runSchedule || "");
@@ -1565,16 +2211,17 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const latestFileTime = schedule?.lastDownloaded?.at ? formatLocalDateTime(schedule.lastDownloaded.at) : "";
   const latestFilePath = String(schedule?.lastDownloaded?.filePath || "").trim();
   const status = String(schedule?.lastStatus || "Idle");
-  const toggleAttr = isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
-  const runAttr = isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
-  const removeAttr = isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
-  const playOutputAttr = isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
-  const playFileAttr = isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
-  const playTitleAttr = isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
-  const playImageAttr = isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
-  const playEpisodeUrlAttr = isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
-  const playSourceTypeAttr = isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
-  const statusAttr = isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
+  const toggleAttr = isNts ? "data-nts-schedule-toggle" : isWwf ? "data-wwf-schedule-toggle" : isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
+  const runAttr = isNts ? "data-nts-schedule-run" : isWwf ? "data-wwf-schedule-run" : isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
+  const removeAttr = isNts ? "data-nts-schedule-remove" : isWwf ? "data-wwf-schedule-remove" : isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
+  const playOutputAttr = isNts ? "data-nts-schedule-play-output" : isWwf ? "data-wwf-schedule-play-output" : isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
+  const playFileAttr = isNts ? "data-nts-schedule-play-file" : isWwf ? "data-wwf-schedule-play-file" : isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
+  const playTitleAttr = isNts ? "data-nts-schedule-play-title" : isWwf ? "data-wwf-schedule-play-title" : isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
+  const playImageAttr = isNts ? "data-nts-schedule-play-image" : isWwf ? "data-wwf-schedule-play-image" : isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
+  const playEpisodeUrlAttr = isNts ? "data-nts-schedule-play-episode-url" : isWwf ? "data-wwf-schedule-play-episode-url" : isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
+  const playSourceTypeAttr = isNts ? "data-nts-schedule-play-source-type" : isWwf ? "data-wwf-schedule-play-source-type" : isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
+  const statusAttr = isNts ? "data-nts-schedule-status" : isWwf ? "data-wwf-schedule-status" : isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
+  const playSourceTypeValue = isNts ? "nts" : isWwf ? "wwf" : isBbc ? "bbc" : "rte";
 
   return `
     <div class="item scheduler-card">
@@ -1603,7 +2250,7 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
       <div class="item-actions">
         <button class="secondary" ${toggleAttr}="${escapeHtml(schedule.id)}" data-enabled="${schedule.enabled ? "1" : "0"}">${schedule.enabled ? "Pause" : "Enable"}</button>
         <button class="secondary" ${runAttr}="${escapeHtml(schedule.id)}">Run Now</button>
-        ${schedule?.lastDownloaded?.outputDir && schedule?.lastDownloaded?.fileName ? `<button class="secondary" ${playOutputAttr}="${escapeHtml(schedule.lastDownloaded.outputDir)}" ${playFileAttr}="${escapeHtml(schedule.lastDownloaded.fileName)}" ${playTitleAttr}="${escapeHtml(schedule.lastDownloaded.title || schedule.title)}" ${playImageAttr}="${escapeHtml(schedule.lastDownloaded.image || schedule.latestEpisodeImage || schedule.image || "")}" ${playEpisodeUrlAttr}="${escapeHtml(schedule.lastDownloaded.episodeUrl || "")}" ${playSourceTypeAttr}="${escapeHtml(isBbc ? "bbc" : "rte")}">Play Latest</button>` : ""}
+        ${schedule?.lastDownloaded?.outputDir && schedule?.lastDownloaded?.fileName ? `<button class="secondary" ${playOutputAttr}="${escapeHtml(schedule.lastDownloaded.outputDir)}" ${playFileAttr}="${escapeHtml(schedule.lastDownloaded.fileName)}" ${playTitleAttr}="${escapeHtml(schedule.lastDownloaded.title || schedule.title)}" ${playImageAttr}="${escapeHtml(schedule.lastDownloaded.image || schedule.latestEpisodeImage || schedule.image || "")}" ${playEpisodeUrlAttr}="${escapeHtml(schedule.lastDownloaded.episodeUrl || "")}" ${playSourceTypeAttr}="${escapeHtml(playSourceTypeValue)}">Play Latest</button>` : ""}
         <button class="secondary" ${removeAttr}="${escapeHtml(schedule.id)}">Remove</button>
       </div>
       <div class="item-meta episode-status" ${statusAttr}="${escapeHtml(schedule.id)}" style="display:none;"></div>
@@ -1631,13 +2278,186 @@ async function refreshBbcSchedules() {
   bbcScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "bbc")).join("");
 }
 
+async function renderWwfScheduleList() {
+  if (!wwfScheduleList || !window.rteDownloader?.listWwfSchedules) return;
+  const schedules = await window.rteDownloader.listWwfSchedules();
+  if (!schedules.length) {
+    wwfScheduleList.innerHTML = `<div class="item">No Worldwide FM schedules yet.</div>`;
+    return;
+  }
+  wwfScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "wwf")).join("");
+}
+
+function renderNtsEpisodes(payload) {
+  if (!ntsEpisodesResult) return;
+  const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
+
+  if (!rows.length) {
+    ntsEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
+    return;
+  }
+
+  ntsEpisodesResult.innerHTML = rows
+    .map((episode) => {
+      const episodeUrl = String(episode.episodeUrl || "").trim();
+      const statusKey = encodeURIComponent(episodeUrl);
+      const published = String(episode.publishedTime || "").trim();
+      const fullTitle = String(episode.fullTitle || episode.title || "").trim();
+      const programTitle = String(payload?.title || episode.showName || "NTS").trim();
+      const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+      const genresHtml = (episode.genres && episode.genres.length)
+        ? `<div class="genre-pills">${episode.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+        : "";
+      const locationHtml = episode.location ? `<div class="item-meta">${escapeHtml(episode.location)}</div>` : "";
+      return `
+        <div class="item">
+          ${img}
+          <div class="item-title">${escapeHtml(fullTitle)}</div>
+          <div class="item-meta">${published ? escapeHtml(published) : "Date unknown"}</div>
+          ${locationHtml}
+          ${genresHtml}
+          <div class="item-actions">
+            <button class="secondary" data-nts-play-url="${escapeHtml(episodeUrl)}" data-nts-play-title="${escapeHtml(fullTitle)}" data-nts-play-program-title="${escapeHtml(programTitle)}" data-nts-play-image="${escapeHtml(episode.image || "")}">Play</button>
+            <button class="secondary" data-nts-play-local-url="${escapeHtml(episodeUrl)}" data-nts-play-local-title="${escapeHtml(fullTitle)}" data-nts-play-local-program-title="${escapeHtml(programTitle)}" data-nts-play-local-image="${escapeHtml(episode.image || "")}">Play Local</button>
+            <button data-nts-download-url="${escapeHtml(episodeUrl)}" data-nts-episode-title="${escapeHtml(fullTitle)}" data-nts-program-title="${escapeHtml(programTitle)}" data-nts-published="${escapeHtml(published)}" data-nts-image="${escapeHtml(episode.image || "")}">Download</button>
+            <button class="secondary" data-nts-generate-cue-url="${escapeHtml(episodeUrl)}" data-nts-generate-cue-title="${escapeHtml(fullTitle)}" data-nts-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
+          </div>
+          <div class="item-meta episode-status" data-nts-episode-status="${statusKey}" style="display:none;"></div>
+          <div class="episode-inline-playlist" data-nts-episode-playlist="${statusKey}">
+            <div class="playlist-note">Loading tracklist...</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  autoLoadNtsPlaylists(rows).catch(() => {});
+}
+
+async function autoLoadNtsPlaylists(episodes) {
+  if (!window.rteDownloader?.getNtsEpisodePlaylist) return;
+  const queue = (episodes || []).filter((e) => e.episodeUrl);
+  const concurrency = 3;
+  let index = 0;
+
+  async function worker() {
+    while (index < queue.length) {
+      const ep = queue[index];
+      index += 1;
+      const statusKey = encodeURIComponent(String(ep.episodeUrl || ""));
+      const node = ntsEpisodesResult?.querySelector(`[data-nts-episode-playlist="${statusKey}"]`);
+      if (!node) continue;
+      try {
+        const data = await window.rteDownloader.getNtsEpisodePlaylist(ep.episodeUrl);
+        const tracks = data?.tracks || [];
+        if (tracks.length) {
+          node.innerHTML = renderPlaylistTracks(tracks);
+        } else {
+          node.innerHTML = `<div class="playlist-note">No tracklist available.</div>`;
+        }
+      } catch {
+        node.innerHTML = `<div class="playlist-note">Tracklist unavailable.</div>`;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()));
+}
+
+async function autoLoadWwfPlaylists(episodes) {
+  if (!window.rteDownloader?.getWwfEpisodePlaylist) return;
+  const queue = (episodes || []).filter((e) => e.episodeUrl);
+  const concurrency = 2;
+  let index = 0;
+
+  async function worker() {
+    while (index < queue.length) {
+      const ep = queue[index];
+      index += 1;
+      const statusKey = encodeURIComponent(String(ep.episodeUrl || ""));
+      const node = wwfEpisodesResult?.querySelector(`[data-wwf-episode-playlist="${statusKey}"]`);
+      if (!node) continue;
+      try {
+        const data = await window.rteDownloader.getWwfEpisodePlaylist(ep.episodeUrl);
+        const tracks = data?.tracks || [];
+        if (tracks.length) {
+          node.innerHTML = renderPlaylistTracks(tracks);
+        } else {
+          node.innerHTML = `<div class="playlist-note">No tracklist available.</div>`;
+        }
+      } catch {
+        node.innerHTML = `<div class="playlist-note">Tracklist unavailable.</div>`;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()));
+}
+
+async function loadNtsProgram(programUrlOrSlug, page = 1) {
+  if (!window.rteDownloader?.getNtsProgramEpisodes) return;
+  const perPage = getEpisodesPerPage();
+  // NTS server pages are 20; map client page to server page
+  const serverPage = Math.max(1, Math.ceil((((Number(page) || 1) - 1) * perPage + 1) / 20));
+  const payload = await window.rteDownloader.getNtsProgramEpisodes(programUrlOrSlug, serverPage);
+  const totalItems = Number(payload?.totalItems || 0);
+  const totalPages = Math.max(1, Math.ceil(totalItems / perPage));
+  const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
+  // Client-side offset within server response
+  const clientOffset = ((targetPage - 1) * perPage) % 20;
+  if (payload.episodes) payload.episodes = payload.episodes.slice(clientOffset, clientOffset + perPage);
+  state.ntsProgramUrl = payload.programUrl || programUrlOrSlug;
+  state.ntsProgramPage = targetPage;
+  state.ntsProgramMaxPages = totalPages;
+  state.ntsEpisodesPayload = payload;
+  if (ntsProgramUrlInput) ntsProgramUrlInput.value = state.ntsProgramUrl;
+  if (ntsProgramMeta) {
+    const desc = (payload.description || "").trim();
+    const img = (payload.image || "").trim();
+    const genres = payload.genres || [];
+    const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    ntsProgramMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(payload.title || "NTS")}</strong><br>
+      ${desc ? `<span class="muted">${escapeHtml(desc)}</span><br>` : ""}
+      ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
+      ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
+      ${payload.cadence && payload.cadence !== "irregular" ? `Cadence: <strong>${escapeHtml(payload.cadence)}</strong><br>` : ""}
+      ${genresHtml}
+      Page ${state.ntsProgramPage} of ${state.ntsProgramMaxPages} - ${Number(payload?.totalItems || 0)} episodes
+    `;
+  }
+  renderNtsEpisodes(payload);
+}
+
+function setNtsEpisodeStatus(episodeUrl, text, isError = false) {
+  if (!ntsEpisodesResult) return;
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const el = ntsEpisodesResult.querySelector(`[data-nts-episode-status="${key}"]`);
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "block" : "none";
+  el.className = `item-meta episode-status ${isError ? "error" : ""}`;
+}
+
+async function renderNtsScheduleList() {
+  if (!ntsScheduleList || !window.rteDownloader?.listNtsSchedules) return;
+  const schedules = await window.rteDownloader.listNtsSchedules();
+  if (!schedules.length) {
+    ntsScheduleList.innerHTML = `<div class="item">No NTS schedules yet.</div>`;
+    return;
+  }
+  ntsScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "nts")).join("");
+}
+
 async function loadSettings() {
   const settings = await window.rteDownloader.getSettings();
   state.timeFormat = settings?.timeFormat === "12h" ? "12h" : "24h";
+  state.episodesPerPage = Math.max(1, Math.min(50, Number(settings?.episodesPerPage || DEFAULT_EPISODES_PER_PAGE) || DEFAULT_EPISODES_PER_PAGE));
   state.downloadDir = String(settings?.downloadDir || settings?.rteDownloadDir || "");
   state.pathFormat = String(settings?.pathFormat || state.pathFormat);
   state.cueAutoGenerate = Boolean(settings?.cueAutoGenerate);
-  state.outputFormat = String(settings?.outputFormat || "mp3").toLowerCase();
+  state.outputFormat = normalizeOutputFormatValue(settings?.outputFormat || "m4a");
   state.outputQuality = String(settings?.outputQuality || "128K");
   state.normalizeLoudness = settings?.normalizeLoudness == null ? true : Boolean(settings.normalizeLoudness);
   state.maxConcurrentDownloads = Math.max(1, Math.min(8, Number(settings?.maxConcurrentDownloads || 2) || 2));
@@ -1645,13 +2465,23 @@ async function loadSettings() {
   state.id3Tagging = settings?.id3Tagging == null ? true : Boolean(settings.id3Tagging);
   state.feedExportEnabled = settings?.feedExportEnabled == null ? true : Boolean(settings.feedExportEnabled);
   state.webhookUrl = String(settings?.webhookUrl || "");
+  state.auddTrackMatching = settings?.auddTrackMatching == null ? false : Boolean(settings.auddTrackMatching);
+  state.auddApiToken = String(settings?.auddApiToken || "");
+  state.fingerprintTrackMatching = settings?.fingerprintTrackMatching == null ? false : Boolean(settings.fingerprintTrackMatching);
+  state.acoustidApiKey = String(settings?.acoustidApiKey || "");
+  state.songrecTrackMatching = settings?.songrecTrackMatching == null ? false : Boolean(settings.songrecTrackMatching);
+  state.songrecSampleSeconds = Math.max(8, Math.min(45, Number(settings?.songrecSampleSeconds || 20) || 20));
+  state.ffmpegCueSilenceDetect = settings?.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect);
+  state.ffmpegCueLoudnessDetect = settings?.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect);
+  state.ffmpegCueSpectralDetect = settings?.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect);
   timeFormatSelect.value = state.timeFormat;
+  if (episodesPerPageInput) episodesPerPageInput.value = String(state.episodesPerPage);
   downloadDirInput.value = getActiveDownloadDir();
   if (pathFormatInput) {
     pathFormatInput.value = state.pathFormat;
   }
   cueAutoGenerateCheckbox.checked = state.cueAutoGenerate;
-  outputFormatSelect.value = state.outputFormat;
+  outputFormatSelect.value = normalizeOutputFormatValue(state.outputFormat);
   outputQualitySelect.value = state.outputQuality;
   normalizeLoudnessCheckbox.checked = state.normalizeLoudness;
   maxConcurrentInput.value = String(state.maxConcurrentDownloads);
@@ -1659,6 +2489,33 @@ async function loadSettings() {
   id3TaggingCheckbox.checked = state.id3Tagging;
   feedExportCheckbox.checked = state.feedExportEnabled;
   webhookUrlInput.value = state.webhookUrl;
+  if (auddTrackMatchingCheckbox) {
+    auddTrackMatchingCheckbox.checked = state.auddTrackMatching;
+  }
+  if (auddApiTokenInput) {
+    auddApiTokenInput.value = state.auddApiToken;
+  }
+  if (fingerprintTrackMatchingCheckbox) {
+    fingerprintTrackMatchingCheckbox.checked = state.fingerprintTrackMatching;
+  }
+  if (acoustidApiKeyInput) {
+    acoustidApiKeyInput.value = state.acoustidApiKey;
+  }
+  if (songrecTrackMatchingCheckbox) {
+    songrecTrackMatchingCheckbox.checked = state.songrecTrackMatching;
+  }
+  if (songrecSampleSecondsInput) {
+    songrecSampleSecondsInput.value = String(state.songrecSampleSeconds);
+  }
+  if (ffmpegCueSilenceCheckbox) {
+    ffmpegCueSilenceCheckbox.checked = state.ffmpegCueSilenceDetect;
+  }
+  if (ffmpegCueLoudnessCheckbox) {
+    ffmpegCueLoudnessCheckbox.checked = state.ffmpegCueLoudnessDetect;
+  }
+  if (ffmpegCueSpectralCheckbox) {
+    ffmpegCueSpectralCheckbox.checked = state.ffmpegCueSpectralDetect;
+  }
   renderPathFormatPreview();
 }
 
@@ -1694,7 +2551,7 @@ quickDownloadBtn.addEventListener("click", async () => {
 
   try {
     const data = await window.rteDownloader.downloadFromPageUrl(pageUrl, progressToken, { forceDownload });
-    const cueText = data?.cue?.cuePath ? " + CUE/chapters generated" : "";
+    const cueText = data?.cue?.cuePath ? ` + CUE/chapters generated${formatCueAlignment(data.cue)}` : "";
     const statusPrefix = data?.existing ? "Already downloaded" : "Saved";
     const hintText = data?.existing ? " (click Download again to force re-download)" : "";
     setQuickStatus(`${statusPrefix}: ${data.outputDir}\\${data.fileName}${cueText}${hintText}`);
@@ -1747,7 +2604,7 @@ bbcDownloadBtn.addEventListener("click", async () => {
 
   try {
     const data = await window.rteDownloader.downloadFromBbcUrl(pageUrl, progressToken, { forceDownload });
-    const cueText = data?.cue?.cuePath ? " + CUE/chapters generated" : "";
+    const cueText = data?.cue?.cuePath ? ` + CUE/chapters generated${formatCueAlignment(data.cue)}` : "";
     const statusPrefix = data?.existing ? "Already downloaded" : "Saved";
     const hintText = data?.existing ? " (click Download again to force re-download)" : "";
     setBbcStatus(`${statusPrefix}: ${data.outputDir}\\${data.fileName}${cueText}${hintText}`);
@@ -1812,6 +2669,175 @@ bbcRefreshLiveBtn.addEventListener("click", () => {
       setButtonBusy(bbcRefreshLiveBtn, false, "Refresh");
     });
 });
+
+async function refreshNtsLiveNow() {
+  if (!ntsLiveNow || !ntsStationSelect) return;
+  const channelId = ntsStationSelect.value || "nts1";
+  const stationLabel = (state.ntsLiveStations || []).find((s) => String(s.id) === channelId)?.name || (channelId === "nts2" ? "NTS 2" : "NTS 1");
+  const ntsSection = ntsLiveNow.closest(".nts-live-section-wrap");
+  const audioWrap = ntsSection ? ntsSection.querySelector(".nts-live-audio-wrap") : document.getElementById("ntsLiveAudio")?.parentElement;
+  if (audioWrap) {
+    audioWrap.classList.add("nts-live-audio-hidden");
+    audioWrap.classList.remove("nts-live-audio-at-bottom");
+  }
+
+  if (!window.rteDownloader?.getNtsLiveNow) {
+    ntsLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>${escapeHtml(stationLabel)}</strong> — Live<br><span class="muted">Select a station to stream.</span></div><div class="nts-live-hero nts-live-hero-placeholder"><span class="nts-live-location-overlay"></span><a href="https://www.nts.live/" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">nts.live</a></div>`;
+    return;
+  }
+  try {
+    const info = await window.rteDownloader.getNtsLiveNow(channelId);
+    const img = (info.image || "").trim();
+    const programmeName = info.programmeName || "Live";
+    const description = (info.description || "").trim();
+    const location = (info.location || "").trim();
+    const timeSlotLocal = formatNtsTimeSlotLocal(info.startTimestamp, info.endTimestamp);
+    const timeSlotDisplay = timeSlotLocal || (info.timeSlot || "").trim();
+
+    const line1Parts = [`<strong>${escapeHtml(info.stationName || stationLabel)}</strong> — ${escapeHtml(programmeName)}`];
+    if (timeSlotDisplay) line1Parts.push(` (${escapeHtml(timeSlotDisplay)})`);
+    const line1 = line1Parts.join("");
+    const line2 = description ? escapeHtml(description) : "";
+
+    const parts = [];
+    parts.push(`<div class="nts-live-header status">${line1}`);
+    if (line2) parts.push(`<br><span class="muted">${line2}</span>`);
+    parts.push("</div>");
+
+    if (img) {
+      parts.push('<div class="nts-live-hero">');
+      parts.push(`<img src="${escapeHtml(img)}" alt="" class="nts-live-hero-img" loading="lazy" />`);
+      if (location) parts.push(`<span class="nts-live-location-overlay">${escapeHtml(location)}</span>`);
+      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push("</div>");
+    } else {
+      parts.push('<div class="nts-live-hero nts-live-hero-placeholder">');
+      if (location) parts.push(`<span class="nts-live-location-overlay">${escapeHtml(location)}</span>`);
+      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push('<a href="https://www.nts.live/" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">nts.live</a>');
+      parts.push("</div>");
+    }
+    ntsLiveNow.innerHTML = parts.join("");
+  } catch {
+    ntsLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>${escapeHtml(stationLabel)}</strong> — Live<br><span class="muted">Stream loading. Click Refresh to fetch current show.</span></div><div class="nts-live-hero nts-live-hero-placeholder"><a href="https://www.nts.live/" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">nts.live</a></div>`;
+  }
+}
+
+async function refreshWwfLiveNow() {
+  if (!wwfLiveNow) return;
+  if (!window.rteDownloader?.getWwfLiveNow) {
+    wwfLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>Worldwide FM</strong> — Live<br><span class="muted">Listen at <a href="https://www.worldwidefm.net/" target="_blank" rel="noopener noreferrer">worldwidefm.net</a></span></div><div class="nts-live-hero nts-live-hero-placeholder"><a href="https://www.worldwidefm.net/" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">worldwidefm.net</a></div>`;
+    return;
+  }
+  try {
+    const info = await window.rteDownloader.getWwfLiveNow();
+    const timeSlotLocal = formatNtsTimeSlotLocal(info.startTimestamp, info.endTimestamp);
+    const timeSlotDisplay = timeSlotLocal || (info.timeSlot || "").trim();
+    const upNextLabel = info.isUpcoming ? "Up Next: " : "";
+    const line1Parts = [`<strong>${escapeHtml(info.stationName || "Worldwide FM")}</strong> — ${upNextLabel}${escapeHtml(info.programmeName || "Live")}`];
+    if (timeSlotDisplay) line1Parts.push(` (${escapeHtml(timeSlotDisplay)})`);
+    const line1 = line1Parts.join("");
+    const line2 = (info.description || "").trim() ? escapeHtml(info.description) : "";
+    const parts = [];
+    parts.push(`<div class="nts-live-header status">${line1}`);
+    if (line2) parts.push(`<br><span class="muted">${line2}</span>`);
+    parts.push("</div>");
+    const img = (info.image || "").trim();
+    const location = (info.location || "").trim();
+    if (img) {
+      parts.push('<div class="nts-live-hero">');
+      parts.push(`<img src="${escapeHtml(img)}" alt="" class="nts-live-hero-img" loading="lazy" />`);
+      if (location) parts.push(`<span class="nts-live-location-overlay">${escapeHtml(location)}</span>`);
+      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push("</div>");
+    } else {
+      parts.push('<div class="nts-live-hero nts-live-hero-placeholder">');
+      if (location) parts.push(`<span class="nts-live-location-overlay">${escapeHtml(location)}</span>`);
+      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push('<a href="https://www.worldwidefm.net/" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">worldwidefm.net</a>');
+      parts.push("</div>");
+    }
+    wwfLiveNow.innerHTML = parts.join("");
+  } catch {
+    wwfLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>Worldwide FM</strong> — Live<br><span class="muted">Could not load schedule. <a href="https://www.worldwidefm.net/" target="_blank" rel="noopener noreferrer">worldwidefm.net</a></span></div><div class="nts-live-hero nts-live-hero-placeholder"><a href="https://www.worldwidefm.net/" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">worldwidefm.net</a></div>`;
+  }
+}
+
+if (wwfLiveNow) {
+  wwfLiveNow.addEventListener("click", (e) => {
+    const playBtn = e.target.closest(".nts-live-play-overlay");
+    if (!playBtn) return;
+    const wwfLiveAudio = document.getElementById("wwfLiveAudio");
+    const wwfAudioWrap = document.querySelector(".wwf-live-audio-wrap");
+    const streamUrl = (state.wwfLiveStations && state.wwfLiveStations[0]?.streamUrl) || "https://worldwide-fm.radiocult.fm/stream";
+    if (wwfLiveAudio) {
+      wwfLiveAudio.src = streamUrl;
+      wwfLiveAudio.play().catch(() => {});
+    }
+    if (wwfAudioWrap) {
+      wwfAudioWrap.classList.remove("nts-live-audio-hidden");
+      wwfAudioWrap.classList.add("nts-live-audio-at-bottom");
+    }
+    playBtn.classList.add("hidden");
+  });
+}
+if (wwfRefreshLiveBtn) {
+  wwfRefreshLiveBtn.addEventListener("click", () => {
+    setActiveTab("wwf");
+    refreshWwfLiveNow().catch(() => {});
+  });
+}
+
+if (ntsLiveNow) {
+  ntsLiveNow.addEventListener("click", (e) => {
+    const playBtn = e.target.closest(".nts-live-play-overlay");
+    if (!playBtn || !ntsStationSelect || !ntsLiveAudio) return;
+    const opt = ntsStationSelect.options[ntsStationSelect.selectedIndex];
+    const streamUrl = (opt && opt.getAttribute("data-stream-url")) || "";
+    if (!streamUrl) return;
+    ntsLiveAudio.src = streamUrl;
+    ntsLiveAudio.play().catch(() => {});
+    playBtn.classList.add("hidden");
+    const ntsSection = ntsLiveNow.closest(".nts-live-section-wrap");
+    const audioWrap = ntsSection ? ntsSection.querySelector(".nts-live-audio-wrap") : document.getElementById("ntsLiveAudio")?.parentElement;
+    if (audioWrap) {
+      audioWrap.classList.remove("nts-live-audio-hidden");
+      audioWrap.classList.add("nts-live-audio-at-bottom");
+    }
+  });
+}
+if (ntsStationSelect) {
+  ntsStationSelect.addEventListener("change", () => {
+    const opt = ntsStationSelect.options[ntsStationSelect.selectedIndex];
+    const streamUrl = (opt && opt.getAttribute("data-stream-url")) || "";
+    if (ntsLiveAudio) {
+      ntsLiveAudio.src = streamUrl;
+      if (streamUrl) ntsLiveAudio.play().catch(() => {});
+    }
+    refreshNtsLiveNow().catch(() => {});
+  });
+}
+if (ntsRefreshLiveBtn) {
+  ntsRefreshLiveBtn.addEventListener("click", () => {
+    setActiveTab("nts");
+    if (ntsStationSelect && state.ntsLiveStations.length === 0 && window.rteDownloader?.getNtsLiveStations) {
+      window.rteDownloader.getNtsLiveStations().then((stations) => {
+        state.ntsLiveStations = stations || [];
+        if (ntsStationSelect && state.ntsLiveStations.length) {
+          ntsStationSelect.innerHTML = state.ntsLiveStations.map((s) => {
+            const streamUrl = (s.streamUrl || "").trim();
+            return `<option value="${escapeHtml(s.id)}"${streamUrl ? ` data-stream-url="${escapeHtml(streamUrl)}"` : ""}>${escapeHtml(s.name)}</option>`;
+          }).join("");
+          const firstWithStream = state.ntsLiveStations.find((s) => (s.streamUrl || "").trim());
+          if (firstWithStream && ntsLiveAudio) ntsLiveAudio.src = firstWithStream.streamUrl || "";
+          refreshNtsLiveNow().catch(() => {});
+        }
+      }).catch(() => {});
+    } else {
+      refreshNtsLiveNow().catch(() => {});
+    }
+  });
+}
 
 liveOverlayPlayBtn.addEventListener("click", () => {
   const rawSrc = liveOverlayPlayBtn.dataset.autoplaySrc || "";
@@ -2041,7 +3067,7 @@ bbcPrevPageBtn.addEventListener("click", () => {
   bbcProgramMeta.innerHTML = `
     <strong>${escapeHtml(state.bbcEpisodesPayload?.title || "BBC Program")}</strong><br>
     ${escapeHtml(state.bbcEpisodesPayload?.description || "")}<br>
-    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(addLocalTimeHint(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
+    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(toLocalSchedule(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
     ${state.bbcEpisodesPayload?.nextBroadcastAt ? `Next show: ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastAt)}${state.bbcEpisodesPayload?.nextBroadcastTitle ? ` - ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastTitle)}` : ""}<br>` : ""}
     Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
   `;
@@ -2062,7 +3088,7 @@ bbcNextPageBtn.addEventListener("click", () => {
   bbcProgramMeta.innerHTML = `
     <strong>${escapeHtml(state.bbcEpisodesPayload?.title || "BBC Program")}</strong><br>
     ${escapeHtml(state.bbcEpisodesPayload?.description || "")}<br>
-    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(addLocalTimeHint(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
+    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(toLocalSchedule(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
     ${state.bbcEpisodesPayload?.nextBroadcastAt ? `Next show: ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastAt)}${state.bbcEpisodesPayload?.nextBroadcastTitle ? ` - ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastTitle)}` : ""}<br>` : ""}
     Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
   `;
@@ -2075,7 +3101,12 @@ tabRteBtn.addEventListener("click", () => {
 tabBbcBtn.addEventListener("click", () => {
   setActiveTab("bbc");
 });
-
+if (tabWwfBtn) {
+  tabWwfBtn.addEventListener("click", () => setActiveTab("wwf"));
+}
+if (tabNtsBtn) {
+  tabNtsBtn.addEventListener("click", () => setActiveTab("nts"));
+}
 tabSettingsBtn.addEventListener("click", () => {
   setActiveTab("settings");
 });
@@ -2142,14 +3173,24 @@ saveSettingsBtn.addEventListener("click", async () => {
   const activeDownloadDir = downloadDirInput.value.trim();
   const pathFormat = String(pathFormatInput?.value || "").trim();
   const timeFormat = timeFormatSelect.value === "12h" ? "12h" : "24h";
+  const episodesPerPage = Math.max(1, Math.min(50, Math.floor(Number(episodesPerPageInput?.value || DEFAULT_EPISODES_PER_PAGE) || DEFAULT_EPISODES_PER_PAGE)));
   const cueAutoGenerate = Boolean(cueAutoGenerateCheckbox.checked);
-  const outputFormat = String(outputFormatSelect?.value || "mp3").toLowerCase();
+  const outputFormat = normalizeOutputFormatValue(outputFormatSelect?.value || "m4a");
   const outputQuality = String(outputQualitySelect?.value || "128K");
   const normalizeLoudness = Boolean(normalizeLoudnessCheckbox?.checked);
   const dedupeMode = String(dedupeModeSelect?.value || "source-id");
   const id3Tagging = Boolean(id3TaggingCheckbox?.checked);
   const feedExportEnabled = Boolean(feedExportCheckbox?.checked);
   const webhookUrl = String(webhookUrlInput?.value || "").trim();
+  const auddTrackMatching = Boolean(auddTrackMatchingCheckbox?.checked);
+  const auddApiToken = String(auddApiTokenInput?.value || "").trim();
+  const fingerprintTrackMatching = Boolean(fingerprintTrackMatchingCheckbox?.checked);
+  const acoustidApiKey = String(acoustidApiKeyInput?.value || "").trim();
+  const songrecTrackMatching = Boolean(songrecTrackMatchingCheckbox?.checked);
+  const songrecSampleSeconds = Math.max(8, Math.min(45, Math.floor(Number(songrecSampleSecondsInput?.value || 20) || 20)));
+  const ffmpegCueSilenceDetect = Boolean(ffmpegCueSilenceCheckbox?.checked);
+  const ffmpegCueLoudnessDetect = Boolean(ffmpegCueLoudnessCheckbox?.checked);
+  const ffmpegCueSpectralDetect = Boolean(ffmpegCueSpectralCheckbox?.checked);
   const maxConcurrentDownloads = Math.max(1, Math.min(8, Math.floor(Number(maxConcurrentInput?.value || 2) || 2)));
 
   if (!activeDownloadDir) {
@@ -2166,6 +3207,7 @@ saveSettingsBtn.addEventListener("click", async () => {
     setActiveDownloadDir(activeDownloadDir);
     const saved = await window.rteDownloader.saveSettings({
       timeFormat,
+      episodesPerPage,
       downloadDir: state.downloadDir,
       pathFormat,
       cueAutoGenerate,
@@ -2176,13 +3218,23 @@ saveSettingsBtn.addEventListener("click", async () => {
       dedupeMode,
       id3Tagging,
       feedExportEnabled,
-      webhookUrl
+      webhookUrl,
+      auddTrackMatching,
+      auddApiToken,
+      fingerprintTrackMatching,
+      acoustidApiKey,
+      songrecTrackMatching,
+      songrecSampleSeconds,
+      ffmpegCueSilenceDetect,
+      ffmpegCueLoudnessDetect,
+      ffmpegCueSpectralDetect
     });
     state.timeFormat = saved.timeFormat === "12h" ? "12h" : "24h";
+    state.episodesPerPage = Math.max(1, Math.min(50, Number(saved.episodesPerPage || DEFAULT_EPISODES_PER_PAGE) || DEFAULT_EPISODES_PER_PAGE));
     state.downloadDir = String(saved.downloadDir || "");
     state.pathFormat = String(saved.pathFormat || state.pathFormat);
     state.cueAutoGenerate = Boolean(saved.cueAutoGenerate);
-    state.outputFormat = String(saved.outputFormat || "mp3").toLowerCase();
+    state.outputFormat = normalizeOutputFormatValue(saved.outputFormat || "m4a");
     state.outputQuality = String(saved.outputQuality || "128K");
     state.normalizeLoudness = saved.normalizeLoudness == null ? true : Boolean(saved.normalizeLoudness);
     state.maxConcurrentDownloads = Math.max(1, Math.min(8, Number(saved.maxConcurrentDownloads || 2) || 2));
@@ -2190,13 +3242,23 @@ saveSettingsBtn.addEventListener("click", async () => {
     state.id3Tagging = saved.id3Tagging == null ? true : Boolean(saved.id3Tagging);
     state.feedExportEnabled = saved.feedExportEnabled == null ? true : Boolean(saved.feedExportEnabled);
     state.webhookUrl = String(saved.webhookUrl || "");
+    state.auddTrackMatching = saved.auddTrackMatching == null ? false : Boolean(saved.auddTrackMatching);
+    state.auddApiToken = String(saved.auddApiToken || "");
+    state.fingerprintTrackMatching = saved.fingerprintTrackMatching == null ? false : Boolean(saved.fingerprintTrackMatching);
+    state.acoustidApiKey = String(saved.acoustidApiKey || "");
+    state.songrecTrackMatching = saved.songrecTrackMatching == null ? false : Boolean(saved.songrecTrackMatching);
+    state.songrecSampleSeconds = Math.max(8, Math.min(45, Number(saved.songrecSampleSeconds || 20) || 20));
+    state.ffmpegCueSilenceDetect = saved.ffmpegCueSilenceDetect == null ? true : Boolean(saved.ffmpegCueSilenceDetect);
+    state.ffmpegCueLoudnessDetect = saved.ffmpegCueLoudnessDetect == null ? true : Boolean(saved.ffmpegCueLoudnessDetect);
+    state.ffmpegCueSpectralDetect = saved.ffmpegCueSpectralDetect == null ? true : Boolean(saved.ffmpegCueSpectralDetect);
     timeFormatSelect.value = state.timeFormat;
+    if (episodesPerPageInput) episodesPerPageInput.value = String(state.episodesPerPage);
     downloadDirInput.value = getActiveDownloadDir();
     if (pathFormatInput) {
       pathFormatInput.value = state.pathFormat;
     }
     cueAutoGenerateCheckbox.checked = state.cueAutoGenerate;
-    outputFormatSelect.value = state.outputFormat;
+    outputFormatSelect.value = normalizeOutputFormatValue(state.outputFormat);
     outputQualitySelect.value = state.outputQuality;
     normalizeLoudnessCheckbox.checked = state.normalizeLoudness;
     maxConcurrentInput.value = String(state.maxConcurrentDownloads);
@@ -2204,8 +3266,43 @@ saveSettingsBtn.addEventListener("click", async () => {
     id3TaggingCheckbox.checked = state.id3Tagging;
     feedExportCheckbox.checked = state.feedExportEnabled;
     webhookUrlInput.value = state.webhookUrl;
+    if (auddTrackMatchingCheckbox) {
+      auddTrackMatchingCheckbox.checked = state.auddTrackMatching;
+    }
+    if (auddApiTokenInput) {
+      auddApiTokenInput.value = state.auddApiToken;
+    }
+    if (fingerprintTrackMatchingCheckbox) {
+      fingerprintTrackMatchingCheckbox.checked = state.fingerprintTrackMatching;
+    }
+    if (acoustidApiKeyInput) {
+      acoustidApiKeyInput.value = state.acoustidApiKey;
+    }
+    if (songrecTrackMatchingCheckbox) {
+      songrecTrackMatchingCheckbox.checked = state.songrecTrackMatching;
+    }
+    if (songrecSampleSecondsInput) {
+      songrecSampleSecondsInput.value = String(state.songrecSampleSeconds);
+    }
+    if (ffmpegCueSilenceCheckbox) {
+      ffmpegCueSilenceCheckbox.checked = state.ffmpegCueSilenceDetect;
+    }
+    if (ffmpegCueLoudnessCheckbox) {
+      ffmpegCueLoudnessCheckbox.checked = state.ffmpegCueLoudnessDetect;
+    }
+    if (ffmpegCueSpectralCheckbox) {
+      ffmpegCueSpectralCheckbox.checked = state.ffmpegCueSpectralDetect;
+    }
     renderPathFormatPreview();
-    setSettingsStatus("Settings saved.");
+    if (state.auddTrackMatching && !state.auddApiToken) {
+      setSettingsStatus("Settings saved. AudD is enabled, but no API token is configured, so AudD matching will be skipped.", true);
+    } else if (state.fingerprintTrackMatching && !state.acoustidApiKey) {
+      setSettingsStatus("Settings saved. AcoustID is enabled, but no API key is configured, so AcoustID matching will be skipped.", true);
+    } else if (!state.ffmpegCueSilenceDetect && !state.ffmpegCueLoudnessDetect && !state.ffmpegCueSpectralDetect) {
+      setSettingsStatus("Settings saved. All FFmpeg cue landmark filters are disabled, so cue timing will rely on source timings and spacing fallback.", true);
+    } else {
+      setSettingsStatus("Settings saved.");
+    }
     await refreshTimeBasedUi();
   } catch (error) {
     setSettingsStatus(error.message, true);
@@ -2264,11 +3361,300 @@ bbcAddScheduleBtn.addEventListener("click", async () => {
   }
 });
 
+if (wwfLoadProgramBtn) {
+  wwfLoadProgramBtn.addEventListener("click", () => {
+    const name = (wwfProgramUrlInput && wwfProgramUrlInput.value.trim()) || "";
+    setButtonBusy(wwfLoadProgramBtn, true, "Load Episodes");
+    loadWwfProgram(name || "Worldwide FM", 1)
+      .catch((error) => {
+        if (wwfProgramMeta) wwfProgramMeta.textContent = error.message;
+      })
+      .finally(() => setButtonBusy(wwfLoadProgramBtn, false, "Load Episodes"));
+  });
+}
+async function runWwfProgramSearch(query) {
+  if (!window.rteDownloader?.searchWwfPrograms) return;
+  if (wwfProgramSearchResult) wwfProgramSearchResult.classList.remove("hidden");
+  if (!wwfProgramSearchResult) return;
+  wwfProgramSearchResult.innerHTML = "<div class=\"item\">Searching...</div>";
+  try {
+    const results = await window.rteDownloader.searchWwfPrograms(query || "");
+    if (!results.length) {
+      wwfProgramSearchResult.innerHTML = "<div class=\"item\">No shows found. Try a different search or load by name below.</div>";
+      return;
+    }
+    wwfProgramSearchResult.innerHTML = results.map((r) => {
+      const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
+      const locationLabel = r.location ? r.location : "";
+      const schedMeta = [cadenceLabel, locationLabel].filter(Boolean).join(" · ");
+      const scheduleHtml = r.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(r.runSchedule))}</strong></div>` : "";
+      return `
+      <div class="item clickable" data-wwf-pick-program="${escapeHtml(r.hostSlug ? `${r.programUrl}` : (r.title || r.programUrl || ""))}">
+        <div class="search-card">
+          <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : "<img alt=\"\" class=\"episode-thumb\" loading=\"lazy\" />"}</div>
+          <div>
+            <div class="item-title">${escapeHtml(r.title || "Show")}</div>
+            ${schedMeta ? `<div class="item-meta"><strong>${escapeHtml(schedMeta)}</strong></div>` : ""}
+            ${scheduleHtml}
+            ${r.description ? `<div class="item-meta">${escapeHtml(r.description.slice(0, 200))}${r.description.length > 200 ? "…" : ""}</div>` : ""}
+          </div>
+        </div>
+      </div>
+    `;}).join("");
+  } catch (e) {
+    wwfProgramSearchResult.innerHTML = `<div class="item">${escapeHtml(e.message)}</div>`;
+  }
+}
+if (wwfProgramSearchBtn && wwfProgramSearchInput) {
+  wwfProgramSearchBtn.addEventListener("click", () => runWwfProgramSearch(wwfProgramSearchInput.value.trim()));
+}
+if (wwfProgramSearchInput) {
+  wwfProgramSearchInput.addEventListener("input", () => {
+    if (wwfSearchDebounceTimer) clearTimeout(wwfSearchDebounceTimer);
+    const q = wwfProgramSearchInput.value.trim();
+    wwfSearchDebounceTimer = setTimeout(() => runWwfProgramSearch(q), 280);
+  });
+  wwfProgramSearchInput.addEventListener("focus", () => {
+    const q = wwfProgramSearchInput.value.trim();
+    if (q) runWwfProgramSearch(q);
+    else if (wwfProgramSearchResult && !wwfProgramSearchResult.classList.contains("hidden")) {
+      runWwfProgramSearch("");
+    }
+  });
+}
+if (wwfProgramSearchResult) {
+  wwfProgramSearchResult.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-wwf-pick-program]");
+    if (!row) return;
+    const programName = row.getAttribute("data-wwf-pick-program") || "";
+    if (wwfProgramUrlInput) wwfProgramUrlInput.value = programName;
+    loadWwfProgram(programName, 1).catch(() => {});
+    wwfProgramSearchResult.classList.add("hidden");
+  });
+}
+if (wwfPrevPageBtn) {
+  wwfPrevPageBtn.addEventListener("click", () => {
+    const page = Math.max(1, (state.wwfProgramPage || 1) - 1);
+    loadWwfProgram(state.wwfProgramUrl, page).catch(() => {});
+  });
+}
+if (wwfNextPageBtn) {
+  wwfNextPageBtn.addEventListener("click", () => {
+    const page = Math.min(state.wwfProgramMaxPages || 1, (state.wwfProgramPage || 1) + 1);
+    loadWwfProgram(state.wwfProgramUrl, page).catch(() => {});
+  });
+}
+if (wwfAddScheduleBtn) {
+  wwfAddScheduleBtn.addEventListener("click", async () => {
+    const programName = (wwfProgramUrlInput && wwfProgramUrlInput.value.trim()) || state.wwfProgramUrl;
+    if (!programName) {
+      if (wwfProgramMeta) wwfProgramMeta.textContent = "Enter or load a program name first.";
+      return;
+    }
+    const backfillCount = (wwfScheduleBackfillMode && wwfScheduleBackfillMode.value === "backfill")
+      ? Math.max(1, Math.floor(Number(wwfScheduleBackfillCount && wwfScheduleBackfillCount.value || 1)))
+      : 0;
+    setButtonBusy(wwfAddScheduleBtn, true, "Add Scheduler", "Adding...");
+    try {
+      await window.rteDownloader.addWwfSchedule(programName, { backfillCount });
+      await renderWwfScheduleList();
+    } catch (error) {
+      if (wwfProgramMeta) wwfProgramMeta.textContent = error.message;
+    } finally {
+      setButtonBusy(wwfAddScheduleBtn, false, "Add Scheduler");
+    }
+  });
+}
+if (wwfDownloadBtn && wwfUrlInput) {
+  wwfDownloadBtn.addEventListener("click", async () => {
+    const pageUrl = wwfUrlInput.value.trim();
+    if (!pageUrl) {
+      if (wwfResult) wwfResult.textContent = "Enter an episode URL.";
+      return;
+    }
+    const progressToken = createProgressToken("wwf-quick");
+    const detach = attachDownloadProgress(progressToken, (p) => {
+      if (wwfResult) wwfResult.textContent = formatProgressText(p, "Downloading...");
+    });
+    setButtonBusy(wwfDownloadBtn, true, "Download", "Downloading...");
+    if (wwfResult) wwfResult.textContent = "Starting...";
+    try {
+      const data = await window.rteDownloader.downloadFromWwfUrl(pageUrl, progressToken, { forceDownload: false });
+      if (wwfResult) wwfResult.textContent = `Saved: ${data.outputDir}\\${data.fileName}`;
+    } catch (error) {
+      if (wwfResult) wwfResult.textContent = error.message;
+    } finally {
+      detach();
+      setButtonBusy(wwfDownloadBtn, false, "Download");
+    }
+  });
+}
+
+if (ntsLoadProgramBtn) {
+  ntsLoadProgramBtn.addEventListener("click", () => {
+    const urlOrSlug = (ntsProgramUrlInput && ntsProgramUrlInput.value.trim()) || "";
+    setButtonBusy(ntsLoadProgramBtn, true, "Load Episodes");
+    loadNtsProgram(urlOrSlug || "the-breakfast-show-flo", 1)
+      .catch((error) => {
+        const msg = (error?.message || "").trim();
+        if (ntsProgramMeta) {
+          ntsProgramMeta.textContent = msg.includes("503") || msg.includes("Service Unavailable")
+            ? "NTS is temporarily unavailable (503). Try again in a few minutes or open nts.live in your browser."
+            : msg || "Failed to load show.";
+        }
+        if (ntsEpisodesResult) ntsEpisodesResult.innerHTML = "<div class=\"item muted\">Load failed. Try again later.</div>";
+      })
+      .finally(() => setButtonBusy(ntsLoadProgramBtn, false, "Load Episodes"));
+  });
+}
+async function runNtsProgramSearch(query) {
+  if (!window.rteDownloader?.searchNtsPrograms) return;
+  if (ntsProgramSearchResult) ntsProgramSearchResult.classList.remove("hidden");
+  if (!ntsProgramSearchResult) return;
+  const q = String(query || "").trim();
+  if (!q) {
+    ntsProgramSearchResult.innerHTML = "<div class=\"item muted\">Type to search NTS shows, or load by URL/slug below.</div>";
+    return;
+  }
+  const sortEl = document.getElementById("ntsSearchSort");
+  const sort = sortEl ? sortEl.value : "recent";
+  ntsProgramSearchResult.innerHTML = "<div class=\"item\">Searching...</div>";
+  try {
+    const data = await window.rteDownloader.searchNtsPrograms(q, { sort });
+    const results = Array.isArray(data) ? data : (data?.results || []);
+    const searchError = !Array.isArray(data) && data?.error ? data.error : null;
+    if (searchError) {
+      ntsProgramSearchResult.innerHTML = `<div class="item"><span class="muted">${escapeHtml(searchError)}</span><br>Try again later or load by URL/slug below.</div>`;
+      return;
+    }
+    if (!results.length) {
+      ntsProgramSearchResult.innerHTML = "<div class=\"item\">No shows found. Try a different search or load by URL/slug below.</div>";
+      return;
+    }
+    ntsProgramSearchResult.innerHTML = results.map((r) => {
+      const genresHtml = (r.genres && r.genres.length) ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+      const scheduleHtml = r.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(r.runSchedule))}</strong></div>` : "";
+      const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
+      const locationLabel = r.location || "";
+      const metaParts = [cadenceLabel, locationLabel].filter(Boolean).join(" · ");
+      return `
+      <div class="item clickable" data-nts-pick-program="${escapeHtml(r.programUrl || r.title || "")}">
+        <div class="search-card">
+          <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : "<img alt=\"\" class=\"episode-thumb\" loading=\"lazy\" />"}</div>
+          <div>
+            <div class="item-title">${escapeHtml(r.title || "Show")}</div>
+            ${metaParts ? `<div class="item-meta"><strong>${escapeHtml(metaParts)}</strong></div>` : ""}
+            ${scheduleHtml}
+            ${r.description ? `<div class="item-meta">${escapeHtml(r.description.slice(0, 200))}${r.description.length > 200 ? "…" : ""}</div>` : ""}
+            ${genresHtml}
+          </div>
+        </div>
+      </div>
+    `;}).join("");
+  } catch (e) {
+    ntsProgramSearchResult.innerHTML = `<div class="item">${escapeHtml(e.message)}</div>`;
+  }
+}
+if (ntsProgramSearchBtn && ntsProgramSearchInput) {
+  ntsProgramSearchBtn.addEventListener("click", () => runNtsProgramSearch(ntsProgramSearchInput.value.trim()));
+}
+if (ntsProgramSearchInput) {
+  ntsProgramSearchInput.addEventListener("input", () => {
+    if (ntsSearchDebounceTimer) clearTimeout(ntsSearchDebounceTimer);
+    const q = ntsProgramSearchInput.value.trim();
+    ntsSearchDebounceTimer = setTimeout(() => runNtsProgramSearch(q), 280);
+  });
+  ntsProgramSearchInput.addEventListener("focus", () => {
+    const q = ntsProgramSearchInput.value.trim();
+    if (q) runNtsProgramSearch(q);
+    else {
+      if (ntsProgramSearchResult && !ntsProgramSearchResult.classList.contains("hidden")) {
+        ntsProgramSearchResult.innerHTML = "<div class=\"item muted\">Type to search NTS shows, or load by URL/slug below.</div>";
+      }
+    }
+  });
+}
+const ntsSearchSortEl = document.getElementById("ntsSearchSort");
+if (ntsSearchSortEl) {
+  ntsSearchSortEl.addEventListener("change", () => {
+    const q = ntsProgramSearchInput ? ntsProgramSearchInput.value.trim() : "";
+    if (q) runNtsProgramSearch(q);
+  });
+}
+if (ntsProgramSearchResult) {
+  ntsProgramSearchResult.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-nts-pick-program]");
+    if (!row) return;
+    const programUrl = row.getAttribute("data-nts-pick-program") || "";
+    if (ntsProgramUrlInput) ntsProgramUrlInput.value = programUrl;
+    loadNtsProgram(programUrl, 1).catch(() => {});
+    ntsProgramSearchResult.classList.add("hidden");
+  });
+}
+if (ntsPrevPageBtn) {
+  ntsPrevPageBtn.addEventListener("click", () => {
+    const page = Math.max(1, (state.ntsProgramPage || 1) - 1);
+    loadNtsProgram(state.ntsProgramUrl, page).catch(() => {});
+  });
+}
+if (ntsNextPageBtn) {
+  ntsNextPageBtn.addEventListener("click", () => {
+    const page = Math.min(state.ntsProgramMaxPages || 1, (state.ntsProgramPage || 1) + 1);
+    loadNtsProgram(state.ntsProgramUrl, page).catch(() => {});
+  });
+}
+if (ntsAddScheduleBtn) {
+  ntsAddScheduleBtn.addEventListener("click", async () => {
+    const programUrl = (ntsProgramUrlInput && ntsProgramUrlInput.value.trim()) || state.ntsProgramUrl;
+    if (!programUrl) {
+      if (ntsProgramMeta) ntsProgramMeta.textContent = "Enter or load a show URL/slug first.";
+      return;
+    }
+    const backfillCount = (ntsScheduleBackfillMode && ntsScheduleBackfillMode.value === "backfill")
+      ? Math.max(1, Math.floor(Number(ntsScheduleBackfillCount && ntsScheduleBackfillCount.value || 1)))
+      : 0;
+    setButtonBusy(ntsAddScheduleBtn, true, "Add Scheduler", "Adding...");
+    try {
+      await window.rteDownloader.addNtsSchedule(programUrl, { backfillCount });
+      await renderNtsScheduleList();
+    } catch (error) {
+      if (ntsProgramMeta) ntsProgramMeta.textContent = error.message;
+    } finally {
+      setButtonBusy(ntsAddScheduleBtn, false, "Add Scheduler");
+    }
+  });
+}
+if (ntsDownloadBtn && ntsUrlInput) {
+  ntsDownloadBtn.addEventListener("click", async () => {
+    const pageUrl = ntsUrlInput.value.trim();
+    if (!pageUrl) {
+      if (ntsResult) ntsResult.textContent = "Enter an episode URL.";
+      return;
+    }
+    const progressToken = createProgressToken("nts-quick");
+    const detach = attachDownloadProgress(progressToken, (p) => {
+      if (ntsResult) ntsResult.textContent = formatProgressText(p, "Downloading...");
+    });
+    setButtonBusy(ntsDownloadBtn, true, "Download", "Downloading...");
+    if (ntsResult) ntsResult.textContent = "Starting...";
+    try {
+      const data = await window.rteDownloader.downloadFromNtsUrl(pageUrl, progressToken, { forceDownload: false });
+      if (ntsResult) ntsResult.textContent = `Saved: ${data.outputDir}\\${data.fileName}`;
+    } catch (error) {
+      if (ntsResult) ntsResult.textContent = error.message;
+    } finally {
+      detach();
+      setButtonBusy(ntsDownloadBtn, false, "Download");
+    }
+  });
+}
+
 episodesResult.addEventListener("click", async (event) => {
   const playLocalBtn = event.target.closest("button[data-play-local-clip]");
   if (playLocalBtn) {
     const clipId = playLocalBtn.getAttribute("data-play-local-clip") || "";
     const playTitle = playLocalBtn.getAttribute("data-play-local-title") || "";
+    const playProgramTitle = playLocalBtn.getAttribute("data-play-local-program-title") || "";
     const playSubtitle = playLocalBtn.getAttribute("data-play-local-subtitle") || "";
     const playImage = playLocalBtn.getAttribute("data-play-local-image") || "";
     const playDurationText = playLocalBtn.getAttribute("data-play-local-duration") || "";
@@ -2280,30 +3666,21 @@ episodesResult.addEventListener("click", async (event) => {
     }
     setButtonBusy(playLocalBtn, true, "Play Local", "Loading...");
     try {
-      let tracksForNowPlaying = Array.isArray(state.rteTracksByClip[clipId]) ? state.rteTracksByClip[clipId] : [];
-      let chapters = normalizeChapters(state.rteChaptersByClip[clipId] || []);
-      if (!chapters.length) {
-        let tracks = tracksForNowPlaying;
-        if (!Array.isArray(tracks) || !tracks.length) {
-          try {
-            const playlist = await window.rteDownloader.getEpisodePlaylist(playEpisodeUrl);
-            tracks = Array.isArray(playlist?.tracks) ? playlist.tracks : [];
-            state.rteTracksByClip[clipId] = tracks;
-          } catch {}
-        }
-        tracksForNowPlaying = Array.isArray(tracks) ? tracks : [];
-        chapters = estimateChaptersFromTracks(tracks || [], parseRteDurationSeconds(playDurationText));
-      }
-      const url = await window.rteDownloader.getLocalPlaybackUrl(saved.outputDir, saved.fileName);
-      const localCueChapters = await getLocalCueChaptersSafe(saved.outputDir, saved.fileName);
-      await startGlobalNowPlaying({
-        source: "RTE Local",
+      await playEpisodeWithBackgroundCue({
+        sourceType: "rte",
+        cacheKey: clipId,
+        sourceLabel: "RTE Local",
         title: playTitle || saved.fileName,
+        programTitle: playProgramTitle || saved.programTitle || "",
         subtitle: playSubtitle,
         image: playImage,
-        streamUrl: url,
-        chapters: localCueChapters.length ? localCueChapters : chapters,
-        tracks: tracksForNowPlaying
+        episodeUrl: playEpisodeUrl,
+        clipId,
+        durationSeconds: parseRteDurationSeconds(playDurationText),
+        outputDir: saved.outputDir,
+        fileName: saved.fileName,
+        playbackKey: `rte:local:${clipId}`,
+        statusUpdater: (text, isError = false) => setEpisodeStatus(clipId, text, isError)
       });
     } catch (error) {
       setEpisodeStatus(clipId, `Play Local failed: ${error.message}`, true);
@@ -2317,6 +3694,7 @@ episodesResult.addEventListener("click", async (event) => {
   if (playBtn) {
     const playClipId = playBtn.getAttribute("data-play-clip") || "";
     const playTitle = playBtn.getAttribute("data-play-title") || "";
+    const playProgramTitle = playBtn.getAttribute("data-play-program-title") || "";
     const playSubtitle = playBtn.getAttribute("data-play-subtitle") || "";
     const playImage = playBtn.getAttribute("data-play-image") || "";
     const playDurationText = playBtn.getAttribute("data-play-duration") || "";
@@ -2325,29 +3703,21 @@ episodesResult.addEventListener("click", async (event) => {
     }
     setButtonBusy(playBtn, true, "Play", "Loading...");
     try {
-      let tracksForNowPlaying = Array.isArray(state.rteTracksByClip[playClipId]) ? state.rteTracksByClip[playClipId] : [];
-      let chapters = normalizeChapters(state.rteChaptersByClip[playClipId] || []);
-      if (!chapters.length) {
-        let tracks = tracksForNowPlaying;
-        if (!Array.isArray(tracks) || !tracks.length) {
-          try {
-            const playlist = await window.rteDownloader.getEpisodePlaylist(playBtn.getAttribute("data-play-episode-url") || "");
-            tracks = Array.isArray(playlist?.tracks) ? playlist.tracks : [];
-            state.rteTracksByClip[playClipId] = tracks;
-          } catch {}
-        }
-        tracksForNowPlaying = Array.isArray(tracks) ? tracks : [];
-        chapters = estimateChaptersFromTracks(tracks || [], parseRteDurationSeconds(playDurationText));
-      }
       const stream = await window.rteDownloader.getRteEpisodeStream(playClipId);
-      await startGlobalNowPlaying({
-        source: "RTE",
+      await playEpisodeWithBackgroundCue({
+        sourceType: "rte",
+        cacheKey: playClipId,
+        sourceLabel: "RTE",
         title: playTitle || `clip ${playClipId}`,
+        programTitle: playProgramTitle || "",
         subtitle: playSubtitle,
         image: playImage,
+        episodeUrl: playBtn.getAttribute("data-play-episode-url") || "",
+        clipId: playClipId,
+        durationSeconds: parseRteDurationSeconds(playDurationText),
         streamUrl: stream?.streamUrl || "",
-        chapters,
-        tracks: tracksForNowPlaying
+        playbackKey: `rte:remote:${playClipId}`,
+        statusUpdater: (text, isError = false) => setEpisodeStatus(playClipId, text, isError)
       });
     } catch (error) {
       setEpisodeStatus(playClipId, `Play failed: ${error.message}`, true);
@@ -2374,6 +3744,14 @@ episodesResult.addEventListener("click", async (event) => {
     }
     setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
     setEpisodeStatus(clipIdCue, "Generating CUE/chapters...");
+    clearCueDebugLog("rte", clipIdCue);
+    const cueProgressToken = createProgressToken(`cue-${clipIdCue}`);
+    const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+      if (progress?.kind === "cue" && progress?.message) {
+        appendCueDebugLog("rte", clipIdCue, progress.message);
+      }
+      setEpisodeStatus(clipIdCue, formatProgressText(progress, "Generating CUE/chapters..."));
+    });
     try {
       const cue = await window.rteDownloader.generateCue({
         sourceType: "rte",
@@ -2381,13 +3759,15 @@ episodesResult.addEventListener("click", async (event) => {
         title: titleCue,
         programTitle: programTitleCue,
         outputDir: saved.outputDir,
-        fileName: saved.fileName
+        fileName: saved.fileName,
+        progressToken: cueProgressToken
       });
       setEpisodeChapters(clipIdCue, cue.chapters || []);
-      setEpisodeStatus(clipIdCue, `CUE ready: ${cue.cuePath}`);
+      setEpisodeStatus(clipIdCue, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
     } catch (error) {
       setEpisodeStatus(clipIdCue, `CUE failed: ${error.message}`, true);
     } finally {
+      detachCueProgress();
       setButtonBusy(cueBtn, false, "Generate CUE");
     }
     return;
@@ -2427,7 +3807,7 @@ episodesResult.addEventListener("click", async (event) => {
     if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
       setEpisodeChapters(clipId, data.cue.chapters);
     }
-    const cueText = data?.cue?.cuePath ? " + CUE ready" : "";
+    const cueText = data?.cue?.cuePath ? ` + CUE ready${formatCueSource(data.cue)}${formatCueAlignment(data.cue)}` : "";
     const statusPrefix = data?.existing ? "Already downloaded" : "Downloaded";
     const hintText = data?.existing ? " (click Download again to force re-download)" : "";
     setEpisodeStatus(clipId, `${statusPrefix}: ${data.fileName}${cueText}${hintText}`);
@@ -2452,6 +3832,7 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   if (bbcPlayLocalBtn) {
     const episodeUrl = bbcPlayLocalBtn.getAttribute("data-bbc-play-local-url") || "";
     const playTitle = bbcPlayLocalBtn.getAttribute("data-bbc-play-local-title") || "";
+    const playProgramTitle = bbcPlayLocalBtn.getAttribute("data-bbc-play-local-program-title") || "";
     const playSubtitle = bbcPlayLocalBtn.getAttribute("data-bbc-play-local-subtitle") || "";
     const playImage = bbcPlayLocalBtn.getAttribute("data-bbc-play-local-image") || "";
     const playDurationSeconds = Number(bbcPlayLocalBtn.getAttribute("data-bbc-play-local-duration") || 0) || 0;
@@ -2462,30 +3843,20 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
     }
     setButtonBusy(bbcPlayLocalBtn, true, "Play Local", "Loading...");
     try {
-      let tracksForNowPlaying = Array.isArray(state.bbcTracksByEpisode[episodeUrl]) ? state.bbcTracksByEpisode[episodeUrl] : [];
-      let chapters = normalizeChapters(state.bbcChaptersByEpisode[episodeUrl] || []);
-      if (!chapters.length) {
-        let tracks = tracksForNowPlaying;
-        if (!Array.isArray(tracks) || !tracks.length) {
-          try {
-            const playlist = await window.rteDownloader.getBbcEpisodePlaylist(episodeUrl);
-            tracks = Array.isArray(playlist?.tracks) ? playlist.tracks : [];
-            state.bbcTracksByEpisode[episodeUrl] = tracks;
-          } catch {}
-        }
-        tracksForNowPlaying = Array.isArray(tracks) ? tracks : [];
-        chapters = estimateChaptersFromTracks(tracks || [], playDurationSeconds);
-      }
-      const url = await window.rteDownloader.getLocalPlaybackUrl(saved.outputDir, saved.fileName);
-      const localCueChapters = await getLocalCueChaptersSafe(saved.outputDir, saved.fileName);
-      await startGlobalNowPlaying({
-        source: "BBC Local",
+      await playEpisodeWithBackgroundCue({
+        sourceType: "bbc",
+        cacheKey: episodeUrl,
+        sourceLabel: "BBC Local",
         title: playTitle || saved.fileName,
+        programTitle: playProgramTitle || saved.programTitle || "",
         subtitle: playSubtitle,
         image: playImage,
-        streamUrl: url,
-        chapters: localCueChapters.length ? localCueChapters : chapters,
-        tracks: tracksForNowPlaying
+        episodeUrl,
+        durationSeconds: playDurationSeconds,
+        outputDir: saved.outputDir,
+        fileName: saved.fileName,
+        playbackKey: `bbc:local:${episodeUrl}`,
+        statusUpdater: (text, isError = false) => setBbcEpisodeStatus(episodeUrl, text, isError)
       });
     } catch (error) {
       setBbcEpisodeStatus(episodeUrl, `Play Local failed: ${error.message}`, true);
@@ -2499,34 +3870,26 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
   if (bbcPlayBtn) {
     const playUrl = bbcPlayBtn.getAttribute("data-bbc-play-url") || "";
     const playTitle = bbcPlayBtn.getAttribute("data-bbc-play-title") || "";
+    const playProgramTitle = bbcPlayBtn.getAttribute("data-bbc-play-program-title") || "";
     const playSubtitle = bbcPlayBtn.getAttribute("data-bbc-play-subtitle") || "";
     const playImage = bbcPlayBtn.getAttribute("data-bbc-play-image") || "";
     const playDurationSeconds = Number(bbcPlayBtn.getAttribute("data-bbc-play-duration") || 0) || 0;
     setButtonBusy(bbcPlayBtn, true, "Play", "Loading...");
     try {
-      let tracksForNowPlaying = Array.isArray(state.bbcTracksByEpisode[playUrl]) ? state.bbcTracksByEpisode[playUrl] : [];
-      let chapters = normalizeChapters(state.bbcChaptersByEpisode[playUrl] || []);
-      if (!chapters.length) {
-        let tracks = tracksForNowPlaying;
-        if (!Array.isArray(tracks) || !tracks.length) {
-          try {
-            const playlist = await window.rteDownloader.getBbcEpisodePlaylist(playUrl);
-            tracks = Array.isArray(playlist?.tracks) ? playlist.tracks : [];
-            state.bbcTracksByEpisode[playUrl] = tracks;
-          } catch {}
-        }
-        tracksForNowPlaying = Array.isArray(tracks) ? tracks : [];
-        chapters = estimateChaptersFromTracks(tracks || [], playDurationSeconds);
-      }
       const stream = await window.rteDownloader.getBbcEpisodeStream(playUrl);
-      await startGlobalNowPlaying({
-        source: "BBC",
+      await playEpisodeWithBackgroundCue({
+        sourceType: "bbc",
+        cacheKey: playUrl,
+        sourceLabel: "BBC",
         title: playTitle || stream?.title || "Episode",
+        programTitle: playProgramTitle || "",
         subtitle: playSubtitle,
         image: playImage || stream?.image || "",
+        episodeUrl: playUrl,
+        durationSeconds: playDurationSeconds,
         streamUrl: stream?.streamUrl || "",
-        chapters,
-        tracks: tracksForNowPlaying
+        playbackKey: `bbc:remote:${playUrl}`,
+        statusUpdater: (text, isError = false) => setBbcEpisodeStatus(playUrl, text, isError)
       });
     } catch (error) {
       setBbcEpisodeStatus(playUrl, `Play failed: ${error.message}`, true);
@@ -2552,6 +3915,14 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
     }
     setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
     setBbcEpisodeStatus(episodeUrlCue, "Generating CUE/chapters...");
+    clearCueDebugLog("bbc", episodeUrlCue);
+    const cueProgressToken = createProgressToken(`bbc-cue-${Date.now()}`);
+    const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+      if (progress?.kind === "cue" && progress?.message) {
+        appendCueDebugLog("bbc", episodeUrlCue, progress.message);
+      }
+      setBbcEpisodeStatus(episodeUrlCue, formatProgressText(progress, "Generating CUE/chapters..."));
+    });
     try {
       const cue = await window.rteDownloader.generateCue({
         sourceType: "bbc",
@@ -2559,13 +3930,15 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
         title: titleCue,
         programTitle: programTitleCue,
         outputDir: saved.outputDir,
-        fileName: saved.fileName
+        fileName: saved.fileName,
+        progressToken: cueProgressToken
       });
       setBbcEpisodeChapters(episodeUrlCue, cue.chapters || []);
-      setBbcEpisodeStatus(episodeUrlCue, `CUE ready: ${cue.cuePath}`);
+      setBbcEpisodeStatus(episodeUrlCue, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
     } catch (error) {
       setBbcEpisodeStatus(episodeUrlCue, `CUE failed: ${error.message}`, true);
     } finally {
+      detachCueProgress();
       setButtonBusy(cueBtn, false, "Generate CUE");
     }
     return;
@@ -2604,7 +3977,7 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
     if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
       setBbcEpisodeChapters(episodeUrl, data.cue.chapters);
     }
-    const cueText = data?.cue?.cuePath ? " + CUE ready" : "";
+    const cueText = data?.cue?.cuePath ? ` + CUE ready${formatCueSource(data.cue)}${formatCueAlignment(data.cue)}` : "";
     const statusPrefix = data?.existing ? "Already downloaded" : "Downloaded";
     const panelPrefix = data?.existing ? "Already downloaded" : "Saved";
     const hintText = data?.existing ? " (click Download again to force re-download)" : "";
@@ -2625,6 +3998,236 @@ bbcEpisodesResult.addEventListener("click", async (event) => {
     setButtonBusy(downloadBtn, false, "Download");
   }
 });
+
+if (wwfEpisodesResult) {
+  wwfEpisodesResult.addEventListener("click", async (event) => {
+    const playLocalBtn = event.target.closest("button[data-wwf-play-local-url]");
+    if (playLocalBtn) {
+      const episodeUrl = playLocalBtn.getAttribute("data-wwf-play-local-url") || "";
+      const playTitle = playLocalBtn.getAttribute("data-wwf-play-local-title") || "";
+      const playProgramTitle = playLocalBtn.getAttribute("data-wwf-play-local-program-title") || "";
+      const playImage = playLocalBtn.getAttribute("data-wwf-play-local-image") || "";
+      const saved = state.wwfDownloadedAudioByEpisode[episodeUrl];
+      if (!saved?.outputDir || !saved?.fileName) {
+        setWwfEpisodeStatus(episodeUrl, "Download this episode first, then use Play Local.", true);
+        return;
+      }
+      setButtonBusy(playLocalBtn, true, "Play Local", "Loading...");
+      try {
+        await playEpisodeWithBackgroundCue({
+          sourceType: "wwf",
+          cacheKey: episodeUrl,
+          sourceLabel: "Worldwide FM Local",
+          title: playTitle || saved.fileName,
+          programTitle: playProgramTitle || "",
+          subtitle: "",
+          image: playImage,
+          episodeUrl,
+          durationSeconds: 0,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          playbackKey: `wwf:local:${episodeUrl}`,
+          statusUpdater: (text, isError = false) => setWwfEpisodeStatus(episodeUrl, text, isError)
+        });
+      } catch (error) {
+        setWwfEpisodeStatus(episodeUrl, `Play Local failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playLocalBtn, false, "Play Local");
+      }
+      return;
+    }
+    const playBtn = event.target.closest("button[data-wwf-play-url]");
+    if (playBtn) {
+      const playUrl = playBtn.getAttribute("data-wwf-play-url") || "";
+      const playTitle = playBtn.getAttribute("data-wwf-play-title") || "";
+      const playProgramTitle = playBtn.getAttribute("data-wwf-play-program-title") || "";
+      const playImage = playBtn.getAttribute("data-wwf-play-image") || "";
+      setButtonBusy(playBtn, true, "Play", "Loading...");
+      try {
+        const stream = await window.rteDownloader.getWwfEpisodeStream(playUrl);
+        const streamUrl = stream?.streamUrl ? String(stream.streamUrl).trim() : "";
+        if (!streamUrl) {
+          setWwfEpisodeStatus(playUrl, "No stream URL. Download the episode, then use Play Local.", true);
+          return;
+        }
+        await playEpisodeWithBackgroundCue({
+          sourceType: "wwf",
+          cacheKey: playUrl,
+          sourceLabel: "Worldwide FM",
+          title: playTitle || stream?.title || "Episode",
+          programTitle: playProgramTitle || "",
+          subtitle: "",
+          image: playImage || stream?.image || "",
+          episodeUrl: playUrl,
+          durationSeconds: 0,
+          streamUrl,
+          playbackKey: `wwf:remote:${playUrl}`,
+          statusUpdater: (text, isError = false) => setWwfEpisodeStatus(playUrl, text, isError)
+        });
+        setWwfEpisodeStatus(playUrl, "Playing. If no sound, press Play in the bar below or use Play Local.");
+      } catch (error) {
+        setWwfEpisodeStatus(playUrl, `Play failed: ${error.message}. Try Download then Play Local.`, true);
+      } finally {
+        setButtonBusy(playBtn, false, "Play");
+      }
+      return;
+    }
+    const downloadBtn = event.target.closest("button[data-wwf-download-url]");
+    if (downloadBtn) {
+      const episodeUrl = downloadBtn.getAttribute("data-wwf-download-url") || "";
+      const title = downloadBtn.getAttribute("data-wwf-episode-title") || "wwf-episode";
+      const programTitle = downloadBtn.getAttribute("data-wwf-program-title") || "Worldwide FM";
+      const publishedTime = downloadBtn.getAttribute("data-wwf-published") || "";
+      const image = downloadBtn.getAttribute("data-wwf-image") || "";
+      setWwfEpisodeStatus(episodeUrl, "Starting download...");
+      setButtonBusy(downloadBtn, true, "Download", "Downloading...");
+      const progressToken = createProgressToken("wwf-episode");
+      const detach = attachDownloadProgress(progressToken, (p) => setWwfEpisodeStatus(episodeUrl, formatProgressText(p, "Downloading...")));
+      try {
+        const data = await window.rteDownloader.downloadFromWwfUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image });
+        state.wwfDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
+        setWwfEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+      } catch (error) {
+        setWwfEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
+      } finally {
+        detach();
+        setButtonBusy(downloadBtn, false, "Download");
+      }
+    }
+  });
+}
+
+if (ntsEpisodesResult) {
+  ntsEpisodesResult.addEventListener("click", async (event) => {
+    const playLocalBtn = event.target.closest("button[data-nts-play-local-url]");
+    if (playLocalBtn) {
+      const episodeUrl = playLocalBtn.getAttribute("data-nts-play-local-url") || "";
+      const playTitle = playLocalBtn.getAttribute("data-nts-play-local-title") || "";
+      const playProgramTitle = playLocalBtn.getAttribute("data-nts-play-local-program-title") || "";
+      const playImage = playLocalBtn.getAttribute("data-nts-play-local-image") || "";
+      const saved = state.ntsDownloadedAudioByEpisode[episodeUrl];
+      if (!saved?.outputDir || !saved?.fileName) {
+        setNtsEpisodeStatus(episodeUrl, "Download this episode first, then use Play Local.", true);
+        return;
+      }
+      setButtonBusy(playLocalBtn, true, "Play Local", "Loading...");
+      try {
+        await playEpisodeWithBackgroundCue({
+          sourceType: "nts",
+          cacheKey: episodeUrl,
+          sourceLabel: "NTS Local",
+          title: playTitle || saved.fileName,
+          programTitle: playProgramTitle || "",
+          subtitle: "",
+          image: playImage,
+          episodeUrl,
+          durationSeconds: 0,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          playbackKey: `nts:local:${episodeUrl}`,
+          statusUpdater: (text, isError = false) => setNtsEpisodeStatus(episodeUrl, text, isError)
+        });
+      } catch (error) {
+        setNtsEpisodeStatus(episodeUrl, `Play Local failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playLocalBtn, false, "Play Local");
+      }
+      return;
+    }
+    const playBtn = event.target.closest("button[data-nts-play-url]");
+    if (playBtn) {
+      const playUrl = playBtn.getAttribute("data-nts-play-url") || "";
+      const playTitle = playBtn.getAttribute("data-nts-play-title") || "";
+      const playProgramTitle = playBtn.getAttribute("data-nts-play-program-title") || "";
+      const playImage = playBtn.getAttribute("data-nts-play-image") || "";
+      setButtonBusy(playBtn, true, "Play", "Loading...");
+      try {
+        const stream = await window.rteDownloader.getNtsEpisodeStream(playUrl);
+        await playEpisodeWithBackgroundCue({
+          sourceType: "nts",
+          cacheKey: playUrl,
+          sourceLabel: "NTS",
+          title: playTitle || stream?.title || "Episode",
+          programTitle: playProgramTitle || "",
+          subtitle: "",
+          image: playImage || stream?.image || "",
+          episodeUrl: playUrl,
+          durationSeconds: 0,
+          streamUrl: stream?.streamUrl || "",
+          playbackKey: `nts:remote:${playUrl}`,
+          statusUpdater: (text, isError = false) => setNtsEpisodeStatus(playUrl, text, isError)
+        });
+      } catch (error) {
+        setNtsEpisodeStatus(playUrl, `Play failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playBtn, false, "Play");
+      }
+      return;
+    }
+    const cueBtn = event.target.closest("button[data-nts-generate-cue-url]");
+    if (cueBtn) {
+      const episodeUrlCue = cueBtn.getAttribute("data-nts-generate-cue-url") || "";
+      const titleCue = cueBtn.getAttribute("data-nts-generate-cue-title") || "nts-episode";
+      const programTitleCue = cueBtn.getAttribute("data-nts-generate-cue-program-title") || "NTS";
+      const saved = state.ntsDownloadedAudioByEpisode[episodeUrlCue];
+      if (!saved) {
+        setNtsEpisodeStatus(episodeUrlCue, "Download episode first, then generate CUE.", true);
+        return;
+      }
+      setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+      setNtsEpisodeStatus(episodeUrlCue, "Generating CUE/chapters...");
+      clearCueDebugLog("nts", episodeUrlCue);
+      const cueProgressToken = createProgressToken(`nts-cue-${Date.now()}`);
+      const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+        if (progress?.kind === "cue" && progress?.message) {
+          appendCueDebugLog("nts", episodeUrlCue, progress.message);
+        }
+        setNtsEpisodeStatus(episodeUrlCue, formatProgressText(progress, "Generating CUE/chapters..."));
+      });
+      try {
+        const cue = await window.rteDownloader.generateCue({
+          sourceType: "nts",
+          episodeUrl: episodeUrlCue,
+          title: titleCue,
+          programTitle: programTitleCue,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          progressToken: cueProgressToken
+        });
+        setCachedChapters("nts", episodeUrlCue, cue.chapters || []);
+        setNtsEpisodeStatus(episodeUrlCue, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
+      } catch (error) {
+        setNtsEpisodeStatus(episodeUrlCue, `CUE failed: ${error.message}`, true);
+      } finally {
+        detachCueProgress();
+        setButtonBusy(cueBtn, false, "Generate CUE");
+      }
+      return;
+    }
+    const downloadBtn = event.target.closest("button[data-nts-download-url]");
+    if (downloadBtn) {
+      const episodeUrl = downloadBtn.getAttribute("data-nts-download-url") || "";
+      const title = downloadBtn.getAttribute("data-nts-episode-title") || "nts-episode";
+      const programTitle = downloadBtn.getAttribute("data-nts-program-title") || "NTS";
+      const publishedTime = downloadBtn.getAttribute("data-nts-published") || "";
+      const image = downloadBtn.getAttribute("data-nts-image") || "";
+      setNtsEpisodeStatus(episodeUrl, "Starting download...");
+      setButtonBusy(downloadBtn, true, "Download", "Downloading...");
+      const progressToken = createProgressToken("nts-episode");
+      const detach = attachDownloadProgress(progressToken, (p) => setNtsEpisodeStatus(episodeUrl, formatProgressText(p, "Downloading...")));
+      try {
+        const data = await window.rteDownloader.downloadFromNtsUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image });
+        state.ntsDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
+        setNtsEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+      } catch (error) {
+        setNtsEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
+      } finally {
+        detach();
+        setButtonBusy(downloadBtn, false, "Download");
+      }
+    }
+  });
+}
 
 nowPlayingCloseBtn.addEventListener("click", () => {
   clearGlobalNowPlaying();
@@ -2785,6 +4388,112 @@ bbcScheduleList.addEventListener("click", async (event) => {
     await refreshBbcSchedules();
   }
 });
+
+if (wwfScheduleList) {
+  wwfScheduleList.addEventListener("click", async (event) => {
+    const playLatestBtn = event.target.closest("button[data-wwf-schedule-play-output]");
+    if (playLatestBtn) {
+      try {
+        await playFromDownloadedFile({
+          outputDir: playLatestBtn.getAttribute("data-wwf-schedule-play-output"),
+          fileName: playLatestBtn.getAttribute("data-wwf-schedule-play-file"),
+          title: playLatestBtn.getAttribute("data-wwf-schedule-play-title") || "",
+          source: "Worldwide FM Local",
+          subtitle: "Latest scheduled download",
+          image: playLatestBtn.getAttribute("data-wwf-schedule-play-image") || "",
+          episodeUrl: playLatestBtn.getAttribute("data-wwf-schedule-play-episode-url") || "",
+          sourceType: playLatestBtn.getAttribute("data-wwf-schedule-play-source-type") || "wwf"
+        });
+      } catch (error) {
+        setWwfEpisodeStatus("", `Play failed: ${error.message}`, true);
+      }
+      return;
+    }
+    const toggleBtn = event.target.closest("button[data-wwf-schedule-toggle]");
+    if (toggleBtn) {
+      const id = toggleBtn.getAttribute("data-wwf-schedule-toggle");
+      const enabled = toggleBtn.getAttribute("data-enabled") !== "1";
+      await window.rteDownloader.setWwfScheduleEnabled(id, enabled);
+      await renderWwfScheduleList();
+      return;
+    }
+    const runBtn = event.target.closest("button[data-wwf-schedule-run]");
+    if (runBtn) {
+      const id = runBtn.getAttribute("data-wwf-schedule-run");
+      const statusEl = wwfScheduleList.querySelector(`[data-wwf-schedule-status="${id}"]`);
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.textContent = "Running...";
+      }
+      try {
+        await window.rteDownloader.runWwfScheduleNow(id);
+        await renderWwfScheduleList();
+      } catch (error) {
+        if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+      }
+      return;
+    }
+    const removeBtn = event.target.closest("button[data-wwf-schedule-remove]");
+    if (removeBtn) {
+      const id = removeBtn.getAttribute("data-wwf-schedule-remove");
+      await window.rteDownloader.removeWwfSchedule(id);
+      await renderWwfScheduleList();
+    }
+  });
+}
+
+if (ntsScheduleList) {
+  ntsScheduleList.addEventListener("click", async (event) => {
+    const playLatestBtn = event.target.closest("button[data-nts-schedule-play-output]");
+    if (playLatestBtn) {
+      try {
+        await playFromDownloadedFile({
+          outputDir: playLatestBtn.getAttribute("data-nts-schedule-play-output"),
+          fileName: playLatestBtn.getAttribute("data-nts-schedule-play-file"),
+          title: playLatestBtn.getAttribute("data-nts-schedule-play-title") || "",
+          source: "NTS Local",
+          subtitle: "Latest scheduled download",
+          image: playLatestBtn.getAttribute("data-nts-schedule-play-image") || "",
+          episodeUrl: playLatestBtn.getAttribute("data-nts-schedule-play-episode-url") || "",
+          sourceType: playLatestBtn.getAttribute("data-nts-schedule-play-source-type") || "nts"
+        });
+      } catch (error) {
+        setNtsEpisodeStatus("", `Play failed: ${error.message}`, true);
+      }
+      return;
+    }
+    const toggleBtn = event.target.closest("button[data-nts-schedule-toggle]");
+    if (toggleBtn) {
+      const id = toggleBtn.getAttribute("data-nts-schedule-toggle");
+      const enabled = toggleBtn.getAttribute("data-enabled") !== "1";
+      await window.rteDownloader.setNtsScheduleEnabled(id, enabled);
+      await renderNtsScheduleList();
+      return;
+    }
+    const runBtn = event.target.closest("button[data-nts-schedule-run]");
+    if (runBtn) {
+      const id = runBtn.getAttribute("data-nts-schedule-run");
+      const statusEl = ntsScheduleList.querySelector(`[data-nts-schedule-status="${id}"]`);
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.textContent = "Running...";
+      }
+      try {
+        await window.rteDownloader.runNtsScheduleNow(id);
+        await renderNtsScheduleList();
+      } catch (error) {
+        if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+      }
+      return;
+    }
+    const removeBtn = event.target.closest("button[data-nts-schedule-remove]");
+    if (removeBtn) {
+      const id = removeBtn.getAttribute("data-nts-schedule-remove");
+      await window.rteDownloader.removeNtsSchedule(id);
+      await renderNtsScheduleList();
+    }
+  });
+}
 
 if (queuePauseBtn) {
   queuePauseBtn.addEventListener("click", async () => {

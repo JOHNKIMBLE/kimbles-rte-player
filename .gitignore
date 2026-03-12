@@ -4,6 +4,7 @@ data/
 downloads/
 coverage/
 tmp/
+tmp-*/
 temp/
 *.tmp
 *.log
@@ -29,3 +30,10 @@ iframe.html
 player.min.js
 playlist.json
 .probe
+CONTEXT.md
+context.md
+AI_CONTEXT.md
+atomicparsley-win/
+atomicparsley-win.zip
+test-cover.png
+image.png
