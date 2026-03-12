@@ -1,12 +1,13 @@
 {
   "name": "rte-ytdlp-electron",
-  "version": "2.3.7",
+  "version": "3.6.7",
   "description": "Electron app to download RTE/BBC radio episodes via yt-dlp",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "start:server": "node src/server.js",
     "postinstall": "node scripts/bootstrap-yt-dlp.js",
+    "bootstrap:all-binaries": "node -e \"process.env.BOOTSTRAP_ALL_VENDOR_BINARIES='1'; require('./scripts/bootstrap-yt-dlp.js')\"",
     "test:extract": "node scripts/test-extract.js",
     "generate:icon": "node scripts/generate-icon.js",
     "prepack:win": "npm run generate:icon",
@@ -39,6 +40,9 @@
       "build/icon.ico",
       "vendor/yt-dlp/**/*",
       "vendor/ffmpeg/**/*",
+      "vendor/songrec/**/*",
+      "vendor/chromaprint/**/*",
+      "vendor/atomicparsley/**/*",
       "node_modules/**/*",
       "package.json"
     ],
@@ -46,7 +50,10 @@
     "afterPack": "scripts/after-pack-prune-vendor-binaries.js",
     "asarUnpack": [
       "vendor/yt-dlp/**",
-      "vendor/ffmpeg/**"
+      "vendor/ffmpeg/**",
+      "vendor/songrec/**",
+      "vendor/chromaprint/**",
+      "vendor/atomicparsley/**"
     ],
     "win": {
       "icon": "build/icon.ico",

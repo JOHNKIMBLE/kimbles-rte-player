@@ -68,6 +68,15 @@ function pickFinalMediaFile(tempDir) {
   return files[0]?.filePath || null;
 }
 
+function pickThumbnailFile(tempDir) {
+  const imageExts = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+  const files = walkFiles(tempDir)
+    .filter((filePath) => imageExts.has(path.extname(filePath).toLowerCase()))
+    .map((filePath) => ({ filePath, size: fs.statSync(filePath).size }))
+    .sort((a, b) => b.size - a.size);
+  return files[0]?.filePath || null;
+}
+
 function pickExistingByExt(outputDir, preferredBaseName, ext) {
   const preferred = path.join(outputDir, `${preferredBaseName}${ext}`);
   if (fs.existsSync(preferred)) {
@@ -408,6 +417,98 @@ function parseProgressLine(line) {
   };
 }
 
+function normalizeRequestedAudioFormat(audioFormat) {
+  const value = String(audioFormat || "m4a")
+    .toLowerCase()
+    .replace(/^\./, "")
+    .trim();
+  return value === "mp3" ? "mp3" : "m4a";
+}
+
+function normalizeAudioBitrate(audioQuality, fallback = "128K") {
+  const raw = String(audioQuality || fallback || "").trim();
+  const match = raw.match(/^(\d+)(?:\s*[kK])?$/);
+  if (match) {
+    return `${match[1]}k`;
+  }
+  return raw || "128k";
+}
+
+function runFfmpegAudioPostprocess({
+  inputPath,
+  outputPath,
+  audioFormat,
+  audioQuality,
+  normalizeLoudness = true,
+  onProgress
+}) {
+  const ffmpegDir = resolveBundledFfmpegDir();
+  if (!ffmpegDir) {
+    throw new Error("Bundled ffmpeg was not found under vendor/ffmpeg/bin for this platform.");
+  }
+
+  const ffmpegExe = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const ffmpegPath = path.join(ffmpegDir, ffmpegExe);
+  const safeFormat = normalizeRequestedAudioFormat(audioFormat);
+  const targetBitrate = normalizeAudioBitrate(audioQuality);
+  const args = [
+    "-hide_banner",
+    "-y",
+    "-i",
+    inputPath,
+    "-map",
+    "0:a:0",
+    "-vn"
+  ];
+
+  if (normalizeLoudness) {
+    args.push("-af", "loudnorm=I=-16:TP=-1.5:LRA=11");
+  }
+
+  if (safeFormat === "mp3") {
+    args.push("-c:a", "libmp3lame", "-b:a", targetBitrate);
+  } else {
+    args.push("-c:a", "aac", "-b:a", targetBitrate, "-f", "ipod");
+  }
+
+  args.push(outputPath);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegPath, args, {
+      cwd: ffmpegDir,
+      shell: false
+    });
+    let log = "";
+
+    emitProgress(onProgress, {
+      kind: "postprocess",
+      message: normalizeLoudness
+        ? `Converting to ${safeFormat.toUpperCase()} and normalizing loudness...`
+        : `Converting to ${safeFormat.toUpperCase()}...`
+    });
+
+    child.stdout.on("data", (chunk) => {
+      log += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      log += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start ffmpeg post-processing: ${error.message}`));
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0 || !fs.existsSync(outputPath)) {
+        reject(new Error(`ffmpeg audio post-processing failed\n${log}`));
+        return;
+      }
+      resolve({ log: log.trim() });
+    });
+  });
+}
+
 function runYtDlpDownload({
   manifestUrl,
   sourceUrl,
@@ -417,10 +518,11 @@ function runYtDlpDownload({
   registerCancel = null,
   onProgress,
   forceDownload = false,
-  audioFormat = "mp3",
+  audioFormat = "m4a",
   audioQuality = "",
   dedupeMode = "source-id",
-  normalizeLoudness = true
+  normalizeLoudness = true,
+  fetchThumbnail = false
 }) {
   const inputUrl = String(sourceUrl || manifestUrl || "").trim();
   if (!inputUrl) {
@@ -428,7 +530,7 @@ function runYtDlpDownload({
   }
 
   const safeTitle = sanitizeFilename(title) || "rte-audio";
-  const safeFormat = String(audioFormat || "mp3").toLowerCase();
+  const safeFormat = normalizeRequestedAudioFormat(audioFormat);
   const outputExt = safeFormat.startsWith(".") ? safeFormat : `.${safeFormat}`;
   const skipByTitle = dedupeMode === "title-date";
   const skipBySource = dedupeMode === "source-id";
@@ -467,11 +569,6 @@ function runYtDlpDownload({
     "1",
     "-f",
     "bestaudio/best",
-    "--extract-audio",
-    "--audio-format",
-    safeFormat,
-    "--audio-quality",
-    targetAudioQuality,
     "--ffmpeg-location",
     ffmpegLocation,
     "--no-part",
@@ -479,13 +576,11 @@ function runYtDlpDownload({
     shellSafeOutputTemplate,
     inputUrl
   ];
-  if (normalizeLoudness) {
-    args.splice(
-      args.indexOf("--no-part"),
-      0,
-      "--postprocessor-args",
-      "ExtractAudio+ffmpeg_o:-af loudnorm=I=-16:TP=-1.5:LRA=11"
-    );
+  if (fetchThumbnail) {
+    args.splice(args.indexOf("-o"), 0, "--write-thumbnail", "--convert-thumbnails", "jpg");
+  }
+  if (/\.m3u8(?:$|[?#])/i.test(inputUrl)) {
+    args.splice(args.indexOf("--no-part"), 0, "--downloader", "ffmpeg", "--hls-use-mpegts");
   }
   if (!forceDownload && skipBySource) {
     args.splice(args.indexOf("--ffmpeg-location"), 0, "--download-archive", normalizedArchivePath);
@@ -556,6 +651,7 @@ function runYtDlpDownload({
     });
 
     child.on("close", (code) => {
+      const finish = async () => {
       if (cancelled) {
         fs.rmSync(tempDir, { recursive: true, force: true });
         reject(new Error("Download cancelled."));
@@ -603,15 +699,44 @@ function runYtDlpDownload({
         return;
       }
 
+      const processedPath = path.join(tempDir, `processed${outputExt}`);
+      const postprocess = await runFfmpegAudioPostprocess({
+        inputPath: downloadedFile,
+        outputPath: processedPath,
+        audioFormat: safeFormat,
+        audioQuality: targetAudioQuality,
+        normalizeLoudness,
+        onProgress
+      });
+
       const finalPath = makeUniquePath(outputDir, safeTitle, outputExt);
-      fs.renameSync(downloadedFile, finalPath);
+      let stagedArtworkPath = "";
+      const thumbnailFile = fetchThumbnail ? pickThumbnailFile(tempDir) : null;
+      if (thumbnailFile && fs.existsSync(thumbnailFile)) {
+        const artworkExt = path.extname(thumbnailFile).toLowerCase() || ".jpg";
+        stagedArtworkPath = path.join(outputDir, `.cover-${Date.now()}-${Math.random().toString(16).slice(2, 8)}${artworkExt}`);
+        try {
+          fs.copyFileSync(thumbnailFile, stagedArtworkPath);
+          ensureWorldWritablePath(stagedArtworkPath, false);
+        } catch {
+          stagedArtworkPath = "";
+        }
+      }
+      fs.renameSync(processedPath, finalPath);
       fs.rmSync(tempDir, { recursive: true, force: true });
       ensureWorldWritablePath(outputDir, true);
       ensureWorldWritablePath(finalPath, false);
 
       resolve({
         fileName: path.basename(finalPath),
-        log: log.trim()
+        artworkPath: stagedArtworkPath,
+        log: [log.trim(), postprocess.log].filter(Boolean).join("\n")
+      });
+      };
+
+      finish().catch((error) => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        reject(error);
       });
     });
   });

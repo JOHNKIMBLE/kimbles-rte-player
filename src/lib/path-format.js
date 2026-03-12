@@ -100,9 +100,17 @@ function pickSourceId({ clipId, episodeUrl }) {
     return "";
   }
 
-  const match = url.match(/\/(?:programmes|sounds\/play)\/([a-z0-9]{8,})/i);
-  if (match?.[1]) {
-    return match[1].toLowerCase();
+  const bbcMatch = url.match(/\/(?:programmes|sounds\/play)\/([a-z0-9]{8,})/i);
+  if (bbcMatch?.[1]) {
+    return bbcMatch[1].toLowerCase();
+  }
+  const wwfMatch = url.match(/worldwidefm\.net\/episode\/([^/?#]+)/i);
+  if (wwfMatch?.[1]) {
+    return wwfMatch[1];
+  }
+  const ntsMatch = url.match(/nts\.live\/shows\/[^/]+\/episodes\/([^/?#]+)/i);
+  if (ntsMatch?.[1]) {
+    return ntsMatch[1];
   }
   return "";
 }
@@ -117,7 +125,7 @@ function buildDownloadTarget({
   clipId,
   episodeUrl
 }) {
-  const radio = sourceType === "bbc" ? "BBC" : "RTE";
+  const radio = sourceType === "bbc" ? "BBC" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : "RTE";
   const releaseDate = extractReleaseDate(publishedTime) || extractReleaseDate(episodeTitle);
   const [year = "", month = "", day = ""] = String(releaseDate).split("-");
   const sourceId = pickSourceId({ clipId, episodeUrl });

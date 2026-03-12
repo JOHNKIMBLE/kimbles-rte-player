@@ -33,7 +33,13 @@ module.exports = async function afterPack(context) {
   const unpackedVendorRoot = path.join(context.appOutDir, "resources", "app.asar.unpacked", "vendor");
   const ytBinRoot = path.join(unpackedVendorRoot, "yt-dlp", "bin");
   const ffmpegBinRoot = path.join(unpackedVendorRoot, "ffmpeg", "bin");
+  const songrecBinRoot = path.join(unpackedVendorRoot, "songrec", "bin");
+  const chromaprintBinRoot = path.join(unpackedVendorRoot, "chromaprint", "bin");
+  const atomicParsleyBinRoot = path.join(unpackedVendorRoot, "atomicparsley", "bin");
 
   prunePlatformBins(ytBinRoot, platformPrefix);
   prunePlatformBins(ffmpegBinRoot, platformPrefix);
+  prunePlatformBins(songrecBinRoot, platformPrefix);
+  prunePlatformBins(chromaprintBinRoot, platformPrefix);
+  prunePlatformBins(atomicParsleyBinRoot, platformPrefix);
 };

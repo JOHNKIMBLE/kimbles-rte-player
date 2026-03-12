@@ -21,15 +21,35 @@ const {
   normalizeBbcProgramUrl,
   searchBbcPrograms
 } = require("./lib/bbc");
-const { runYtDlpDownload } = require("./lib/downloader");
-const { runYtDlpJson } = require("./lib/downloader");
-const { generateCueForAudio } = require("./lib/cue");
+const {
+  getWwfEpisodeInfo,
+  getWwfEpisodeMixcloudUrl,
+  getWwfProgramSummary,
+  getWwfProgramEpisodes,
+  searchWwfPrograms,
+  getWwfEpisodePlaylist,
+  getWwfLiveNow,
+  LIVE_STATIONS: WWF_LIVE_STATIONS,
+  normalizeWwfProgramUrl
+} = require("./lib/worldwidefm");
+const {
+  getNtsEpisodeInfo,
+  getNtsProgramSummary,
+  getNtsProgramEpisodes,
+  searchNtsPrograms,
+  getNtsEpisodePlaylist,
+  getNtsLiveNow,
+  LIVE_STATIONS: NTS_LIVE_STATIONS,
+  normalizeNtsProgramUrl
+} = require("./lib/nts");
+const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
 const { writeProgramFeedFiles } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
+const { runCueTaskInChild } = require("./lib/cue-worker-client");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -47,6 +67,20 @@ const DOWNLOAD_ARCHIVE_PATH = path.join(DATA_DIR, "download-archive.txt");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
+function emitProgressEvent(progressToken, payload) {
+  if (!progressToken) {
+    return;
+  }
+  const listeners = progressSubscribers.get(progressToken);
+  if (!listeners || listeners.size === 0) {
+    return;
+  }
+  const event = `data: ${JSON.stringify({ token: progressToken, ...payload })}\n\n`;
+  for (const res of listeners) {
+    res.write(event);
+  }
+}
 
 function isPathInside(baseDir, targetPath) {
   const base = path.resolve(baseDir);
@@ -75,6 +109,17 @@ function resolveLocalPlaybackToken(token) {
   return item.path;
 }
 
+function absolutizeInternalMediaUrl(inputUrl) {
+  const text = String(inputUrl || "").trim();
+  if (!text || /^https?:\/\//i.test(text)) {
+    return text;
+  }
+  if (!text.startsWith("/")) {
+    return text;
+  }
+  return `http://127.0.0.1:${PORT}${text}`;
+}
+
 function getDefaultSettings() {
   return {
     timeFormat: "24h",
@@ -82,13 +127,22 @@ function getDefaultSettings() {
     pathFormat: "{radio}/{program}/{episode_short} {release_date}",
     cueAutoGenerate: false,
     maxConcurrentDownloads: 2,
-    outputFormat: "mp3",
+    outputFormat: "m4a",
     outputQuality: "128K",
     normalizeLoudness: true,
     dedupeMode: "source-id",
     id3Tagging: true,
     feedExportEnabled: true,
-    webhookUrl: ""
+    webhookUrl: "",
+    auddTrackMatching: false,
+    auddApiToken: "",
+    fingerprintTrackMatching: false,
+    acoustidApiKey: "",
+    songrecTrackMatching: false,
+    songrecSampleSeconds: 20,
+    ffmpegCueSilenceDetect: true,
+    ffmpegCueLoudnessDetect: true,
+    ffmpegCueSpectralDetect: true
   };
 }
 
@@ -108,13 +162,22 @@ function normalizeSettings(input) {
       : defaults.pathFormat,
     cueAutoGenerate: Boolean(raw.cueAutoGenerate),
     maxConcurrentDownloads: Math.max(1, Math.min(8, Math.floor(Number(raw.maxConcurrentDownloads || defaults.maxConcurrentDownloads)))),
-    outputFormat: String(raw.outputFormat || defaults.outputFormat).toLowerCase(),
+    outputFormat: String(raw.outputFormat || defaults.outputFormat).trim().toLowerCase() === "mp3" ? "mp3" : "m4a",
     outputQuality: String(raw.outputQuality || defaults.outputQuality).trim() || defaults.outputQuality,
     normalizeLoudness: raw.normalizeLoudness == null ? defaults.normalizeLoudness : Boolean(raw.normalizeLoudness),
     dedupeMode: ["source-id", "title-date", "none"].includes(dedupeModeRaw) ? dedupeModeRaw : defaults.dedupeMode,
     id3Tagging: raw.id3Tagging == null ? defaults.id3Tagging : Boolean(raw.id3Tagging),
     feedExportEnabled: raw.feedExportEnabled == null ? defaults.feedExportEnabled : Boolean(raw.feedExportEnabled),
-    webhookUrl: typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : ""
+    webhookUrl: typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "",
+    auddTrackMatching: raw.auddTrackMatching == null ? defaults.auddTrackMatching : Boolean(raw.auddTrackMatching),
+    auddApiToken: typeof raw.auddApiToken === "string" ? raw.auddApiToken.trim() : "",
+    fingerprintTrackMatching: raw.fingerprintTrackMatching == null ? defaults.fingerprintTrackMatching : Boolean(raw.fingerprintTrackMatching),
+    acoustidApiKey: typeof raw.acoustidApiKey === "string" ? raw.acoustidApiKey.trim() : "",
+    songrecTrackMatching: raw.songrecTrackMatching == null ? defaults.songrecTrackMatching : Boolean(raw.songrecTrackMatching),
+    songrecSampleSeconds: Math.max(8, Math.min(45, Math.floor(Number(raw.songrecSampleSeconds || defaults.songrecSampleSeconds)))),
+    ffmpegCueSilenceDetect: raw.ffmpegCueSilenceDetect == null ? defaults.ffmpegCueSilenceDetect : Boolean(raw.ffmpegCueSilenceDetect),
+    ffmpegCueLoudnessDetect: raw.ffmpegCueLoudnessDetect == null ? defaults.ffmpegCueLoudnessDetect : Boolean(raw.ffmpegCueLoudnessDetect),
+    ffmpegCueSpectralDetect: raw.ffmpegCueSpectralDetect == null ? defaults.ffmpegCueSpectralDetect : Boolean(raw.ffmpegCueSpectralDetect)
   };
 }
 
@@ -227,17 +290,7 @@ async function downloadFromManifest({
   fs.mkdirSync(outputDir, { recursive: true });
 
   function emitProgress(payload) {
-    if (!progressToken) {
-      return;
-    }
-    const listeners = progressSubscribers.get(progressToken);
-    if (!listeners || listeners.size === 0) {
-      return;
-    }
-    const event = `data: ${JSON.stringify({ token: progressToken, ...payload })}\n\n`;
-    for (const res of listeners) {
-      res.write(event);
-    }
+    emitProgressEvent(progressToken, payload);
   }
 
   const result = await downloadQueue.run(
@@ -253,7 +306,8 @@ async function downloadFromManifest({
       audioFormat: settings.outputFormat,
       audioQuality: settings.outputQuality,
       normalizeLoudness: settings.normalizeLoudness,
-      dedupeMode: settings.dedupeMode
+      dedupeMode: settings.dedupeMode,
+      fetchThumbnail: Boolean(settings.id3Tagging)
     }),
     {
       label: target.fileStem,
@@ -302,12 +356,20 @@ async function maybeApplyId3({
       publishedTime,
       sourceUrl,
       artworkUrl,
+      artworkPath: String(downloadResult?.artworkPath || ""),
       episodeUrl,
       clipId,
       description
     });
   } catch {
     return null;
+  } finally {
+    const stagedArtworkPath = String(downloadResult?.artworkPath || "");
+    if (stagedArtworkPath) {
+      try {
+        fs.unlinkSync(stagedArtworkPath);
+      } catch {}
+    }
   }
 }
 
@@ -318,7 +380,9 @@ async function maybeGenerateCue({
   episodeTitle,
   programTitle,
   tracklistUrl = "",
-  force = false
+  force = false,
+  revealErrors = false,
+  onProgress = null
 }) {
   const settings = readSettings();
   if (!force && !settings.cueAutoGenerate) {
@@ -333,19 +397,91 @@ async function maybeGenerateCue({
 
   const audioPath = path.join(outputDir, fileName);
   try {
-    return await generateCueForAudio({
+    return await runCueTaskInChild({
+      mode: "generate",
+      onProgress,
+      options: {
       audioPath,
       sourceType,
       episodeUrl,
       episodeTitle,
       programTitle,
       tracklistUrl,
-      getRteTracks: getEpisodePlaylist,
-      getBbcTracks: getBbcEpisodePlaylist
+      fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
+      auddTrackMatching: Boolean(settings.auddTrackMatching),
+      auddApiToken: String(settings.auddApiToken || ""),
+      acoustidApiKey: String(settings.acoustidApiKey || ""),
+      songrecTrackMatching: Boolean(settings.songrecTrackMatching),
+      songrecSampleSeconds: Number(settings.songrecSampleSeconds || 20),
+      ffmpegCueSilenceDetect: settings.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect),
+      ffmpegCueLoudnessDetect: settings.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect),
+      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect)
+      }
     });
-  } catch {
+  } catch (error) {
+    if (revealErrors) {
+      throw error;
+    }
     return null;
   }
+}
+
+async function previewCue({
+  sourceType = "rte",
+  episodeUrl = "",
+  episodeTitle = "",
+  programTitle = "",
+  tracklistUrl = "",
+  clipId = "",
+  streamUrl = "",
+  durationSeconds = 0,
+  outputDir = "",
+  fileName = "",
+  onProgress = null
+}) {
+  const settings = readSettings();
+  const raw = String(sourceType || "rte").toLowerCase();
+  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : "rte";
+  const safeOutputDir = String(outputDir || "").trim();
+  const safeFileName = String(fileName || "").trim();
+  let inputSource = "";
+
+  if (safeOutputDir && safeFileName) {
+    inputSource = path.join(safeOutputDir, safeFileName);
+  } else if (String(streamUrl || "").trim()) {
+    inputSource = absolutizeInternalMediaUrl(streamUrl);
+  } else if (safeSourceType === "rte") {
+    inputSource = absolutizeInternalMediaUrl((await resolveRteEpisodeStream(clipId)).streamUrl);
+  } else if (safeSourceType === "wwf") {
+    inputSource = (await resolveWwfEpisodeStream(episodeUrl)).streamUrl;
+  } else if (safeSourceType === "nts") {
+    inputSource = (await resolveNtsEpisodeStream(episodeUrl)).streamUrl;
+  } else {
+    inputSource = (await resolveBbcEpisodeStream(episodeUrl)).streamUrl;
+  }
+
+  return runCueTaskInChild({
+    mode: "preview",
+    onProgress,
+    options: {
+      inputSource,
+      sourceType: safeSourceType,
+      episodeUrl: String(episodeUrl || "").trim(),
+      episodeTitle: String(episodeTitle || "").trim(),
+      programTitle: String(programTitle || "").trim(),
+      tracklistUrl: String(tracklistUrl || "").trim(),
+      durationSecondsHint: Number(durationSeconds || 0),
+      fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
+      auddTrackMatching: Boolean(settings.auddTrackMatching),
+      auddApiToken: String(settings.auddApiToken || ""),
+      acoustidApiKey: String(settings.acoustidApiKey || ""),
+      songrecTrackMatching: Boolean(settings.songrecTrackMatching),
+      songrecSampleSeconds: Number(settings.songrecSampleSeconds || 20),
+      ffmpegCueSilenceDetect: settings.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect),
+      ffmpegCueLoudnessDetect: settings.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect),
+      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect)
+    }
+  });
 }
 
 async function resolveBbcArtwork(episodeUrl) {
@@ -383,7 +519,8 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     sourceType: "rte",
     episodeUrl,
     episodeTitle: resolvedTitle,
-    programTitle
+    programTitle,
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
   });
   const tags = await maybeApplyId3({
     downloadResult: download,
@@ -489,7 +626,128 @@ async function resolveBbcEpisodeStream(episodeUrl) {
 }
 
 function feedDataDirFor(sourceType) {
-  return sourceType === "bbc" ? path.join(DATA_DIR, "bbc") : DATA_DIR;
+  if (sourceType === "bbc") return path.join(DATA_DIR, "bbc");
+  if (sourceType === "wwf") return path.join(DATA_DIR, "wwf");
+  if (sourceType === "nts") return path.join(DATA_DIR, "nts");
+  return DATA_DIR;
+}
+
+async function resolveWwfEpisodeStream(episodeUrl) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) throw new Error("episodeUrl is required.");
+  const tryStream = async (sourceUrl) => {
+    const json = await runYtDlpJson({ url: sourceUrl, args: ["-J", "--no-playlist", "--playlist-items", "1"] });
+    const direct = String(
+      json?.url || json?.requested_downloads?.[0]?.url || json?.formats?.find((f) => f && String(f.protocol || "").includes("m3u8"))?.url || ""
+    ).trim();
+    if (!direct) throw new Error("No playable stream URL found.");
+    return { episodeUrl: url, streamUrl: direct, title: String(json?.title || "").trim(), image: String(json?.thumbnail || "").trim() };
+  };
+  try {
+    return await tryStream(url);
+  } catch {
+    const mixcloudUrl = await getWwfEpisodeMixcloudUrl(url).catch(() => "");
+    if (mixcloudUrl) {
+      try {
+        return await tryStream(mixcloudUrl);
+      } catch (e) {
+        throw new Error(e?.message || "Mixcloud source failed.");
+      }
+    }
+    throw new Error("No playable Worldwide FM stream found. Episodes are mirrored on Mixcloud.");
+  }
+}
+
+async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) throw new Error("episodeUrl is required.");
+  const info = await getWwfEpisodeInfo(sourceUrl).catch(() => ({}));
+  const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "wwf-episode");
+  const ytDlpUrl = (info.mixcloudUrl && info.mixcloudUrl.trim()) || (await getWwfEpisodeMixcloudUrl(sourceUrl).catch(() => "")) || sourceUrl;
+  const download = await downloadFromManifest({
+    sourceUrl: ytDlpUrl,
+    manifestUrl: ytDlpUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || info.showName || "Worldwide FM",
+    publishedTime: publishedTime || info.publishedTime || info.title || resolvedTitle,
+    episodeUrl: sourceUrl,
+    clipId: info.clipId || sourceUrl,
+    progressToken,
+    sourceType: "wwf",
+    forceDownload
+  });
+  const resolvedArtwork = String(artworkUrl || info.image || "").trim();
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "wwf",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || info.showName || "Worldwide FM",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: String(info.clipId || sourceUrl)
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "wwf",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || info.showName || "Worldwide FM",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
+  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
+}
+
+async function resolveNtsEpisodeStream(episodeUrl) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) throw new Error("episodeUrl is required.");
+  const json = await runYtDlpJson({ url, args: ["-J", "--no-playlist", "--playlist-items", "1"] });
+  const direct = String(
+    json?.url || json?.requested_downloads?.[0]?.url || json?.formats?.find((f) => f && String(f.protocol || "").includes("m3u8"))?.url || ""
+  ).trim();
+  if (!direct) throw new Error("No playable NTS stream URL found.");
+  return { episodeUrl: url, streamUrl: direct, title: String(json?.title || "").trim(), image: String(json?.thumbnail || "").trim() };
+}
+
+async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) throw new Error("episodeUrl is required.");
+  const info = await getNtsEpisodeInfo(sourceUrl).catch(() => ({}));
+  const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "nts-episode");
+  const download = await downloadFromManifest({
+    sourceUrl,
+    manifestUrl: sourceUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || "NTS",
+    publishedTime: publishedTime || info.title || resolvedTitle,
+    episodeUrl: sourceUrl,
+    clipId: info.clipId || sourceUrl,
+    progressToken,
+    sourceType: "nts",
+    forceDownload
+  });
+  const resolvedArtwork = String(artworkUrl || info.image || "").trim();
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "nts",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "NTS",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: String(info.clipId || sourceUrl)
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "nts",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "NTS",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
+  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
 async function sendWebhookIfConfigured(payload) {
@@ -600,6 +858,40 @@ const bbcScheduler = createSchedulerStore({
     })()
 });
 
+const wwfScheduler = createSchedulerStore({
+  dataDir: path.join(DATA_DIR, "wwf"),
+  getProgramSummary: async (programUrl) => getWwfProgramSummary(programUrl),
+  getProgramEpisodes: async (programUrl, page) => getWwfProgramEpisodes(programUrl, page),
+  onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("wwf", schedule, latest),
+  onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("wwf", schedule, downloaded),
+  onScheduleRunError: (schedule, error) => onScheduleError("wwf", schedule, error),
+  runEpisodeDownload: async (episode) =>
+    downloadWwfEpisode({
+      episodeUrl: episode.episodeUrl,
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || episode.showName,
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || ""
+    })
+});
+
+const ntsScheduler = createSchedulerStore({
+  dataDir: path.join(DATA_DIR, "nts"),
+  getProgramSummary: async (programUrl) => getNtsProgramSummary(programUrl),
+  getProgramEpisodes: async (programUrl, page) => getNtsProgramEpisodes(programUrl, page),
+  onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("nts", schedule, latest),
+  onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("nts", schedule, downloaded),
+  onScheduleRunError: (schedule, error) => onScheduleError("nts", schedule, error),
+  runEpisodeDownload: async (episode) =>
+    downloadNtsEpisode({
+      episodeUrl: episode.episodeUrl,
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || "NTS",
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || ""
+    })
+});
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -620,6 +912,135 @@ app.get("/api/live/now/:channelId", async (req, res) => {
 app.get("/api/bbc/live/stations", async (_req, res) => {
   try {
     const data = await getBbcLiveStations(runYtDlpJson);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/wwf/live/stations", (_req, res) => {
+  res.json(WWF_LIVE_STATIONS);
+});
+
+app.get("/api/wwf/live/now", async (_req, res) => {
+  try {
+    const data = await getWwfLiveNow();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/wwf/program/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "");
+    const data = await searchWwfPrograms(query);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/wwf/program/episodes", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const page = Number(req.query.page || 1);
+    const data = await getWwfProgramEpisodes(programUrl, page);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/wwf/program/summary", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const data = await getWwfProgramSummary(programUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/wwf/episode/playlist", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getWwfEpisodePlaylist(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/wwf/episode/stream", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await resolveWwfEpisodeStream(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/nts/live/stations", (_req, res) => {
+  res.json(NTS_LIVE_STATIONS);
+});
+
+app.get("/api/nts/live/now/:channelId", async (req, res) => {
+  try {
+    const data = await getNtsLiveNow(req.params.channelId || "");
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/nts/program/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "");
+    const sort = String(req.query.sort || "recent");
+    const data = await searchNtsPrograms(query, { sort });
+    res.json(data);
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Search unavailable" });
+  }
+});
+
+app.get("/api/nts/program/episodes", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const page = Number(req.query.page || 1);
+    const data = await getNtsProgramEpisodes(programUrl, page);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/nts/program/summary", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const data = await getNtsProgramSummary(programUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/nts/episode/playlist", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getNtsEpisodePlaylist(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/nts/episode/stream", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await resolveNtsEpisodeStream(episodeUrl);
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -829,7 +1250,8 @@ app.post("/api/download/url", async (req, res) => {
       sourceType: "rte",
       episodeUrl: pageUrl,
       episodeTitle: info.title,
-      programTitle: inferProgramNameFromUrl(pageUrl)
+      programTitle: inferProgramNameFromUrl(pageUrl),
+      onProgress: (progress) => emitProgressEvent(progressToken, progress)
     });
     const tags = await maybeApplyId3({
       downloadResult: download,
@@ -898,7 +1320,8 @@ app.post("/api/download/bbc/url", async (req, res) => {
       sourceType: "bbc",
       episodeUrl: usedUrl,
       episodeTitle: inferredTitle,
-      programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC"
+      programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
+      onProgress: (progress) => emitProgressEvent(progressToken, progress)
     });
     const tags = await maybeApplyId3({
       downloadResult: download,
@@ -911,6 +1334,54 @@ app.post("/api/download/bbc/url", async (req, res) => {
       episodeUrl: usedUrl
     });
     res.json({ pageUrl, sourceUrlUsed: usedUrl, title: inferredTitle, tags, cue, ...download });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/download/wwf/url", async (req, res) => {
+  try {
+    const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
+    const forceDownload = Boolean(req.body.forceDownload);
+    const title = String(req.body.title || "").trim();
+    const programTitle = String(req.body.programTitle || "").trim();
+    const publishedTime = String(req.body.publishedTime || "").trim();
+    const image = String(req.body.image || "").trim();
+    const data = await downloadWwfEpisode({
+      episodeUrl: pageUrl,
+      title: title || undefined,
+      programTitle: programTitle || undefined,
+      publishedTime: publishedTime || undefined,
+      artworkUrl: image,
+      progressToken,
+      forceDownload
+    });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/download/nts/url", async (req, res) => {
+  try {
+    const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
+    const forceDownload = Boolean(req.body.forceDownload);
+    const title = String(req.body.title || "").trim();
+    const programTitle = String(req.body.programTitle || "").trim();
+    const publishedTime = String(req.body.publishedTime || "").trim();
+    const image = String(req.body.image || "").trim();
+    const data = await downloadNtsEpisode({
+      episodeUrl: pageUrl,
+      title: title || undefined,
+      programTitle: programTitle || undefined,
+      publishedTime: publishedTime || undefined,
+      artworkUrl: image,
+      progressToken,
+      forceDownload
+    });
+    res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1037,9 +1508,12 @@ app.post("/api/download-queue/clear-pending", (_req, res) => {
 
 app.post("/api/cue/generate", async (req, res) => {
   try {
-    const sourceType = String(req.body.sourceType || "rte").toLowerCase() === "bbc" ? "bbc" : "rte";
+    const raw = String(req.body.sourceType || "rte").toLowerCase();
+    const sourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : "rte";
+    const progressToken = String(req.body.progressToken || "");
     const cue = await maybeGenerateCue({
       force: true,
+      revealErrors: true,
       sourceType,
       episodeUrl: String(req.body.episodeUrl || ""),
       episodeTitle: String(req.body.title || ""),
@@ -1048,11 +1522,31 @@ app.post("/api/cue/generate", async (req, res) => {
       downloadResult: {
         outputDir: String(req.body.outputDir || ""),
         fileName: String(req.body.fileName || "")
-      }
+      },
+      onProgress: (progress) => emitProgressEvent(progressToken, progress)
     });
-    if (!cue) {
-      throw new Error("Unable to generate CUE/chapters for this episode.");
-    }
+    res.json(cue);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/cue/preview", async (req, res) => {
+  try {
+    const progressToken = String(req.body.progressToken || "");
+    const cue = await previewCue({
+      sourceType: String(req.body.sourceType || "rte"),
+      episodeUrl: String(req.body.episodeUrl || ""),
+      episodeTitle: String(req.body.title || ""),
+      programTitle: String(req.body.programTitle || ""),
+      tracklistUrl: String(req.body.tracklistUrl || ""),
+      clipId: String(req.body.clipId || ""),
+      streamUrl: String(req.body.streamUrl || ""),
+      durationSeconds: Number(req.body.durationSeconds || 0),
+      outputDir: String(req.body.outputDir || ""),
+      fileName: String(req.body.fileName || ""),
+      onProgress: (progress) => emitProgressEvent(progressToken, progress)
+    });
     res.json(cue);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1137,6 +1631,78 @@ app.delete("/api/bbc/scheduler/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/wwf/scheduler", (_req, res) => {
+  res.json(wwfScheduler.list());
+});
+
+app.post("/api/wwf/scheduler", async (req, res) => {
+  try {
+    const programUrl = String(req.body.programUrl || "").trim();
+    const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
+    const normalized = normalizeWwfProgramUrl(programUrl || "");
+    const data = await wwfScheduler.add(normalized, { backfillCount });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/wwf/scheduler/:id", (req, res) => {
+  const enabled = Boolean(req.body.enabled);
+  const data = wwfScheduler.setEnabled(req.params.id, enabled);
+  res.json(data);
+});
+
+app.post("/api/wwf/scheduler/:id/run", async (req, res) => {
+  try {
+    const data = await wwfScheduler.checkOne(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/wwf/scheduler/:id", (req, res) => {
+  wwfScheduler.remove(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get("/api/nts/scheduler", (_req, res) => {
+  res.json(ntsScheduler.list());
+});
+
+app.post("/api/nts/scheduler", async (req, res) => {
+  try {
+    const programUrl = String(req.body.programUrl || "").trim();
+    const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
+    const normalized = normalizeNtsProgramUrl(programUrl || "");
+    const data = await ntsScheduler.add(normalized, { backfillCount });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/nts/scheduler/:id", (req, res) => {
+  const enabled = Boolean(req.body.enabled);
+  const data = ntsScheduler.setEnabled(req.params.id, enabled);
+  res.json(data);
+});
+
+app.post("/api/nts/scheduler/:id/run", async (req, res) => {
+  try {
+    const data = await ntsScheduler.checkOne(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/nts/scheduler/:id", (req, res) => {
+  ntsScheduler.remove(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get("/", (_req, res) => {
   res.sendFile(path.join(rendererDir, "index.html"));
 });
@@ -1145,6 +1711,10 @@ scheduler.start();
 scheduler.runAll().catch(() => {});
 bbcScheduler.start();
 bbcScheduler.runAll().catch(() => {});
+wwfScheduler.start();
+wwfScheduler.runAll().catch(() => {});
+ntsScheduler.start();
+ntsScheduler.runAll().catch(() => {});
 
 app.listen(PORT, () => {
   console.log(`Kimble's RTE Player API listening on ${PORT}`);

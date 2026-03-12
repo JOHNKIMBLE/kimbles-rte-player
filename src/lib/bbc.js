@@ -396,20 +396,13 @@ function toDublinDate(value) {
   return date;
 }
 
-function toDublinDayAndTime(date) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Dublin",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const dayName = String(parts.find((item) => item.type === "weekday")?.value || "").slice(0, 3);
-  const hour = parts.find((item) => item.type === "hour")?.value || "00";
-  const minute = parts.find((item) => item.type === "minute")?.value || "00";
-  const dayIndex = DAY_NAMES_SHORT.findIndex((entry) => entry.toLowerCase() === dayName.toLowerCase());
+function toUtcDayAndTime(date) {
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayIndex = date.getUTCDay();
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
   return {
-    dayIndex: dayIndex >= 0 ? dayIndex : 0,
+    dayIndex,
     hhmm: `${hour}:${minute}`
   };
 }
@@ -435,21 +428,12 @@ function formatDayGroup(days) {
   return uniqueSorted.map((day) => DAY_NAMES_SHORT[day]).join(", ");
 }
 
-function formatDublinDateTime(iso) {
+function formatUtcDateTime(iso) {
   const date = toDublinDate(iso);
   if (!date) {
     return "";
   }
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Dublin",
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(date);
+  return date.toISOString();
 }
 
 function buildRunScheduleFromBroadcasts(broadcasts) {
@@ -462,8 +446,8 @@ function buildRunScheduleFromBroadcasts(broadcasts) {
       continue;
     }
 
-    const startInfo = toDublinDayAndTime(start);
-    const endInfo = toDublinDayAndTime(end);
+    const startInfo = toUtcDayAndTime(start);
+    const endInfo = toUtcDayAndTime(end);
     const key = `${startInfo.hhmm}-${endInfo.hhmm}`;
     if (!groups.has(key)) {
       groups.set(key, { start: startInfo.hhmm, end: endInfo.hhmm, days: [] });
@@ -549,7 +533,7 @@ async function getBbcUpcomingSchedule(programUrl) {
 
   return {
     runSchedule,
-    nextBroadcastAt: formatDublinDateTime(next?.startDate || ""),
+    nextBroadcastAt: formatUtcDateTime(next?.startDate || ""),
     nextBroadcastTitle: cleanText(next?.title || "")
   };
 }

@@ -2,7 +2,8 @@
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const DUBLIN_TZ = "Europe/Dublin";
+// Schedule windows are stored in UTC. The scheduler compares current UTC time
+// against these windows. Display layers convert UTC → user's local timezone.
 const RELEASE_LAG_WINDOW_MINUTES = 6 * 60;
 const RETRY_BACKOFF_MINUTES = [15, 60, 180, 720, 1440, 2880];
 const RETRY_MAX_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
@@ -123,24 +124,13 @@ function parseRunScheduleWindows(runScheduleText) {
   return windows;
 }
 
-function getDublinNowParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: DUBLIN_TZ,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-
-  const weekdayText = parts.find((p) => p.type === "weekday")?.value || "";
-  const hourText = parts.find((p) => p.type === "hour")?.value || "0";
-  const minuteText = parts.find((p) => p.type === "minute")?.value || "0";
-
-  const day = parseDayToken(weekdayText);
-  const minuteOfDay = Number(hourText) * 60 + Number(minuteText);
+function getUtcNowParts(date = new Date()) {
+  const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const day = date.getUTCDay();
+  const minuteOfDay = date.getUTCHours() * 60 + date.getUTCMinutes();
 
   return {
-    day: day == null ? 0 : day,
+    day,
     minuteOfDay: Number.isFinite(minuteOfDay) ? minuteOfDay : 0
   };
 }
@@ -151,12 +141,12 @@ function shouldRunInScheduleWindow(schedule, now = new Date()) {
     return { shouldRun: null, reason: "No schedule window parsed" };
   }
 
-  const dublinNow = getDublinNowParts(now);
+  const utcNow = getUtcNowParts(now);
   const currentSlot = windows.find((window) => {
-    if (window.dueDay !== dublinNow.day) {
+    if (window.dueDay !== utcNow.day) {
       return false;
     }
-    const delta = dublinNow.minuteOfDay - window.dueMinute;
+    const delta = utcNow.minuteOfDay - window.dueMinute;
     return delta >= 0 && delta < RELEASE_LAG_WINDOW_MINUTES;
   });
 
@@ -198,6 +188,11 @@ function toRetryItem(episode, error, attempts = 1) {
     lastError: String(error?.message || error || "Download failed"),
     nextRetryAt: toIsoAfterMinutes(backoffMinutes)
   };
+}
+
+function shouldAutoForceRedownload(error) {
+  const text = String(error?.message || error || "");
+  return /Archive says already downloaded, but matching file was not found in this target folder/i.test(text);
 }
 
 function createSchedulerStore({
@@ -330,6 +325,20 @@ function createSchedulerStore({
     schedule.retryQueue = schedule.retryQueue.filter((item) => item.clipId !== String(clipId || "").trim());
   }
 
+  async function runEpisodeDownloadWithRecovery(payload = {}) {
+    try {
+      return await runEpisodeDownload(payload);
+    } catch (error) {
+      if (!shouldAutoForceRedownload(error)) {
+        throw error;
+      }
+      return runEpisodeDownload({
+        ...(payload || {}),
+        forceDownload: true
+      });
+    }
+  }
+
   async function runInitialBackfill(schedule, summary, latest, episodes) {
     const rows = Array.isArray(episodes) ? episodes.filter((episode) => episode?.clipId) : [];
     if (!rows.length) {
@@ -352,7 +361,7 @@ function createSchedulerStore({
       schedule.lastStatus = `Backfill ${current}/${rows.length}: Downloading ${episode.title || episode.clipId}`;
       writeStore();
       try {
-        const result = await runEpisodeDownload({
+        const result = await runEpisodeDownloadWithRecovery({
           ...episode,
           title: String(episode.fullTitle || episode.title || ""),
           programTitle: summary.title
@@ -524,7 +533,7 @@ function createSchedulerStore({
       if (due.shouldRun == null && schedule.lastCheckedAt) {
         const now = Date.now();
         const cadence = schedule.cadence || "unknown";
-        const minHoursBetweenChecks = cadence === "daily" ? 6 : cadence === "weekly" ? 24 : 12;
+        const minHoursBetweenChecks = cadence === "daily" ? 6 : cadence === "weekly" ? 24 : cadence === "biweekly" ? 48 : cadence === "monthly" ? 72 : 12;
         const elapsedMs = now - Date.parse(schedule.lastCheckedAt);
         if (elapsedMs < minHoursBetweenChecks * 60 * 60 * 1000) {
           return { scheduleId: schedule.id, status: "Skipped (too soon)", downloaded: [] };
@@ -564,7 +573,7 @@ function createSchedulerStore({
 
     for (const retry of dueRetries) {
       try {
-        const result = await runEpisodeDownload({
+        const result = await runEpisodeDownloadWithRecovery({
           clipId: retry.clipId,
           title: retry.title,
           episodeUrl: retry.episodeUrl,
@@ -610,7 +619,7 @@ function createSchedulerStore({
 
     for (const episode of toDownload) {
       try {
-        const result = await runEpisodeDownload({
+        const result = await runEpisodeDownloadWithRecovery({
           ...episode,
           title: String(episode.fullTitle || episode.title || ""),
           programTitle: schedule.title

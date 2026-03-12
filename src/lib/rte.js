@@ -253,6 +253,23 @@ async function getProgramEpisodes(programUrl, page = 1) {
   };
 }
 
+function dublinScheduleToUtc(scheduleText) {
+  if (!scheduleText) return "";
+  // Get Dublin→UTC offset (0 in winter, -1 in summer when Dublin is UTC+1)
+  const now = new Date();
+  const dublinStr = now.toLocaleString("en-GB", { timeZone: "Europe/Dublin", hour12: false });
+  const utcStr = now.toLocaleString("en-GB", { timeZone: "UTC", hour12: false });
+  const dublinH = parseInt(dublinStr.split(",")[1]?.trim().split(":")[0] || "0", 10);
+  const utcH = parseInt(utcStr.split(",")[1]?.trim().split(":")[0] || "0", 10);
+  const offset = ((dublinH - utcH) + 24) % 24; // 0 or 1
+  if (offset === 0) return scheduleText; // Dublin == UTC, no conversion needed
+  // Shift all HH:MM times back by the offset to convert Dublin→UTC
+  return scheduleText.replace(/(\d{1,2}):(\d{2})/g, (match, hh, mm) => {
+    const h = ((parseInt(hh, 10) - offset) + 24) % 24;
+    return String(h).padStart(2, "0") + ":" + mm;
+  });
+}
+
 async function getProgramSummary(programUrl) {
   const normalizedProgramUrl = normalizeProgramUrl(programUrl);
   if (programSummaryCache.has(normalizedProgramUrl)) {
@@ -289,7 +306,7 @@ async function getProgramSummary(programUrl) {
     title: cleanTitle(title),
     description: cleanText(description),
     image: image ? toAbsoluteRteUrl(image) : "",
-    runSchedule: cleanText(runSchedule)
+    runSchedule: dublinScheduleToUtc(cleanText(runSchedule))
   };
 
   programSummaryCache.set(normalizedProgramUrl, summary);
