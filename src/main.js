@@ -1538,7 +1538,8 @@ app.whenReady().then(() => {
         programTitle: episode.programTitle,
         episodeUrl: episode.episodeUrl,
         publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || ""
+        artworkUrl: episode.image || "",
+        forceDownload: episode.forceDownload || false
       })
   });
 
@@ -1556,7 +1557,8 @@ app.whenReady().then(() => {
         title: episode.title,
         programTitle: episode.programTitle,
         publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || ""
+        artworkUrl: episode.image || "",
+        forceDownload: episode.forceDownload || false
       })
   });
 
@@ -1574,7 +1576,8 @@ app.whenReady().then(() => {
         title: episode.title || episode.fullTitle,
         programTitle: episode.programTitle || episode.showName,
         publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || ""
+        artworkUrl: episode.image || "",
+        forceDownload: episode.forceDownload || false
       })
   });
 
@@ -1592,7 +1595,8 @@ app.whenReady().then(() => {
         title: episode.title || episode.fullTitle,
         programTitle: episode.programTitle || "NTS",
         publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || ""
+        artworkUrl: episode.image || "",
+        forceDownload: episode.forceDownload || false
       })
   });
 
