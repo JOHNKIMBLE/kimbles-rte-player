@@ -813,7 +813,8 @@ const scheduler = createSchedulerStore({
       programTitle: episode.programTitle,
       episodeUrl: episode.episodeUrl,
       publishedTime: episode.publishedTime,
-      artworkUrl: episode.image || ""
+      artworkUrl: episode.image || "",
+      forceDownload: episode.forceDownload || false
     })
 });
 
@@ -834,7 +835,8 @@ const bbcScheduler = createSchedulerStore({
         publishedTime: String(episode.publishedTime || episode.title || ""),
         clipId: episode.clipId,
         episodeUrl: String(episode.episodeUrl || ""),
-        sourceType: "bbc"
+        sourceType: "bbc",
+        forceDownload: episode.forceDownload || false
       });
       const tags = await maybeApplyId3({
         downloadResult: download,
@@ -871,7 +873,8 @@ const wwfScheduler = createSchedulerStore({
       title: episode.title || episode.fullTitle,
       programTitle: episode.programTitle || episode.showName,
       publishedTime: episode.publishedTime,
-      artworkUrl: episode.image || ""
+      artworkUrl: episode.image || "",
+      forceDownload: episode.forceDownload || false
     })
 });
 
@@ -888,7 +891,8 @@ const ntsScheduler = createSchedulerStore({
       title: episode.title || episode.fullTitle,
       programTitle: episode.programTitle || "NTS",
       publishedTime: episode.publishedTime,
-      artworkUrl: episode.image || ""
+      artworkUrl: episode.image || "",
+      forceDownload: episode.forceDownload || false
     })
 });
 
