@@ -11,9 +11,11 @@ const {
   getProgramSummary,
   getLiveStationNow,
   normalizeProgramUrl,
+  getRteDiscovery,
   searchPrograms
 } = require("./lib/rte");
 const {
+  getBbcDiscovery,
   getBbcEpisodePlaylist,
   getBbcLiveStations,
   getBbcProgramEpisodes,
@@ -22,6 +24,7 @@ const {
   searchBbcPrograms
 } = require("./lib/bbc");
 const {
+  getWwfDiscovery,
   getWwfEpisodeInfo,
   getWwfEpisodeMixcloudUrl,
   getWwfProgramSummary,
@@ -33,6 +36,7 @@ const {
   normalizeWwfProgramUrl
 } = require("./lib/worldwidefm");
 const {
+  getNtsDiscovery,
   getNtsEpisodeInfo,
   getNtsProgramSummary,
   getNtsProgramEpisodes,
@@ -42,6 +46,17 @@ const {
   LIVE_STATIONS: NTS_LIVE_STATIONS,
   normalizeNtsProgramUrl
 } = require("./lib/nts");
+const {
+  LIVE_STATIONS: FIP_LIVE_STATIONS,
+  getFipLiveStations,
+  getFipNowPlaying,
+  searchFipPrograms,
+  getFipDiscovery,
+  getFipProgramSummary,
+  getFipProgramEpisodes,
+  getFipEpisodeStream,
+  normalizeFipProgramUrl
+} = require("./lib/fip");
 const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
@@ -441,7 +456,7 @@ async function previewCue({
 }) {
   const settings = readSettings();
   const raw = String(sourceType || "rte").toLowerCase();
-  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : "rte";
+  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : raw === "fip" ? "fip" : "rte";
   const safeOutputDir = String(outputDir || "").trim();
   const safeFileName = String(fileName || "").trim();
   let inputSource = "";
@@ -456,6 +471,8 @@ async function previewCue({
     inputSource = (await resolveWwfEpisodeStream(episodeUrl)).streamUrl;
   } else if (safeSourceType === "nts") {
     inputSource = (await resolveNtsEpisodeStream(episodeUrl)).streamUrl;
+  } else if (safeSourceType === "fip") {
+    inputSource = (await getFipEpisodeStream(episodeUrl, runYtDlpJson)).streamUrl;
   } else {
     inputSource = (await resolveBbcEpisodeStream(episodeUrl)).streamUrl;
   }
@@ -629,6 +646,7 @@ function feedDataDirFor(sourceType) {
   if (sourceType === "bbc") return path.join(DATA_DIR, "bbc");
   if (sourceType === "wwf") return path.join(DATA_DIR, "wwf");
   if (sourceType === "nts") return path.join(DATA_DIR, "nts");
+  if (sourceType === "fip") return path.join(DATA_DIR, "fip");
   return DATA_DIR;
 }
 
@@ -745,6 +763,45 @@ async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTi
     episodeUrl: sourceUrl,
     episodeTitle: resolvedTitle,
     programTitle: programTitle || "NTS",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
+  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
+}
+
+async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) throw new Error("episodeUrl is required.");
+  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const download = await downloadFromManifest({
+    sourceUrl,
+    manifestUrl: sourceUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    publishedTime: publishedTime || resolvedTitle,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl,
+    progressToken,
+    sourceType: "fip",
+    forceDownload
+  });
+  const resolvedArtwork = String(artworkUrl || "").trim();
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "fip",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "fip",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "FIP",
     onProgress: (progress) => emitProgressEvent(progressToken, progress)
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
@@ -890,6 +947,24 @@ const ntsScheduler = createSchedulerStore({
       episodeUrl: episode.episodeUrl,
       title: episode.title || episode.fullTitle,
       programTitle: episode.programTitle || "NTS",
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      forceDownload: episode.forceDownload || false
+    })
+});
+
+const fipScheduler = createSchedulerStore({
+  dataDir: path.join(DATA_DIR, "fip"),
+  getProgramSummary: async (programUrl) => getFipProgramSummary(programUrl),
+  getProgramEpisodes: async (programUrl, page) => getFipProgramEpisodes(programUrl, page),
+  onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("fip", schedule, latest),
+  onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("fip", schedule, downloaded),
+  onScheduleRunError: (schedule, error) => onScheduleError("fip", schedule, error),
+  runEpisodeDownload: async (episode) =>
+    downloadFipEpisode({
+      episodeUrl: episode.episodeUrl,
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || "FIP",
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
       forceDownload: episode.forceDownload || false
@@ -1045,6 +1120,138 @@ app.get("/api/nts/episode/stream", async (req, res) => {
   try {
     const episodeUrl = String(req.query.url || "");
     const data = await resolveNtsEpisodeStream(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// ── FIP routes ────────────────────────────────────────────────────────────────
+
+app.get("/api/fip/live/stations", (_req, res) => {
+  res.json(FIP_LIVE_STATIONS);
+});
+
+app.get("/api/fip/live/now/:stationId", async (req, res) => {
+  try {
+    const data = await getFipNowPlaying(req.params.stationId || "fip");
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+
+
+app.get("/api/fip/program/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "");
+    const data = await searchFipPrograms(query);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Search unavailable" });
+  }
+});
+
+app.get("/api/fip/discovery", async (req, res) => {
+  try {
+    const count = Math.min(24, Math.max(1, parseInt(req.query.count || "12", 10)));
+    const data = await getFipDiscovery(count);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Discovery unavailable" });
+  }
+});
+
+app.get("/api/nts/discovery", async (req, res) => {
+  try {
+    const count = Math.min(24, Math.max(1, parseInt(req.query.count || "5", 10)));
+    const data = await getNtsDiscovery(count);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Discovery unavailable" });
+  }
+});
+
+app.get("/api/wwf/discovery", async (req, res) => {
+  try {
+    const count = Math.min(24, Math.max(1, parseInt(req.query.count || "5", 10)));
+    const data = await getWwfDiscovery(count);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Discovery unavailable" });
+  }
+});
+
+app.get("/api/bbc/discovery", async (req, res) => {
+  try {
+    const count = Math.min(24, Math.max(1, parseInt(req.query.count || "5", 10)));
+    const data = await getBbcDiscovery(count);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Discovery unavailable" });
+  }
+});
+
+app.get("/api/rte/discovery", async (req, res) => {
+  try {
+    const count = Math.min(24, Math.max(1, parseInt(req.query.count || "5", 10)));
+    const data = await getRteDiscovery(count);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Discovery unavailable" });
+  }
+});
+
+app.get("/api/fip/program/episodes", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const page = Number(req.query.page || 1);
+    const data = await getFipProgramEpisodes(programUrl, page);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/fip/program/summary", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const data = await getFipProgramSummary(programUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/fip/episode/stream", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getFipEpisodeStream(episodeUrl, runYtDlpJson);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/download/fip/url", async (req, res) => {
+  try {
+    const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
+    const forceDownload = Boolean(req.body.forceDownload);
+    const providedTitle = String(req.body.title || "").trim();
+    const providedProgramTitle = String(req.body.programTitle || "").trim();
+    const publishedTime = String(req.body.publishedTime || "").trim();
+    const providedImage = String(req.body.image || "").trim();
+    const data = await downloadFipEpisode({
+      episodeUrl: pageUrl,
+      title: providedTitle,
+      programTitle: providedProgramTitle,
+      publishedTime,
+      artworkUrl: providedImage,
+      progressToken,
+      forceDownload
+    });
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1707,6 +1914,46 @@ app.delete("/api/nts/scheduler/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/fip/scheduler", (_req, res) => {
+  res.json(fipScheduler.list());
+});
+
+app.post("/api/fip/scheduler", async (req, res) => {
+  try {
+    const programUrl = String(req.body.programUrl || "").trim();
+    const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
+    const normalized = normalizeFipProgramUrl(programUrl || "");
+    const data = await fipScheduler.add(normalized, { backfillCount });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/fip/scheduler/:id", (req, res) => {
+  try {
+    const enabled = Boolean(req.body.enabled);
+    const data = fipScheduler.setEnabled(req.params.id, enabled);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/fip/scheduler/:id/run", async (req, res) => {
+  try {
+    const data = await fipScheduler.checkOne(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/fip/scheduler/:id", (req, res) => {
+  fipScheduler.remove(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get("/", (_req, res) => {
   res.sendFile(path.join(rendererDir, "index.html"));
 });
@@ -1719,6 +1966,8 @@ wwfScheduler.start();
 wwfScheduler.runAll().catch(() => {});
 ntsScheduler.start();
 ntsScheduler.runAll().catch(() => {});
+fipScheduler.start();
+fipScheduler.runAll().catch(() => {});
 
 app.listen(PORT, () => {
   console.log(`Kimble's RTE Player API listening on ${PORT}`);

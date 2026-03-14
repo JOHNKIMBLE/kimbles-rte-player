@@ -911,6 +911,25 @@ button:disabled {
   color: var(--muted);
 }
 
+/* Source badges (Schedules tab) */
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-right: 0.3rem;
+  vertical-align: middle;
+}
+.source-badge-rte  { background: rgba(210,  60,  40, 0.25); color: #ff8070; border: 1px solid rgba(210, 60, 40, 0.4); }
+.source-badge-bbc  { background: rgba( 60, 100, 200, 0.25); color: #88aaff; border: 1px solid rgba(60, 100, 200, 0.4); }
+.source-badge-wwf  { background: rgba( 30, 160, 120, 0.25); color: #5ddbb4; border: 1px solid rgba(30, 160, 120, 0.4); }
+.source-badge-nts  { background: rgba(200, 160,  30, 0.25); color: #f0d070; border: 1px solid rgba(200, 160, 30, 0.4); }
+.source-badge-fip  { background: rgba( 90,  60, 200, 0.25); color: #b09eff; border: 1px solid rgba(90, 60, 200, 0.4); }
+
 /* Genre pills */
 .genre-pills {
   display: flex;

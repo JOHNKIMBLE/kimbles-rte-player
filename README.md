@@ -1,12 +1,13 @@
 # Kimble's RTE Player
 
-Electron desktop app plus optional web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering **RTE, BBC, Worldwide FM, and NTS** radio episodes.
+Electron desktop app plus optional web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering **RTE, BBC, Worldwide FM, NTS, and FIP** radio episodes.
 
 ## Scope
 
 - **RTE & BBC**: Live stations, program search, episode explorers, remote/local playback, downloads via `yt-dlp`, schedulers with backfill.
-- **Worldwide FM** (worldwidefm.net): Live embed, search shows and hosts, load by name or host URL, episode list from `/shows` and host pages, play, download, schedulers.
-- **NTS** (nts.live): NTS 1 & 2 live streams (direct URLs + optional "now playing" artwork), search shows, load by URL/slug, episode list (with tracklists), play, download, schedulers.
+- **Worldwide FM** (worldwidefm.net): Live embed, search shows and hosts, load by name or host URL, episode list from `/shows` and host pages, play, download, schedulers. Host metadata (avatar, cadence, location, bio) via RSC payload parsing.
+- **NTS** (nts.live): NTS 1 & 2 live streams with now-playing artwork, search shows, load by URL/slug, episode list (with tracklists), play, download, schedulers.
+- **FIP** (radiofrance.fr/fip): 13 live stations with now-playing song and cover art, podcast show browser, episode search, play, download, schedulers. Show titles and airtimes translated to English.
 - Final audio: `ffmpeg` post-process, embedded artwork (`m4a`/`mp3`), optional CUE/chapter generation, queue, optional AudD/AcoustID/Songrec recognition and FFmpeg landmark cue timing.
 
 ## Runtime Modes
@@ -16,19 +17,21 @@ Electron desktop app plus optional web/server mode for browsing, streaming, down
 
 ## Highlights
 
-- **Tabs**: RTE, BBC, Worldwide FM, NTS, Settings. Each source tab has live (where applicable), quick download by URL, explorer (search + load + episodes), and schedulers.
+- **Tabs**: RTE, BBC, Worldwide FM, NTS, FIP, Settings. Each source tab has live (where applicable), quick download by URL, explorer (search + load + episodes), and schedulers.
 - **Program Search**: All platforms show rich metadata in search results — broadcast schedule, cadence, location, genres, description, and artwork. Helps you discover and evaluate shows before loading.
 - **Per-episode**: Play, Play Local, Download, Generate CUE. Global player with artwork, chapter-aware prev/next, inferred track labels.
 - **Queue**: Active, pending, recent; pause, resume, cancel, clear pending.
-- **Schedulers**: RTE, BBC, Worldwide FM, NTS; backfill modes; retry and recovery; local-time display.
+- **Schedulers**: RTE, BBC, Worldwide FM, NTS, FIP; backfill modes; retry and recovery; local-time display.
 
 ### Search and Discovery
 
-**RTE/BBC**: Program search with schedule times and episode counts.
+**RTE/BBC**: Program search with schedule times and episode counts. Cadence, genre, and airtime pills on program cards.
 
-**NTS**: Search uses two parallel strategies — a paginated show index plus direct slug guessing (15+ variations). Search results show cadence, location, broadcast schedule, description, and genre tags. Program meta shows schedule, next broadcast time, cadence, and genre pills.
+**NTS**: Search uses two parallel strategies — a paginated show index plus direct slug guessing (15+ variations). Results show cadence, location, broadcast schedule, description, and genre pills.
 
-**Worldwide FM**: Search runs three parallel strategies — episode matching, known host slug matching (from `/shows` and `/shows?type=hosts-series`), and direct host slug guessing. Host results show rich metadata: display name, avatar, cadence (weekly/daily), location, and bio description when available. Clicking a host loads their full episode archive from the host page RSC data.
+**Worldwide FM**: Search runs three parallel strategies — episode matching, known host slug matching (from `/shows` and `/shows?type=hosts-series`), and direct host slug guessing. Host results show rich metadata: display name, avatar, cadence, location, and bio. Clicking a host loads their full episode archive via RSC payload parsing.
+
+**FIP**: Podcast show browser via SvelteKit `/__data.json`. 13 live sub-stations (Rock, Jazz, Groove, World, Reggae, Electro, Hip-Hop, Pop, Metal, Nouveautés, Sacré Français, Cultes). Live now-playing fetched via Radio France public API with per-station webradio slug. French airtimes auto-translated to English.
 
 ## Download Pipeline
 
@@ -96,7 +99,7 @@ Configurable concurrent downloads, active/pending/recent lists, pause/resume, ca
 
 ### Scheduler
 
-Supports RTE, BBC, Worldwide FM, and NTS programs. Each source has its own scheduler list.
+Supports RTE, BBC, Worldwide FM, NTS, and FIP programs. Each source has its own scheduler list.
 
 #### How It Works
 
@@ -118,17 +121,13 @@ The scheduler polls every 30 minutes. For each program:
 - **BBC**: Broadcast times from BBC Sounds API, ISO timestamps to UTC.
 - **NTS**: `timeslot` field from NTS API (e.g. "MONDAY - THURSDAY / 10AM - 1PM / WEEKLY"). Falls back to episode timestamp inference. Stored in UTC.
 - **Worldwide FM**: Cadence and day/time inferred from recent episode timestamps. Typical broadcast day from frequency analysis, hour from metadata. Stored in UTC.
+- **FIP**: Airtime parsed from French show metadata (e.g. "Tous les jours à 19h"), converted Paris → UTC. Cadence derived from day pattern keywords.
 
 #### Timezone Handling
 
 All schedule times are stored in UTC internally. The scheduler compares UTC against UTC windows.
 
 The UI converts UTC → user's local timezone for display. The 12h/24h setting controls time format throughout.
-
-Example: A show airing Monday 14:00-16:00 UTC:
-- CST user sees: Monday 8:00 AM - 10:00 AM
-- Scheduler checks at 16:30 UTC (10:30 AM CST)
-- Check window extends to 22:00 UTC (4:00 PM CST)
 
 #### Backfill
 
@@ -144,7 +143,7 @@ Failed downloads retry with exponential backoff (15m → 1h → 3h → 12h → 2
 ### General
 
 - **Time Format**: 12-hour or 24-hour display
-- **Episodes Per Page**: Number of episodes shown per page in all program explorers (RTE, BBC, NTS, WWF). Default: 5.
+- **Episodes Per Page**: Number of episodes shown per page in all program explorers (RTE, BBC, NTS, WWF, FIP). Default: 5.
 
 ### Download Path
 
@@ -246,7 +245,7 @@ Artifacts in `dist/`. Packaging includes vendored binaries and prunes non-target
 
 ## HTTP API Overview
 
-Express exposes health, live/station data, program search, episode lists, playlist lookup, stream resolution, download-by-URL (RTE, BBC, WWF, NTS), progress events, local playback/cue, queue control, cue generate/preview, and scheduler CRUD + run. See `src/server.js`. Electron IPC mirrors via `src/main.js` and `src/preload.js`.
+Express exposes health, live/station data, program search, episode lists, playlist lookup, stream resolution, download-by-URL (RTE, BBC, WWF, NTS, FIP), progress events, local playback/cue, queue control, cue generate/preview, and scheduler CRUD + run. See `src/server.js`. Electron IPC mirrors via `src/main.js` and `src/preload.js`.
 
 ## Troubleshooting
 
@@ -272,7 +271,11 @@ NTS search uses parallel strategies: paginated index + slug guessing (15+ variat
 
 ### WWF search shows no results
 
-WWF search merges results from `/shows`, `/shows?type=hosts-series`, `/schedule`, and host page archives via RSC payload parsing. If a host only appears on their host page, it should still be discoverable through slug guessing.
+WWF search merges results from `/shows`, `/shows?type=hosts-series`, and host page archives via RSC payload parsing. If a host only appears on their host page, it should still be discoverable through slug guessing.
+
+### FIP live shows no now-playing data
+
+FIP sub-stations use `GET /fip/api/live?webradio=fip_X` (e.g. `fip_cultes`, `fip_hiphop`). The main FIP station uses `GET /fip/api/live` with no webradio param. Song data falls back to `api.radiofrance.fr/livemeta/pull/{id}` for stations where livemeta is supported (IDs 7, 64–78). Newer station IDs (95, 96, 709) are not supported by livemeta/pull and rely entirely on the webradio API.
 
 ## Third-Party Components
 

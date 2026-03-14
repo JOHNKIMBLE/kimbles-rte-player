@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Electron desktop app + Express web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering radio episodes from **RTE**, **BBC**, **Worldwide FM**, and **NTS**.
+Electron desktop app + Express web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering radio episodes from **RTE**, **BBC**, **Worldwide FM**, **NTS**, and **FIP**.
 
-**Version**: 2.8.9 | **License**: MIT | **Node**: 20+ | **Electron**: 37+
+**Version**: 4.5.2 | **License**: MIT | **Node**: 20+ | **Electron**: 37+
 
 ## Runtime Modes
 
@@ -24,6 +24,7 @@ src/
 │   ├── bbc.js         BBC: 7 live stations, Sounds API, search, episodes, streams
 │   ├── nts.js         NTS: 2 live streams, API + slug-guessing search, tracklists
 │   ├── worldwidefm.js WWF: live embed, RSC payload parsing, host metadata, Mixcloud
+│   ├── fip.js         FIP: 13 live stations, webradio API, livemeta, podcast SvelteKit parser
 │   ├── downloader.js  yt-dlp wrapper, ffmpeg post-process, HLS handling
 │   ├── scheduler.js   Per-source scheduler store, cadence detection, backfill, retry
 │   ├── download-queue.js  Concurrent queue with pause/resume/cancel
@@ -35,8 +36,8 @@ src/
 │   ├── cue-reader.js  Parse .cue files back into chapter arrays
 │   └── feeds.js       RSS/JSON feed export per scheduled program
 └── renderer/
-    ├── index.html     Main UI template (tabs: RTE, BBC, WWF, NTS, Settings)
-    ├── renderer.js    ~4600 lines, all UI logic, state management, event handlers
+    ├── index.html     Main UI template (tabs: RTE, BBC, WWF, NTS, FIP, Settings)
+    ├── renderer.js    ~4800 lines, all UI logic, state management, event handlers
     ├── styles.css     ~940 lines
     └── web-api-bridge.js  HTTP bridge for server mode (replaces IPC)
 ```
@@ -52,6 +53,14 @@ src/
 **NTS** (`src/lib/nts.js`): Uses NTS API (`/api/v2/`) for shows, episodes, search. Search runs two parallel strategies: paginated show index + direct slug guessing (15+ variations via `generateSlugGuesses()`). `timeslot` field parsed for schedule (e.g. "MONDAY - THURSDAY / 10AM - 1PM / WEEKLY"). Shows cadence, location, broadcast schedule, description, and genre tags in search results.
 
 **Worldwide FM** (`src/lib/worldwidefm.js`): Next.js App Router site using RSC (React Server Components). Data extracted by parsing `self.__next_f.push()` payloads from HTML. Host slugs scraped from both `/shows` and `/shows?type=hosts-series` in parallel. Search runs three parallel strategies: episode matching, known host slug matching, direct host slug guessing. Host metadata (description, cadence, location) extracted by positional scoping in RSC chunks — find `displayName`, then walk forward to `show.metadata.description` within bounded range. Episodes resolved via Mixcloud URLs embedded in RSC data.
+
+**FIP** (`src/lib/fip.js`): Radio France public APIs. 13 live stations. No API key required.
+- **Live now-playing**: `GET https://www.radiofrance.fr/fip/api/live` (main station) or `GET .../fip/api/live?webradio=fip_X` (sub-stations). Parallel call to `api.radiofrance.fr/livemeta/pull/{id}` for current song detail. Livemeta IDs 7, 64–78 are supported; IDs 95, 96, 709 (Hip-Hop, Sacré Français, Cultes) are not supported by livemeta/pull and rely solely on the webradio API.
+- **Podcast shows**: SvelteKit `/__data.json` dehydrated flat array format. Node 3 contains the paginated items and concept (show) metadata. `deref(v, arr)` resolves integer indices within the array.
+- **Show translation**: French airtimes (e.g. "Tous les jours à 19h") parsed to English + UTC via `parseFipAirtime()`. Show titles translated via MyMemory API (`translateFr()`), cached per session.
+- **`STATION_WEBRADIO_SLUG`**: Maps station IDs → `fip_X` query param values. `null` for the main FIP station. This map is the source of truth for which sub-station URL to call.
+- **`STATION_LIVEMETA_ID`**: Maps station IDs → livemeta numeric IDs. Sub-stations fiphiphop=95, fipsacrefrancais=96, fipcultes=709 exist in the map but are not supported by livemeta/pull.
+- **Live display format**: Station name only in header, then single `♪ artist — title` line. If livemeta currentSong available: `♪ title — artist`. If only webradio API data: `♪ artist — title` (artist-first convention matches Radio France sub-station API response ordering).
 
 ### RSC Payload Parsing (WWF)
 
@@ -76,6 +85,7 @@ WWF uses Cosmic JS CMS behind Next.js. The RSC payloads contain serialized compo
 - Renderer converts UTC → user's local timezone for display
 - 12h/24h format setting controls display throughout
 - Helper functions: `toLocalSchedule(runSchedule)`, `localizeNextBroadcast(isoString)`
+- FIP: Paris → UTC offset applied in `parseFipAirtime()` (UTC+2 Apr–Oct, UTC+1 otherwise)
 
 ### Client-Side Pagination
 
@@ -88,7 +98,7 @@ episodes = serverResponse.slice(clientOffset, clientOffset + perPage)
 
 ### Scheduler System
 
-Each source (RTE, BBC, NTS, WWF) has its own scheduler store created via `createSchedulerStore()`. Schedules persist to `{dataDir}/{source}-schedules.json`.
+Each source (RTE, BBC, NTS, WWF, FIP) has its own scheduler store created via `createSchedulerStore()`. Schedules persist to `{dataDir}/{source}-schedules.json`.
 
 - **Cadence detection**: daily (avg ≤2 days), weekly (avg ≤9 days), irregular
 - **Poll interval**: 30 minutes
@@ -96,6 +106,12 @@ Each source (RTE, BBC, NTS, WWF) has its own scheduler store created via `create
 - **Cadence fallback**: daily=6h, weekly=24h, irregular=12h intervals
 - **Backfill**: "new only" or "latest N now" (download N recent immediately)
 - **Retry**: Exponential backoff 15m → 1h → 3h → 12h → 24h → 48h, drop after 7 attempts
+
+### UI — Live Section Behavior
+
+Station-change dropdowns (FIP, NTS) **do not autoplay** when idle. They only switch the stream source and resume playback if the audio element is currently playing (`!audio.paused`). Clicking the "Play Live" overlay button starts playback from scratch regardless.
+
+RTE and BBC live panels use iframes with `autostart=false`; the Play button sets `autostart=true` on the iframe src.
 
 ### CUE/Chapter Generation
 
@@ -114,11 +130,19 @@ Runs in child process via `cue-worker.js`. Multiple detection algorithms merged:
 - Configurable concurrency (1–8)
 - SSE progress events via `/api/progress/stream`
 
+### Program Card Metadata Pills
+
+All source tabs display rich metadata pills on program/search result cards:
+- **Cadence pill**: daily / weekly / irregular (when detected)
+- **Genre pills**: from API or scraped taxonomy fields
+- **Airtime pill**: broadcast time in user's local timezone
+- **Location pill**: city/country when available (NTS, WWF)
+
 ## API Surface
 
 ### Express Routes (server.js)
 
-Per-source pattern (RTE, BBC, WWF, NTS):
+Per-source pattern (RTE, BBC, WWF, NTS, FIP):
 - `GET /api/{source}/live/stations` — Live station list
 - `GET /api/{source}/live/now/:channelId` — Now playing
 - `GET /api/{source}/program/search` — Search programs
@@ -139,7 +163,7 @@ Other: `/api/settings`, `/api/local-playback-url`, `/api/local-audio/:token`, `/
 
 ### IPC Handlers (main.js)
 
-Mirror all Express routes via `ipcMain.handle()`. Channel naming: `{source}-{action}` (e.g. `nts-program-search`, `wwf-scheduler-add`).
+Mirror all Express routes via `ipcMain.handle()`. Channel naming: `{source}-{action}` (e.g. `nts-program-search`, `wwf-scheduler-add`, `fip-live-now`).
 
 ### Preload API (preload.js)
 
@@ -154,7 +178,7 @@ Single `state` object holds all UI state. Key properties:
 - Player state: current track, chapters, artwork, playback position
 - Queue state: active/pending/recent downloads
 
-Tabs: RTE, BBC, Worldwide FM, NTS, Settings. Each source tab has:
+Tabs: RTE, BBC, Worldwide FM, NTS, FIP, Settings. Each source tab has:
 - Live section (stations, now playing)
 - Quick download by URL
 - Program explorer (search → load → episodes with pagination)

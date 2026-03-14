@@ -51,6 +51,33 @@ const wwfScheduleList = document.getElementById("wwfScheduleList");
 
 const tabNtsBtn = document.getElementById("tabNtsBtn");
 const ntsTabContent = document.getElementById("ntsTabContent");
+
+const tabFipBtn = document.getElementById("tabFipBtn");
+const fipTabContent = document.getElementById("fipTabContent");
+const fipStationSelect = document.getElementById("fipStationSelect");
+const fipRefreshLiveBtn = document.getElementById("fipRefreshLiveBtn");
+const fipLiveNow = document.getElementById("fipLiveNow");
+const fipLiveAudio = document.getElementById("fipLiveAudio");
+const fipLiveAudioWrap = document.getElementById("fipLiveAudioWrap");
+const fipUrlInput = document.getElementById("fipUrlInput");
+const fipDownloadBtn = document.getElementById("fipDownloadBtn");
+const fipResult = document.getElementById("fipResult");
+const fipLog = document.getElementById("fipLog");
+const fipProgramUrlInput = document.getElementById("fipProgramUrlInput");
+const fipLoadProgramBtn = document.getElementById("fipLoadProgramBtn");
+const fipProgramMeta = document.getElementById("fipProgramMeta");
+const fipPrevPageBtn = document.getElementById("fipPrevPageBtn");
+const fipNextPageBtn = document.getElementById("fipNextPageBtn");
+const fipEpisodesResult = document.getElementById("fipEpisodesResult");
+const fipProgramSearchInput = document.getElementById("fipProgramSearchInput");
+const fipProgramSearchBtn = document.getElementById("fipProgramSearchBtn");
+const fipProgramSearchResult = document.getElementById("fipProgramSearchResult");
+const fipAddScheduleBtn = document.getElementById("fipAddScheduleBtn");
+const fipScheduleBackfillMode = document.getElementById("fipScheduleBackfillMode");
+const fipScheduleBackfillCount = document.getElementById("fipScheduleBackfillCount");
+const fipDiscoverBtn = document.getElementById("fipDiscoverBtn");
+const fipDiscoveryResult = document.getElementById("fipDiscoveryResult");
+const fipScheduleList = document.getElementById("fipScheduleList");
 const ntsStationSelect = document.getElementById("ntsStationSelect");
 const ntsRefreshLiveBtn = document.getElementById("ntsRefreshLiveBtn");
 const ntsLiveNow = document.getElementById("ntsLiveNow");
@@ -127,14 +154,27 @@ const queueResumeBtn = document.getElementById("queueResumeBtn");
 const queueClearBtn = document.getElementById("queueClearBtn");
 const chooseDownloadDirBtn = document.getElementById("chooseDownloadDirBtn");
 const episodesPerPageInput = document.getElementById("episodesPerPageInput");
+const discoveryCountInput = document.getElementById("discoveryCountInput");
+const rteDiscoverBtn = document.getElementById("rteDiscoverBtn");
+const rteDiscoveryResult = document.getElementById("rteDiscoveryResult");
+const bbcDiscoverBtn = document.getElementById("bbcDiscoverBtn");
+const bbcDiscoveryResult = document.getElementById("bbcDiscoveryResult");
+const wwfDiscoverBtn = document.getElementById("wwfDiscoverBtn");
+const wwfDiscoveryResult = document.getElementById("wwfDiscoveryResult");
+const ntsDiscoverBtn = document.getElementById("ntsDiscoverBtn");
+const ntsDiscoveryResult = document.getElementById("ntsDiscoveryResult");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const settingsStatus = document.getElementById("settingsStatus");
 const tabRteBtn = document.getElementById("tabRteBtn");
 const tabBbcBtn = document.getElementById("tabBbcBtn");
+const tabSchedulesBtn = document.getElementById("tabSchedulesBtn");
 const tabSettingsBtn = document.getElementById("tabSettingsBtn");
 const rteTabContent = document.getElementById("rteTabContent");
 const bbcTabContent = document.getElementById("bbcTabContent");
+const schedulesTabContent = document.getElementById("schedulesTabContent");
 const settingsTabContent = document.getElementById("settingsTabContent");
+const allSchedulesList = document.getElementById("allSchedulesList");
+const refreshAllSchedulesBtn = document.getElementById("refreshAllSchedulesBtn");
 const nowPlayingBar = document.getElementById("nowPlayingBar");
 const nowPlayingTitle = document.getElementById("nowPlayingTitle");
 const nowPlayingMeta = document.getElementById("nowPlayingMeta");
@@ -207,19 +247,32 @@ const state = {
   ntsProgramMaxPages: 1,
   ntsEpisodesPayload: null,
   ntsDownloadedAudioByEpisode: {},
-  episodesPerPage: 5
+  fipLiveStations: [],
+  fipProgramUrl: "",
+  fipProgramPage: 1,
+  fipProgramMaxPages: 1,
+  fipEpisodesPayload: null,
+  fipDownloadedAudioByEpisode: {},
+  episodesPerPage: 5,
+  discoveryCount: 5
 };
 const DEFAULT_EPISODES_PER_PAGE = 5;
+const DEFAULT_DISCOVERY_COUNT = 5;
 function getEpisodesPerPage() {
   return state.episodesPerPage || DEFAULT_EPISODES_PER_PAGE;
+}
+function getDiscoveryCount() {
+  return state.discoveryCount || DEFAULT_DISCOVERY_COUNT;
 }
 let searchDebounceTimer = null;
 let wwfSearchDebounceTimer = null;
 let ntsSearchDebounceTimer = null;
+let fipSearchDebounceTimer = null;
 let bbcSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
 let queueRefreshTimer = null;
 let scheduleRefreshTimer = null;
+let fipLiveInterval = null;
 let activeNowPlaying = null;
 let activeHls = null;
 let pendingNowPlayingVisible = false;
@@ -1017,25 +1070,35 @@ function renderPathFormatPreview() {
 }
 
 function setActiveTab(tabName) {
-  state.activeTab = tabName === "bbc" || tabName === "wwf" || tabName === "nts" || tabName === "settings" ? tabName : "rte";
-  if (state.activeTab === "rte" || state.activeTab === "bbc" || state.activeTab === "wwf" || state.activeTab === "nts") {
+  const valid = ["bbc", "wwf", "nts", "fip", "schedules", "settings"];
+  state.activeTab = valid.includes(tabName) ? tabName : "rte";
+  if (["rte", "bbc", "wwf", "nts", "fip"].includes(state.activeTab)) {
     state.lastSourceTab = state.activeTab;
   }
   const isRte = state.activeTab === "rte";
   const isBbc = state.activeTab === "bbc";
   const isWwf = state.activeTab === "wwf";
   const isNts = state.activeTab === "nts";
+  const isFip = state.activeTab === "fip";
+  const isSchedules = state.activeTab === "schedules";
   const isSettings = state.activeTab === "settings";
   rteTabContent.classList.toggle("hidden", !isRte);
   bbcTabContent.classList.toggle("hidden", !isBbc);
   if (wwfTabContent) wwfTabContent.classList.toggle("hidden", !isWwf);
   if (ntsTabContent) ntsTabContent.classList.toggle("hidden", !isNts);
+  if (fipTabContent) fipTabContent.classList.toggle("hidden", !isFip);
+  if (schedulesTabContent) schedulesTabContent.classList.toggle("hidden", !isSchedules);
   if (settingsTabContent) settingsTabContent.classList.toggle("hidden", !isSettings);
   tabRteBtn.classList.toggle("active-tab", isRte);
   tabBbcBtn.classList.toggle("active-tab", isBbc);
   if (tabWwfBtn) tabWwfBtn.classList.toggle("active-tab", isWwf);
   if (tabNtsBtn) tabNtsBtn.classList.toggle("active-tab", isNts);
+  if (tabFipBtn) tabFipBtn.classList.toggle("active-tab", isFip);
+  if (tabSchedulesBtn) tabSchedulesBtn.classList.toggle("active-tab", isSchedules);
   tabSettingsBtn.classList.toggle("active-tab", isSettings);
+  if (isSchedules) {
+    renderAllSchedules().catch(() => {});
+  }
   if (isWwf) {
     if (wwfStationSelect && state.wwfLiveStations.length === 0 && window.rteDownloader?.getWwfLiveStations) {
       window.rteDownloader.getWwfLiveStations().then((stations) => {
@@ -1068,6 +1131,31 @@ function setActiveTab(tabName) {
       refreshNtsLiveNow().catch(() => {});
     }
     renderNtsScheduleList().catch(() => {});
+  }
+  if (isFip) {
+    if (fipStationSelect && state.fipLiveStations.length === 0 && window.rteDownloader?.getFipLiveStations) {
+      window.rteDownloader.getFipLiveStations().then((stations) => {
+        state.fipLiveStations = Array.isArray(stations) ? stations : [];
+        if (fipStationSelect && state.fipLiveStations.length) {
+          fipStationSelect.innerHTML = state.fipLiveStations.map((s) => {
+            const streamUrl = (s.streamUrl || "").trim();
+            return `<option value="${escapeHtml(s.id)}"${streamUrl ? ` data-stream-url="${escapeHtml(streamUrl)}"` : ""}>${escapeHtml(s.name)}</option>`;
+          }).join("");
+          refreshFipLiveNow().catch(() => {});
+        }
+      }).catch(() => {});
+    } else if (fipStationSelect && state.fipLiveStations.length > 0) {
+      refreshFipLiveNow().catch(() => {});
+    }
+    // Poll now-playing every 30s while FIP tab is active
+    if (fipLiveInterval) clearInterval(fipLiveInterval);
+    fipLiveInterval = setInterval(() => {
+      if (state.activeTab === "fip") refreshFipLiveNow().catch(() => {});
+      else { clearInterval(fipLiveInterval); fipLiveInterval = null; }
+    }, 30000);
+    renderFipScheduleList().catch(() => {});
+  } else {
+    if (fipLiveInterval) { clearInterval(fipLiveInterval); fipLiveInterval = null; }
   }
   downloadDirInput.value = getActiveDownloadDir();
   renderPathFormatPreview();
@@ -1234,7 +1322,7 @@ function renderSearchPrograms(items) {
             <div>${imageHtml}</div>
             <div>
               <div class="item-title">${escapeHtml(item.title)}</div>
-              ${item.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(item.runSchedule))}</strong></div>` : ""}
+              ${item.runSchedule ? `<div class="item-meta">🕐 ${escapeHtml(toLocalSchedule(item.runSchedule))}</div>` : ""}
               ${item.description ? `<div class="item-meta">${escapeHtml(item.description)}</div>` : ""}
             </div>
           </div>
@@ -1896,15 +1984,19 @@ function renderEpisodes(payload) {
   episodesResult.innerHTML = visibleRows
     .map((episode) => {
       const clipId = String(episode.clipId || "");
+      const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+      const desc = String(episode.description || "").trim();
+      const descHtml = desc ? `<div class="item-meta muted" style="max-width:600px;">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : "";
 
       return `
         <div class="item">
+          ${img}
           <div class="item-title">${escapeHtml(episode.title)}</div>
           <div class="item-meta">
             ${escapeHtml(episode.publishedTimeFormatted || episode.publishedTime)}
-            ${episode.durationString ? ` - ${escapeHtml(episode.durationString)}` : ""}
-            - clip ${escapeHtml(clipId)}
+            ${episode.durationString ? ` · ${escapeHtml(episode.durationString)}` : ""}
           </div>
+          ${descHtml}
           <div class="item-actions">
             <button
               class="secondary"
@@ -1963,15 +2055,18 @@ function renderBbcEpisodes(payload) {
       const duration = formatDurationFromSeconds(episode.durationSeconds);
       const published = String(episode.publishedTime || "").trim();
       const description = String(episode.description || "").trim();
+      const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+      const descHtml = description ? `<div class="item-meta muted" style="max-width:600px;">${escapeHtml(description.slice(0, 200))}${description.length > 200 ? "…" : ""}</div>` : "";
 
       return `
         <div class="item">
+          ${img}
           <div class="item-title">${escapeHtml(episode.title)}</div>
           <div class="item-meta">
             ${published ? escapeHtml(published) : "Date unknown"}
-            ${duration ? ` - ${escapeHtml(duration)}` : ""}
+            ${duration ? ` · ${escapeHtml(duration)}` : ""}
           </div>
-          ${description ? `<div class="item-meta">${escapeHtml(description)}</div>` : ""}
+          ${descHtml}
           <div class="item-actions">
             <button
               class="secondary"
@@ -2095,16 +2190,15 @@ async function loadWwfProgram(programNameOrUrl, page = 1) {
     const img = (payload.image || "").trim();
     const genres = payload.genres || [];
     const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
-    const locHtml = payload.location ? `<span class="item-meta">${escapeHtml(payload.location)}</span>` : "";
+    const cadence = String(payload.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const locationBadge = payload.location ? ` <span class="genre-pill">📍 ${escapeHtml(payload.location)}</span>` : "";
     wwfProgramMeta.innerHTML = `
       ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
-      <strong>${escapeHtml(payload.title || "Worldwide FM")}</strong><br>
+      <strong>${escapeHtml(payload.title || "Worldwide FM")}</strong>${cadenceBadge}${locationBadge}<br>
+      ${payload.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(payload.runSchedule))}</span><br>` : ""}
+      ${payload.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` — ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
       ${payload.description ? `<span class="muted">${escapeHtml(payload.description.slice(0, 300))}${payload.description.length > 300 ? "…" : ""}</span><br>` : ""}
-      ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
-      ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
-      ${payload.cadence && payload.cadence !== "irregular" ? `Cadence: <strong>${escapeHtml(payload.cadence)}</strong>` : ""}
-      ${payload.averageDaysBetween ? ` (${escapeHtml(String(payload.averageDaysBetween))} day average)` : ""}
-      ${locHtml ? ` · ${locHtml}` : ""}<br>
       ${genresHtml}
       Page ${state.wwfProgramPage} of ${state.wwfProgramMaxPages} - ${Number(payload?.totalItems || 0)} episodes
     `;
@@ -2134,15 +2228,20 @@ async function loadBbcProgram(programUrl, page = 1) {
   state.bbcEpisodesPayload = payload;
 
   bbcProgramUrlInput.value = payload.programUrl;
-  bbcProgramMeta.innerHTML = `
-    <strong>${escapeHtml(payload.title || "BBC Program")}</strong><br>
-    ${escapeHtml(payload.description || "")}<br>
-    ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
-    ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(payload.nextBroadcastAt)}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
-    Cadence guess: <strong>${escapeHtml(payload.cadence || "unknown")}</strong>
-    ${payload.averageDaysBetween ? ` (${escapeHtml(payload.averageDaysBetween)} day average)` : ""}<br>
-    Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
-  `;
+  {
+    const img = (payload.image || "").trim();
+    const desc = (payload.description || "").trim();
+    const cadence = String(payload.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" && cadence !== "unknown" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    bbcProgramMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(payload.title || "BBC Program")}</strong>${cadenceBadge}<br>
+      ${payload.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(payload.runSchedule))}</span><br>` : ""}
+      ${payload.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` — ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
+      ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 300))}${desc.length > 300 ? "…" : ""}</span><br>` : ""}
+      Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
+    `;
+  }
 
   renderBbcEpisodes(payload);
 }
@@ -2159,14 +2258,20 @@ async function loadProgram(programUrl, page = 1) {
   state.currentEpisodes = payload;
 
   programUrlInput.value = payload.programUrl;
-  programMeta.innerHTML = `
-    <strong>${escapeHtml(payload.title)}</strong><br>
-    ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
-    ${escapeHtml(payload.description || "")}<br>
-    Cadence guess: <strong>${escapeHtml(payload.cadence || "unknown")}</strong>
-    ${payload.averageDaysBetween ? ` (${escapeHtml(payload.averageDaysBetween)} day average)` : ""}<br>
-    Page ${state.currentProgramPage} of ${state.currentMaxPages} - ${totalRows} episodes
-  `;
+  {
+    const img = (payload.image || "").trim();
+    const desc = (payload.description || "").trim();
+    const cadence = String(payload.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" && cadence !== "unknown" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    programMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(payload.title)}</strong>${cadenceBadge}<br>
+      ${payload.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(payload.runSchedule))}</span><br>` : ""}
+      ${payload.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` — ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
+      ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 300))}${desc.length > 300 ? "…" : ""}</span><br>` : ""}
+      Page ${state.currentProgramPage} of ${state.currentMaxPages} - ${totalRows} episodes
+    `;
+  }
 
   renderEpisodes(payload);
 }
@@ -2198,6 +2303,7 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const isBbc = sourceType === "bbc";
   const isWwf = sourceType === "wwf";
   const isNts = sourceType === "nts";
+  const isFip = sourceType === "fip";
   const latestImage = schedule?.latestEpisodeImage || schedule?.image || "";
   const latestPublished = formatLocalDate(schedule?.latestEpisodePublishedTime || "");
   const runLocal = formatRunScheduleLocalOnly(schedule?.runSchedule || "");
@@ -2211,17 +2317,17 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const latestFileTime = schedule?.lastDownloaded?.at ? formatLocalDateTime(schedule.lastDownloaded.at) : "";
   const latestFilePath = String(schedule?.lastDownloaded?.filePath || "").trim();
   const status = String(schedule?.lastStatus || "Idle");
-  const toggleAttr = isNts ? "data-nts-schedule-toggle" : isWwf ? "data-wwf-schedule-toggle" : isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
-  const runAttr = isNts ? "data-nts-schedule-run" : isWwf ? "data-wwf-schedule-run" : isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
-  const removeAttr = isNts ? "data-nts-schedule-remove" : isWwf ? "data-wwf-schedule-remove" : isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
-  const playOutputAttr = isNts ? "data-nts-schedule-play-output" : isWwf ? "data-wwf-schedule-play-output" : isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
-  const playFileAttr = isNts ? "data-nts-schedule-play-file" : isWwf ? "data-wwf-schedule-play-file" : isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
-  const playTitleAttr = isNts ? "data-nts-schedule-play-title" : isWwf ? "data-wwf-schedule-play-title" : isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
-  const playImageAttr = isNts ? "data-nts-schedule-play-image" : isWwf ? "data-wwf-schedule-play-image" : isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
-  const playEpisodeUrlAttr = isNts ? "data-nts-schedule-play-episode-url" : isWwf ? "data-wwf-schedule-play-episode-url" : isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
-  const playSourceTypeAttr = isNts ? "data-nts-schedule-play-source-type" : isWwf ? "data-wwf-schedule-play-source-type" : isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
-  const statusAttr = isNts ? "data-nts-schedule-status" : isWwf ? "data-wwf-schedule-status" : isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
-  const playSourceTypeValue = isNts ? "nts" : isWwf ? "wwf" : isBbc ? "bbc" : "rte";
+  const toggleAttr = isFip ? "data-fip-schedule-toggle" : isNts ? "data-nts-schedule-toggle" : isWwf ? "data-wwf-schedule-toggle" : isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
+  const runAttr = isFip ? "data-fip-schedule-run" : isNts ? "data-nts-schedule-run" : isWwf ? "data-wwf-schedule-run" : isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
+  const removeAttr = isFip ? "data-fip-schedule-remove" : isNts ? "data-nts-schedule-remove" : isWwf ? "data-wwf-schedule-remove" : isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
+  const playOutputAttr = isFip ? "data-fip-schedule-play-output" : isNts ? "data-nts-schedule-play-output" : isWwf ? "data-wwf-schedule-play-output" : isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
+  const playFileAttr = isFip ? "data-fip-schedule-play-file" : isNts ? "data-nts-schedule-play-file" : isWwf ? "data-wwf-schedule-play-file" : isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
+  const playTitleAttr = isFip ? "data-fip-schedule-play-title" : isNts ? "data-nts-schedule-play-title" : isWwf ? "data-wwf-schedule-play-title" : isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
+  const playImageAttr = isFip ? "data-fip-schedule-play-image" : isNts ? "data-nts-schedule-play-image" : isWwf ? "data-wwf-schedule-play-image" : isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
+  const playEpisodeUrlAttr = isFip ? "data-fip-schedule-play-episode-url" : isNts ? "data-nts-schedule-play-episode-url" : isWwf ? "data-wwf-schedule-play-episode-url" : isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
+  const playSourceTypeAttr = isFip ? "data-fip-schedule-play-source-type" : isNts ? "data-nts-schedule-play-source-type" : isWwf ? "data-wwf-schedule-play-source-type" : isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
+  const statusAttr = isFip ? "data-fip-schedule-status" : isNts ? "data-nts-schedule-status" : isWwf ? "data-wwf-schedule-status" : isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
+  const playSourceTypeValue = isFip ? "fip" : isNts ? "nts" : isWwf ? "wwf" : isBbc ? "bbc" : "rte";
 
   return `
     <div class="item scheduler-card">
@@ -2286,6 +2392,44 @@ async function renderWwfScheduleList() {
     return;
   }
   wwfScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "wwf")).join("");
+}
+
+const SOURCE_LABELS = { rte: "RTÉ", bbc: "BBC", wwf: "WWF", nts: "NTS", fip: "FIP" };
+
+async function renderAllSchedules() {
+  if (!allSchedulesList) return;
+  allSchedulesList.innerHTML = `<div class="item muted">Loading…</div>`;
+  try {
+    const [rte, bbc, wwf, nts, fip] = await Promise.all([
+      window.rteDownloader?.listSchedules?.().catch(() => []),
+      window.rteDownloader?.listBbcSchedules?.().catch(() => []),
+      window.rteDownloader?.listWwfSchedules?.().catch(() => []),
+      window.rteDownloader?.listNtsSchedules?.().catch(() => []),
+      window.rteDownloader?.listFipSchedules?.().catch(() => [])
+    ]);
+    const tagged = [
+      ...(rte || []).map((s) => ({ ...s, _source: "rte" })),
+      ...(bbc || []).map((s) => ({ ...s, _source: "bbc" })),
+      ...(wwf || []).map((s) => ({ ...s, _source: "wwf" })),
+      ...(nts || []).map((s) => ({ ...s, _source: "nts" })),
+      ...(fip || []).map((s) => ({ ...s, _source: "fip" }))
+    ];
+    if (!tagged.length) {
+      allSchedulesList.innerHTML = `<div class="item">No schedules yet across any source.</div>`;
+      return;
+    }
+    allSchedulesList.innerHTML = tagged.map((s) => {
+      const src = s._source;
+      const card = renderSchedulerCard(s, src);
+      // Inject source badge after scheduler-head-main title
+      return card.replace(
+        `<div class="item-title">${escapeHtml(s.title || "Program")}`,
+        `<div class="item-title"><span class="source-badge source-badge-${escapeHtml(src)}">${escapeHtml(SOURCE_LABELS[src] || src.toUpperCase())}</span> ${escapeHtml(s.title || "Program")}`
+      );
+    }).join("");
+  } catch (e) {
+    allSchedulesList.innerHTML = `<div class="item error">${escapeHtml(String(e?.message || e))}</div>`;
+  }
 }
 
 function renderNtsEpisodes(payload) {
@@ -2416,13 +2560,15 @@ async function loadNtsProgram(programUrlOrSlug, page = 1) {
     const img = (payload.image || "").trim();
     const genres = payload.genres || [];
     const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    const cadence = String(payload.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const locationBadge = payload.location ? ` <span class="genre-pill">📍 ${escapeHtml(payload.location)}</span>` : "";
     ntsProgramMeta.innerHTML = `
       ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
-      <strong>${escapeHtml(payload.title || "NTS")}</strong><br>
+      <strong>${escapeHtml(payload.title || "NTS")}</strong>${cadenceBadge}${locationBadge}<br>
+      ${payload.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(payload.runSchedule))}</span><br>` : ""}
+      ${payload.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` — ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
       ${desc ? `<span class="muted">${escapeHtml(desc)}</span><br>` : ""}
-      ${payload.runSchedule ? `${escapeHtml(toLocalSchedule(payload.runSchedule))}<br>` : ""}
-      ${payload.nextBroadcastAt ? `Next show: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` - ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
-      ${payload.cadence && payload.cadence !== "irregular" ? `Cadence: <strong>${escapeHtml(payload.cadence)}</strong><br>` : ""}
       ${genresHtml}
       Page ${state.ntsProgramPage} of ${state.ntsProgramMaxPages} - ${Number(payload?.totalItems || 0)} episodes
     `;
@@ -2450,10 +2596,186 @@ async function renderNtsScheduleList() {
   ntsScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "nts")).join("");
 }
 
+// ── FIP ────────────────────────────────────────────────────────────────────────
+
+async function refreshFipLiveNow() {
+  if (!fipLiveNow || !fipStationSelect) return;
+  const stationId = fipStationSelect.value || "fip";
+  const stationName = fipStationSelect.options[fipStationSelect.selectedIndex]?.text || "FIP";
+  // Hide audio wrap until user clicks Play
+  const fipSection = fipLiveNow.closest(".nts-live-section-wrap");
+  const audioWrap = fipSection ? fipSection.querySelector(".nts-live-audio-wrap") : fipLiveAudioWrap;
+  if (audioWrap) {
+    audioWrap.classList.add("nts-live-audio-hidden");
+    audioWrap.classList.remove("nts-live-audio-at-bottom");
+  }
+
+  if (!window.rteDownloader?.getFipNowPlaying) {
+    fipLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>${escapeHtml(stationName)}</strong> — Live</div><div class="nts-live-hero nts-live-hero-placeholder"><button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button></div>`;
+    return;
+  }
+  try {
+    const info = await window.rteDownloader.getFipNowPlaying(stationId);
+    const title = String(info?.title || "").trim();
+    const artist = String(info?.artist || "").trim();
+    const coverUrl = String(info?.coverUrl || "").trim();
+
+    const song = info?.currentSong;
+    // Build single ♪ line: prefer livemeta currentSong (title — artist),
+    // fall back to live API data using artist-first convention for sub-stations
+    let songLine = "";
+    if (song?.title) {
+      songLine = `♪ ${escapeHtml(song.title)}${song.artist ? ` — ${escapeHtml(song.artist)}` : ""}`;
+    } else if (title || artist) {
+      songLine = artist
+        ? `♪ ${escapeHtml(artist)}${title ? ` — ${escapeHtml(title)}` : ""}`
+        : `♪ ${escapeHtml(title)}`;
+    }
+
+    const parts = [];
+    parts.push(`<div class="nts-live-header status"><strong>${escapeHtml(stationName)}</strong>`);
+    if (songLine) parts.push(`<br><span class="muted" style="font-size:0.85em">${songLine}</span>`);
+    parts.push("</div>");
+
+    if (coverUrl) {
+      parts.push('<div class="nts-live-hero">');
+      parts.push(`<img src="${escapeHtml(coverUrl)}" alt="" class="nts-live-hero-img" loading="lazy" />`);
+      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push("</div>");
+    } else {
+      parts.push('<div class="nts-live-hero nts-live-hero-placeholder">');
+      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push(`<a href="https://www.radiofrance.fr/fip" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">radiofrance.fr/fip</a>`);
+      parts.push("</div>");
+    }
+    fipLiveNow.innerHTML = parts.join("");
+  } catch {
+    fipLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>${escapeHtml(stationName)}</strong> — Live</div><div class="nts-live-hero nts-live-hero-placeholder"><button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button></div>`;
+  }
+}
+
+function setFipEpisodeStatus(episodeUrl, text, isError = false) {
+  if (!fipEpisodesResult) return;
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const el = fipEpisodesResult.querySelector(`[data-fip-episode-status="${key}"]`);
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "block" : "none";
+  el.className = `item-meta episode-status ${isError ? "error" : ""}`;
+}
+
+function renderFipEpisodes(payload) {
+  if (!fipEpisodesResult) return;
+  const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
+  if (!rows.length) {
+    fipEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
+    return;
+  }
+  fipEpisodesResult.innerHTML = rows.map((episode) => {
+    const episodeUrl = String(episode.episodeUrl || "").trim();
+    const statusKey = encodeURIComponent(episodeUrl);
+    const published = String(episode.publishedTime || "").trim();
+    const fullTitle = String(episode.fullTitle || episode.title || "").trim();
+    const desc = String(episode.description || "").trim();
+    const programTitle = String(payload?.title || "FIP").trim();
+    const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+    const genresHtml = (episode.genres && episode.genres.length)
+      ? `<div class="genre-pills">${episode.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+      : "";
+    return `
+      <div class="item">
+        ${img}
+        <div class="item-title">${escapeHtml(fullTitle)}</div>
+        <div class="item-meta">${published ? escapeHtml(published) : "Date unknown"}</div>
+        ${desc ? `<div class="item-meta muted">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : ""}
+        ${genresHtml}
+        <div class="item-actions">
+          <button class="secondary" data-fip-play-url="${escapeHtml(episodeUrl)}" data-fip-play-title="${escapeHtml(fullTitle)}" data-fip-play-program-title="${escapeHtml(programTitle)}" data-fip-play-image="${escapeHtml(episode.image || "")}">Play</button>
+          <button data-fip-download-url="${escapeHtml(episodeUrl)}" data-fip-episode-title="${escapeHtml(fullTitle)}" data-fip-program-title="${escapeHtml(programTitle)}" data-fip-published="${escapeHtml(published)}" data-fip-image="${escapeHtml(episode.image || "")}">Download</button>
+          ${episodeUrl ? `<a href="${escapeHtml(episodeUrl)}" target="_blank" rel="noopener noreferrer" class="secondary" style="display:inline-flex;align-items:center;padding:0.3em 0.7em;font-size:0.85em;border-radius:4px;text-decoration:none;">Tracklist ↗</a>` : ""}
+        </div>
+        <div class="item-meta episode-status" data-fip-episode-status="${statusKey}" style="display:none;"></div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderFipShowCard(r, { showScheduleBtn = false } = {}) {
+  const genresHtml = (r.genres && r.genres.length)
+    ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+    : "";
+  const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
+  const metaParts = [cadenceLabel].filter(Boolean).join(" · ");
+  const desc = (r.description || "").trim();
+  const schedBtn = showScheduleBtn
+    ? `<button class="secondary fip-quick-schedule-btn" data-fip-schedule-url="${escapeHtml(r.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
+    : "";
+  return `
+  <div class="item clickable" data-fip-program-url="${escapeHtml(r.programUrl)}">
+    <div class="search-card">
+      <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : `<img alt="" class="episode-thumb" loading="lazy" />`}</div>
+      <div>
+        <div class="item-title">${escapeHtml(r.title || "Show")}</div>
+        ${metaParts ? `<div class="item-meta"><strong>${escapeHtml(metaParts)}</strong></div>` : ""}
+        ${r.airtime ? `<div class="item-meta">🕐 ${escapeHtml(r.airtime)}</div>` : ""}
+        ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : ""}
+        ${genresHtml}
+        ${schedBtn}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function loadFipProgram(programUrlOrSlug, page = 1) {
+  if (!window.rteDownloader?.getFipProgramEpisodes) return;
+  const perPage = getEpisodesPerPage();
+  const serverPage = Math.max(1, Math.ceil((((Number(page) || 1) - 1) * perPage + 1) / 20));
+  const payload = await window.rteDownloader.getFipProgramEpisodes(programUrlOrSlug, serverPage);
+  const totalItems = Number(payload?.totalItems || 0);
+  const totalPages = Math.max(1, Math.ceil(totalItems / perPage) || payload?.numPages || 1);
+  const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
+  const clientOffset = ((targetPage - 1) * perPage) % 20;
+  if (payload.episodes) payload.episodes = payload.episodes.slice(clientOffset, clientOffset + perPage);
+  state.fipProgramUrl = payload.programUrl || programUrlOrSlug;
+  state.fipProgramPage = targetPage;
+  state.fipProgramMaxPages = totalPages;
+  state.fipEpisodesPayload = payload;
+  if (fipProgramUrlInput) fipProgramUrlInput.value = state.fipProgramUrl;
+  if (fipProgramMeta) {
+    const desc = (payload.description || "").trim();
+    const img = (payload.image || "").trim();
+    const genres = payload.genres || [];
+    const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    const airtime = String(payload.airtime || "").trim();
+    const cadence = String(payload.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    fipProgramMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(payload.title || "FIP")}</strong>${cadenceBadge}<br>
+      ${airtime ? `<span class="muted">🕐 ${escapeHtml(airtime)}</span><br>` : ""}
+      ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 300))}${desc.length > 300 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
+      Page ${state.fipProgramPage} of ${state.fipProgramMaxPages}${totalItems ? ` - ${totalItems} episodes` : ""}
+    `;
+  }
+  renderFipEpisodes(payload);
+}
+
+async function renderFipScheduleList() {
+  if (!fipScheduleList || !window.rteDownloader?.listFipSchedules) return;
+  const schedules = await window.rteDownloader.listFipSchedules();
+  if (!schedules.length) {
+    fipScheduleList.innerHTML = `<div class="item">No FIP schedules yet.</div>`;
+    return;
+  }
+  fipScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "fip")).join("");
+}
+
 async function loadSettings() {
   const settings = await window.rteDownloader.getSettings();
   state.timeFormat = settings?.timeFormat === "12h" ? "12h" : "24h";
   state.episodesPerPage = Math.max(1, Math.min(50, Number(settings?.episodesPerPage || DEFAULT_EPISODES_PER_PAGE) || DEFAULT_EPISODES_PER_PAGE));
+  state.discoveryCount = Math.max(1, Math.min(24, Number(settings?.discoveryCount || DEFAULT_DISCOVERY_COUNT) || DEFAULT_DISCOVERY_COUNT));
   state.downloadDir = String(settings?.downloadDir || settings?.rteDownloadDir || "");
   state.pathFormat = String(settings?.pathFormat || state.pathFormat);
   state.cueAutoGenerate = Boolean(settings?.cueAutoGenerate);
@@ -2476,6 +2798,7 @@ async function loadSettings() {
   state.ffmpegCueSpectralDetect = settings?.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect);
   timeFormatSelect.value = state.timeFormat;
   if (episodesPerPageInput) episodesPerPageInput.value = String(state.episodesPerPage);
+  if (discoveryCountInput) discoveryCountInput.value = String(state.discoveryCount);
   downloadDirInput.value = getActiveDownloadDir();
   if (pathFormatInput) {
     pathFormatInput.value = state.pathFormat;
@@ -2810,7 +3133,7 @@ if (ntsStationSelect) {
   ntsStationSelect.addEventListener("change", () => {
     const opt = ntsStationSelect.options[ntsStationSelect.selectedIndex];
     const streamUrl = (opt && opt.getAttribute("data-stream-url")) || "";
-    if (ntsLiveAudio) {
+    if (ntsLiveAudio && !ntsLiveAudio.paused) {
       ntsLiveAudio.src = streamUrl;
       if (streamUrl) ntsLiveAudio.play().catch(() => {});
     }
@@ -3107,6 +3430,15 @@ if (tabWwfBtn) {
 if (tabNtsBtn) {
   tabNtsBtn.addEventListener("click", () => setActiveTab("nts"));
 }
+if (tabFipBtn) {
+  tabFipBtn.addEventListener("click", () => setActiveTab("fip"));
+}
+if (tabSchedulesBtn) {
+  tabSchedulesBtn.addEventListener("click", () => setActiveTab("schedules"));
+}
+if (refreshAllSchedulesBtn) {
+  refreshAllSchedulesBtn.addEventListener("click", () => renderAllSchedules().catch(() => {}));
+}
 tabSettingsBtn.addEventListener("click", () => {
   setActiveTab("settings");
 });
@@ -3174,6 +3506,7 @@ saveSettingsBtn.addEventListener("click", async () => {
   const pathFormat = String(pathFormatInput?.value || "").trim();
   const timeFormat = timeFormatSelect.value === "12h" ? "12h" : "24h";
   const episodesPerPage = Math.max(1, Math.min(50, Math.floor(Number(episodesPerPageInput?.value || DEFAULT_EPISODES_PER_PAGE) || DEFAULT_EPISODES_PER_PAGE)));
+  const discoveryCount = Math.max(1, Math.min(24, Math.floor(Number(discoveryCountInput?.value || DEFAULT_DISCOVERY_COUNT) || DEFAULT_DISCOVERY_COUNT)));
   const cueAutoGenerate = Boolean(cueAutoGenerateCheckbox.checked);
   const outputFormat = normalizeOutputFormatValue(outputFormatSelect?.value || "m4a");
   const outputQuality = String(outputQualitySelect?.value || "128K");
@@ -3208,6 +3541,7 @@ saveSettingsBtn.addEventListener("click", async () => {
     const saved = await window.rteDownloader.saveSettings({
       timeFormat,
       episodesPerPage,
+      discoveryCount,
       downloadDir: state.downloadDir,
       pathFormat,
       cueAutoGenerate,
@@ -3251,8 +3585,10 @@ saveSettingsBtn.addEventListener("click", async () => {
     state.ffmpegCueSilenceDetect = saved.ffmpegCueSilenceDetect == null ? true : Boolean(saved.ffmpegCueSilenceDetect);
     state.ffmpegCueLoudnessDetect = saved.ffmpegCueLoudnessDetect == null ? true : Boolean(saved.ffmpegCueLoudnessDetect);
     state.ffmpegCueSpectralDetect = saved.ffmpegCueSpectralDetect == null ? true : Boolean(saved.ffmpegCueSpectralDetect);
+    state.discoveryCount = Math.max(1, Math.min(24, Number(saved.discoveryCount || DEFAULT_DISCOVERY_COUNT) || DEFAULT_DISCOVERY_COUNT));
     timeFormatSelect.value = state.timeFormat;
     if (episodesPerPageInput) episodesPerPageInput.value = String(state.episodesPerPage);
+    if (discoveryCountInput) discoveryCountInput.value = String(state.discoveryCount);
     downloadDirInput.value = getActiveDownloadDir();
     if (pathFormatInput) {
       pathFormatInput.value = state.pathFormat;
@@ -3384,19 +3720,19 @@ async function runWwfProgramSearch(query) {
       return;
     }
     wwfProgramSearchResult.innerHTML = results.map((r) => {
-      const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
-      const locationLabel = r.location ? r.location : "";
-      const schedMeta = [cadenceLabel, locationLabel].filter(Boolean).join(" · ");
-      const scheduleHtml = r.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(r.runSchedule))}</strong></div>` : "";
+      const cadenceBadge = r.cadence && r.cadence !== "irregular" ? ` <span class="genre-pill">${escapeHtml(r.cadence)}</span>` : "";
+      const locationBadge = r.location ? ` <span class="genre-pill">📍 ${escapeHtml(r.location)}</span>` : "";
+      const genresHtml = (r.genres && r.genres.length) ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+      const scheduleHtml = r.runSchedule ? `<div class="item-meta">🕐 ${escapeHtml(toLocalSchedule(r.runSchedule))}</div>` : "";
       return `
       <div class="item clickable" data-wwf-pick-program="${escapeHtml(r.hostSlug ? `${r.programUrl}` : (r.title || r.programUrl || ""))}">
         <div class="search-card">
           <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : "<img alt=\"\" class=\"episode-thumb\" loading=\"lazy\" />"}</div>
           <div>
-            <div class="item-title">${escapeHtml(r.title || "Show")}</div>
-            ${schedMeta ? `<div class="item-meta"><strong>${escapeHtml(schedMeta)}</strong></div>` : ""}
+            <div class="item-title">${escapeHtml(r.title || "Show")}${cadenceBadge}${locationBadge}</div>
             ${scheduleHtml}
             ${r.description ? `<div class="item-meta">${escapeHtml(r.description.slice(0, 200))}${r.description.length > 200 ? "…" : ""}</div>` : ""}
+            ${genresHtml}
           </div>
         </div>
       </div>
@@ -3533,17 +3869,15 @@ async function runNtsProgramSearch(query) {
     }
     ntsProgramSearchResult.innerHTML = results.map((r) => {
       const genresHtml = (r.genres && r.genres.length) ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
-      const scheduleHtml = r.runSchedule ? `<div class="item-meta"><strong>${escapeHtml(toLocalSchedule(r.runSchedule))}</strong></div>` : "";
-      const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
-      const locationLabel = r.location || "";
-      const metaParts = [cadenceLabel, locationLabel].filter(Boolean).join(" · ");
+      const scheduleHtml = r.runSchedule ? `<div class="item-meta">🕐 ${escapeHtml(toLocalSchedule(r.runSchedule))}</div>` : "";
+      const cadenceBadge = r.cadence && r.cadence !== "irregular" ? ` <span class="genre-pill">${escapeHtml(r.cadence)}</span>` : "";
+      const locationBadge = r.location ? ` <span class="genre-pill">📍 ${escapeHtml(r.location)}</span>` : "";
       return `
       <div class="item clickable" data-nts-pick-program="${escapeHtml(r.programUrl || r.title || "")}">
         <div class="search-card">
           <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : "<img alt=\"\" class=\"episode-thumb\" loading=\"lazy\" />"}</div>
           <div>
-            <div class="item-title">${escapeHtml(r.title || "Show")}</div>
-            ${metaParts ? `<div class="item-meta"><strong>${escapeHtml(metaParts)}</strong></div>` : ""}
+            <div class="item-title">${escapeHtml(r.title || "Show")}${cadenceBadge}${locationBadge}</div>
             ${scheduleHtml}
             ${r.description ? `<div class="item-meta">${escapeHtml(r.description.slice(0, 200))}${r.description.length > 200 ? "…" : ""}</div>` : ""}
             ${genresHtml}
@@ -4229,6 +4563,463 @@ if (ntsEpisodesResult) {
   });
 }
 
+// ── FIP event handlers ────────────────────────────────────────────────────────
+
+if (fipLiveNow) {
+  fipLiveNow.addEventListener("click", (e) => {
+    const playBtn = e.target.closest(".nts-live-play-overlay");
+    if (!playBtn || !fipStationSelect || !fipLiveAudio) return;
+    const opt = fipStationSelect.options[fipStationSelect.selectedIndex];
+    const streamUrl = (opt && opt.getAttribute("data-stream-url")) || "";
+    if (!streamUrl) return;
+    fipLiveAudio.src = streamUrl;
+    fipLiveAudio.play().catch(() => {});
+    playBtn.classList.add("hidden");
+    const fipSection = fipLiveNow.closest(".nts-live-section-wrap");
+    const audioWrap = fipSection ? fipSection.querySelector(".nts-live-audio-wrap") : fipLiveAudioWrap;
+    if (audioWrap) {
+      audioWrap.classList.remove("nts-live-audio-hidden");
+      audioWrap.classList.add("nts-live-audio-at-bottom");
+    }
+  });
+}
+
+if (fipStationSelect) {
+  fipStationSelect.addEventListener("change", () => {
+    const opt = fipStationSelect.options[fipStationSelect.selectedIndex];
+    const streamUrl = (opt && opt.getAttribute("data-stream-url")) || "";
+    if (fipLiveAudio && !fipLiveAudio.paused) {
+      // Only auto-switch if already playing
+      fipLiveAudio.src = streamUrl;
+      if (streamUrl) fipLiveAudio.play().catch(() => {});
+    }
+    refreshFipLiveNow().catch(() => {});
+  });
+}
+
+if (fipRefreshLiveBtn) {
+  fipRefreshLiveBtn.addEventListener("click", () => {
+    refreshFipLiveNow().catch(() => {});
+  });
+}
+
+if (fipProgramSearchBtn) {
+  fipProgramSearchBtn.addEventListener("click", async () => {
+    const q = fipProgramSearchInput ? fipProgramSearchInput.value.trim() : "";
+    if (!q || !window.rteDownloader?.searchFipPrograms || !fipProgramSearchResult) return;
+    fipProgramSearchResult.innerHTML = `<div class="item muted">Searching...</div>`;
+    fipProgramSearchResult.classList.remove("hidden");
+    try {
+      const data = await window.rteDownloader.searchFipPrograms(q);
+      const results = Array.isArray(data?.results) ? data.results : [];
+      if (!results.length) {
+        fipProgramSearchResult.innerHTML = `<div class="item muted">No results found.</div>`;
+        return;
+      }
+      fipProgramSearchResult.innerHTML = results.map((r) => renderFipShowCard(r)).join("");
+    } catch (err) {
+      fipProgramSearchResult.innerHTML = `<div class="item muted error">Search failed: ${escapeHtml(err.message)}</div>`;
+    }
+  });
+}
+
+if (fipProgramSearchInput) {
+  fipProgramSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); fipProgramSearchBtn?.click(); }
+  });
+  fipProgramSearchInput.addEventListener("input", () => {
+    clearTimeout(fipSearchDebounceTimer);
+    fipSearchDebounceTimer = setTimeout(() => fipProgramSearchBtn?.click(), 400);
+  });
+}
+
+if (fipProgramSearchResult) {
+  fipProgramSearchResult.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-fip-program-url]");
+    if (!item) return;
+    const url = item.getAttribute("data-fip-program-url") || "";
+    if (url && fipProgramUrlInput) fipProgramUrlInput.value = url;
+    fipProgramSearchResult.classList.add("hidden");
+    if (url) {
+      setButtonBusy(fipLoadProgramBtn, true, "Load Episodes");
+      loadFipProgram(url, 1)
+        .catch(() => { if (fipProgramMeta) fipProgramMeta.textContent = "Error loading show."; })
+        .finally(() => setButtonBusy(fipLoadProgramBtn, false, "Load Episodes"));
+    }
+  });
+}
+
+if (fipLoadProgramBtn) {
+  fipLoadProgramBtn.addEventListener("click", () => {
+    const url = fipProgramUrlInput ? fipProgramUrlInput.value.trim() : "";
+    if (!url) return;
+    setButtonBusy(fipLoadProgramBtn, true, "Load Episodes");
+    loadFipProgram(url, 1)
+      .catch(() => { if (fipProgramMeta) fipProgramMeta.textContent = "Error loading show."; })
+      .finally(() => setButtonBusy(fipLoadProgramBtn, false, "Load Episodes"));
+  });
+}
+
+if (fipPrevPageBtn) {
+  fipPrevPageBtn.addEventListener("click", () => {
+    if (state.fipProgramPage <= 1 || !state.fipProgramUrl) return;
+    loadFipProgram(state.fipProgramUrl, state.fipProgramPage - 1).catch(() => {});
+  });
+}
+
+if (fipNextPageBtn) {
+  fipNextPageBtn.addEventListener("click", () => {
+    if (state.fipProgramPage >= state.fipProgramMaxPages || !state.fipProgramUrl) return;
+    loadFipProgram(state.fipProgramUrl, state.fipProgramPage + 1).catch(() => {});
+  });
+}
+
+if (fipAddScheduleBtn) {
+  fipAddScheduleBtn.addEventListener("click", async () => {
+    const programUrl = fipProgramUrlInput ? fipProgramUrlInput.value.trim() : "";
+    if (!programUrl || !window.rteDownloader?.addFipSchedule) return;
+    const backfillMode = fipScheduleBackfillMode ? fipScheduleBackfillMode.value : "new-only";
+    const backfillCount = backfillMode === "latest-n"
+      ? Math.max(1, Math.min(100, Number(fipScheduleBackfillCount?.value || 5)))
+      : 0;
+    setButtonBusy(fipAddScheduleBtn, true, "Add Scheduler", "Adding...");
+    try {
+      await window.rteDownloader.addFipSchedule(programUrl, { backfillCount });
+      await renderFipScheduleList();
+    } catch (err) {
+      if (fipProgramMeta) fipProgramMeta.textContent = `Scheduler error: ${err.message}`;
+    } finally {
+      setButtonBusy(fipAddScheduleBtn, false, "Add Scheduler");
+    }
+  });
+}
+
+if (fipDiscoverBtn && fipDiscoveryResult) {
+  fipDiscoverBtn.addEventListener("click", async () => {
+    if (!window.rteDownloader?.getFipDiscovery) return;
+    setButtonBusy(fipDiscoverBtn, true, "Discover Shows", "Loading...");
+    fipDiscoveryResult.innerHTML = `<div class="item muted">Fetching random shows…</div>`;
+    try {
+      const data = await window.rteDownloader.getFipDiscovery(getDiscoveryCount());
+      const results = Array.isArray(data?.results) ? data.results : [];
+      if (!results.length) {
+        fipDiscoveryResult.innerHTML = `<div class="item muted">No shows found.</div>`;
+        return;
+      }
+      fipDiscoveryResult.innerHTML = results.map((r) => renderFipShowCard(r, { showScheduleBtn: true })).join("");
+    } catch (err) {
+      fipDiscoveryResult.innerHTML = `<div class="item muted error">Discovery failed: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      setButtonBusy(fipDiscoverBtn, false, "Discover Shows");
+    }
+  });
+
+  // Click card → load in explorer; click "+ Scheduler" button → schedule directly
+  fipDiscoveryResult.addEventListener("click", async (event) => {
+    const schedBtn = event.target.closest(".fip-quick-schedule-btn");
+    if (schedBtn) {
+      event.stopPropagation();
+      const url = schedBtn.getAttribute("data-fip-schedule-url") || "";
+      if (!url || !window.rteDownloader?.addFipSchedule) return;
+      schedBtn.textContent = "Adding…";
+      schedBtn.disabled = true;
+      try {
+        const backfillMode = fipScheduleBackfillMode ? fipScheduleBackfillMode.value : "latest-n";
+        const backfillCount = backfillMode === "latest-n"
+          ? Math.max(1, Math.min(100, Number(fipScheduleBackfillCount?.value || 5)))
+          : 0;
+        await window.rteDownloader.addFipSchedule(url, { backfillCount });
+        schedBtn.textContent = "✓ Scheduled";
+        await renderFipScheduleList();
+      } catch (err) {
+        schedBtn.textContent = "Error";
+        schedBtn.disabled = false;
+      }
+      return;
+    }
+    const item = event.target.closest("[data-fip-program-url]");
+    if (!item) return;
+    const url = item.getAttribute("data-fip-program-url") || "";
+    if (url && fipProgramUrlInput) fipProgramUrlInput.value = url;
+    if (url) {
+      setButtonBusy(fipLoadProgramBtn, true, "Load Episodes");
+      loadFipProgram(url, 1)
+        .catch(() => { if (fipProgramMeta) fipProgramMeta.textContent = "Error loading show."; })
+        .finally(() => setButtonBusy(fipLoadProgramBtn, false, "Load Episodes"));
+      document.getElementById("fipProgramMeta")?.scrollIntoView({ behavior: "smooth" });
+    }
+  });
+}
+
+// Generic discovery card renderer for RTE, BBC, WWF, NTS
+function renderDiscoveryCard(r, source, { showScheduleBtn = false } = {}) {
+  const genresHtml = (r.genres && r.genres.length)
+    ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+    : "";
+  const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
+  const metaParts = [cadenceLabel].filter(Boolean).join(" · ");
+  const desc = (r.description || "").trim();
+  const url = r.programUrl || r.url || "";
+  const schedBtn = showScheduleBtn
+    ? `<button class="secondary discovery-quick-schedule-btn" data-source="${escapeHtml(source)}" data-schedule-url="${escapeHtml(url)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
+    : "";
+  return `
+  <div class="item clickable" data-source="${escapeHtml(source)}" data-discovery-program-url="${escapeHtml(url)}">
+    <div class="search-card">
+      <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : `<img alt="" class="episode-thumb" loading="lazy" />`}</div>
+      <div>
+        <div class="item-title">${escapeHtml(r.title || "Show")}</div>
+        ${metaParts ? `<div class="item-meta"><strong>${escapeHtml(metaParts)}</strong></div>` : ""}
+        ${r.airtime || r.timeSlot ? `<div class="item-meta">🕐 ${escapeHtml(r.airtime || r.timeSlot)}</div>` : ""}
+        ${r.location ? `<div class="item-meta">📍 ${escapeHtml(r.location)}</div>` : ""}
+        ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : ""}
+        ${genresHtml}
+        ${schedBtn}
+      </div>
+    </div>
+  </div>`;
+}
+
+function setupDiscovery(btn, resultEl, source, apiFn, loadFn, scheduleFn, refreshSchedulesFn) {
+  if (!btn || !resultEl) return;
+  btn.addEventListener("click", async () => {
+    if (!window.rteDownloader?.[apiFn]) return;
+    setButtonBusy(btn, true, "Discover Shows", "Loading...");
+    resultEl.innerHTML = `<div class="item muted">Fetching random shows…</div>`;
+    try {
+      const data = await window.rteDownloader[apiFn](getDiscoveryCount());
+      const results = Array.isArray(data?.results) ? data.results : [];
+      if (!results.length) {
+        resultEl.innerHTML = `<div class="item muted">No shows found.</div>`;
+        return;
+      }
+      resultEl.innerHTML = results.map((r) => renderDiscoveryCard(r, source, { showScheduleBtn: true })).join("");
+    } catch (err) {
+      resultEl.innerHTML = `<div class="item muted error">Discovery failed: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      setButtonBusy(btn, false, "Discover Shows");
+    }
+  });
+
+  resultEl.addEventListener("click", async (event) => {
+    const schedBtn = event.target.closest(".discovery-quick-schedule-btn");
+    if (schedBtn && schedBtn.getAttribute("data-source") === source) {
+      event.stopPropagation();
+      const url = schedBtn.getAttribute("data-schedule-url") || "";
+      if (!url || !window.rteDownloader?.[scheduleFn]) return;
+      schedBtn.textContent = "Adding…";
+      schedBtn.disabled = true;
+      try {
+        await window.rteDownloader[scheduleFn](url, { backfillCount: 1 });
+        schedBtn.textContent = "✓ Scheduled";
+        if (refreshSchedulesFn) refreshSchedulesFn().catch(() => {});
+      } catch {
+        schedBtn.textContent = "Error";
+        schedBtn.disabled = false;
+      }
+      return;
+    }
+    const item = event.target.closest(`[data-discovery-program-url][data-source="${source}"]`);
+    if (!item) return;
+    const url = item.getAttribute("data-discovery-program-url") || "";
+    if (url && loadFn) loadFn(url);
+  });
+}
+
+setupDiscovery(
+  rteDiscoverBtn, rteDiscoveryResult, "rte",
+  "getRteDiscovery",
+  (url) => {
+    if (programUrlInput) programUrlInput.value = url;
+    setButtonBusy(loadProgramBtn, true, "Load Episodes");
+    loadProgram(url, 1)
+      .catch(() => {})
+      .finally(() => setButtonBusy(loadProgramBtn, false, "Load Episodes"));
+    document.getElementById("programMeta")?.scrollIntoView({ behavior: "smooth" });
+  },
+  "addSchedule",
+  () => refreshSchedules()
+);
+
+setupDiscovery(
+  bbcDiscoverBtn, bbcDiscoveryResult, "bbc",
+  "getBbcDiscovery",
+  (url) => {
+    if (bbcProgramUrlInput) bbcProgramUrlInput.value = url;
+    setButtonBusy(bbcLoadProgramBtn, true, "Load Episodes");
+    loadBbcProgram(url, 1)
+      .catch(() => {})
+      .finally(() => setButtonBusy(bbcLoadProgramBtn, false, "Load Episodes"));
+    document.getElementById("bbcProgramMeta")?.scrollIntoView({ behavior: "smooth" });
+  },
+  "addBbcSchedule",
+  () => refreshBbcSchedules()
+);
+
+setupDiscovery(
+  wwfDiscoverBtn, wwfDiscoveryResult, "wwf",
+  "getWwfDiscovery",
+  (url) => {
+    // Pass the full /hosts/ URL directly — getWwfProgramEpisodes handles it natively
+    if (wwfProgramUrlInput) wwfProgramUrlInput.value = url;
+    setButtonBusy(wwfLoadProgramBtn, true, "Load Episodes");
+    loadWwfProgram(url, 1)
+      .catch(() => {})
+      .finally(() => setButtonBusy(wwfLoadProgramBtn, false, "Load Episodes"));
+    document.getElementById("wwfProgramMeta")?.scrollIntoView({ behavior: "smooth" });
+  },
+  "addWwfSchedule",
+  () => renderWwfScheduleList()
+);
+
+setupDiscovery(
+  ntsDiscoverBtn, ntsDiscoveryResult, "nts",
+  "getNtsDiscovery",
+  (url) => {
+    if (ntsProgramUrlInput) ntsProgramUrlInput.value = url;
+    setButtonBusy(ntsLoadProgramBtn, true, "Load Episodes");
+    loadNtsProgram(url, 1)
+      .catch(() => {})
+      .finally(() => setButtonBusy(ntsLoadProgramBtn, false, "Load Episodes"));
+    document.getElementById("ntsProgramMeta")?.scrollIntoView({ behavior: "smooth" });
+  },
+  "addNtsSchedule",
+  () => renderNtsScheduleList()
+);
+
+if (fipDownloadBtn && fipUrlInput) {
+  fipDownloadBtn.addEventListener("click", async () => {
+    const pageUrl = fipUrlInput.value.trim();
+    if (!pageUrl) {
+      if (fipResult) fipResult.textContent = "Enter an episode URL.";
+      return;
+    }
+    const progressToken = createProgressToken("fip-quick");
+    const detach = attachDownloadProgress(progressToken, (p) => {
+      if (fipResult) fipResult.textContent = formatProgressText(p, "Downloading...");
+    });
+    setButtonBusy(fipDownloadBtn, true, "Download", "Downloading...");
+    if (fipResult) fipResult.textContent = "Starting...";
+    try {
+      const data = await window.rteDownloader.downloadFromFipUrl(pageUrl, progressToken, { forceDownload: false });
+      if (fipResult) fipResult.textContent = `Saved: ${data.outputDir}\\${data.fileName}`;
+    } catch (error) {
+      if (fipResult) fipResult.textContent = error.message;
+    } finally {
+      detach();
+      setButtonBusy(fipDownloadBtn, false, "Download");
+    }
+  });
+}
+
+if (fipEpisodesResult) {
+  fipEpisodesResult.addEventListener("click", async (event) => {
+    const playBtn = event.target.closest("button[data-fip-play-url]");
+    if (playBtn) {
+      const episodeUrl = playBtn.getAttribute("data-fip-play-url") || "";
+      const title = playBtn.getAttribute("data-fip-play-title") || "";
+      const programTitle = playBtn.getAttribute("data-fip-play-program-title") || "FIP";
+      const image = playBtn.getAttribute("data-fip-play-image") || "";
+      if (!episodeUrl) return;
+      setButtonBusy(playBtn, true, "Play", "Loading...");
+      try {
+        const stream = await window.rteDownloader.getFipEpisodeStream(episodeUrl);
+        await playEpisodeWithBackgroundCue({
+          sourceType: "fip",
+          cacheKey: episodeUrl,
+          sourceLabel: "FIP",
+          title: title || episodeUrl,
+          programTitle,
+          image,
+          episodeUrl,
+          streamUrl: stream?.streamUrl || "",
+          playbackKey: `fip:remote:${episodeUrl}`,
+          statusUpdater: (text, isErr = false) => setFipEpisodeStatus(episodeUrl, text, isErr)
+        });
+      } catch (error) {
+        setFipEpisodeStatus(episodeUrl, `Play failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playBtn, false, "Play");
+      }
+      return;
+    }
+
+    const downloadBtn = event.target.closest("button[data-fip-download-url]");
+    if (downloadBtn) {
+      const episodeUrl = downloadBtn.getAttribute("data-fip-download-url") || "";
+      const title = downloadBtn.getAttribute("data-fip-episode-title") || "fip-episode";
+      const programTitle = downloadBtn.getAttribute("data-fip-program-title") || "FIP";
+      const publishedTime = downloadBtn.getAttribute("data-fip-published") || "";
+      const image = downloadBtn.getAttribute("data-fip-image") || "";
+      setFipEpisodeStatus(episodeUrl, "Starting download...");
+      setButtonBusy(downloadBtn, true, "Download", "Downloading...");
+      const progressToken = createProgressToken("fip-episode");
+      const detach = attachDownloadProgress(progressToken, (p) => setFipEpisodeStatus(episodeUrl, formatProgressText(p, "Downloading...")));
+      try {
+        const data = await window.rteDownloader.downloadFromFipUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image });
+        state.fipDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
+        setFipEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+      } catch (error) {
+        setFipEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
+      } finally {
+        detach();
+        setButtonBusy(downloadBtn, false, "Download");
+      }
+    }
+  });
+}
+
+if (fipScheduleList) {
+  fipScheduleList.addEventListener("click", async (event) => {
+    const playLatestBtn = event.target.closest("button[data-fip-schedule-play-output]");
+    if (playLatestBtn) {
+      try {
+        await playFromDownloadedFile({
+          outputDir: playLatestBtn.getAttribute("data-fip-schedule-play-output"),
+          fileName: playLatestBtn.getAttribute("data-fip-schedule-play-file"),
+          title: playLatestBtn.getAttribute("data-fip-schedule-play-title") || "",
+          source: "FIP Local",
+          subtitle: "Latest scheduled download",
+          image: playLatestBtn.getAttribute("data-fip-schedule-play-image") || "",
+          episodeUrl: playLatestBtn.getAttribute("data-fip-schedule-play-episode-url") || "",
+          sourceType: playLatestBtn.getAttribute("data-fip-schedule-play-source-type") || "fip"
+        });
+      } catch (error) {
+        setFipEpisodeStatus("", `Play failed: ${error.message}`, true);
+      }
+      return;
+    }
+    const toggleBtn = event.target.closest("button[data-fip-schedule-toggle]");
+    if (toggleBtn) {
+      const id = toggleBtn.getAttribute("data-fip-schedule-toggle");
+      const enabled = toggleBtn.getAttribute("data-enabled") !== "1";
+      await window.rteDownloader.setFipScheduleEnabled(id, enabled);
+      await renderFipScheduleList();
+      return;
+    }
+    const runBtn = event.target.closest("button[data-fip-schedule-run]");
+    if (runBtn) {
+      const id = runBtn.getAttribute("data-fip-schedule-run");
+      setButtonBusy(runBtn, true, "Run Now", "Running...");
+      try {
+        await window.rteDownloader.runFipScheduleNow(id);
+        await renderFipScheduleList();
+      } catch (error) {
+        if (fipProgramMeta) fipProgramMeta.textContent = `Run failed: ${error.message}`;
+      } finally {
+        setButtonBusy(runBtn, false, "Run Now");
+      }
+      return;
+    }
+    const removeBtn = event.target.closest("button[data-fip-schedule-remove]");
+    if (removeBtn) {
+      const id = removeBtn.getAttribute("data-fip-schedule-remove");
+      await window.rteDownloader.removeFipSchedule(id);
+      await renderFipScheduleList();
+    }
+  });
+}
+
 nowPlayingCloseBtn.addEventListener("click", () => {
   clearGlobalNowPlaying();
 });
@@ -4491,6 +5282,79 @@ if (ntsScheduleList) {
       const id = removeBtn.getAttribute("data-nts-schedule-remove");
       await window.rteDownloader.removeNtsSchedule(id);
       await renderNtsScheduleList();
+    }
+  });
+}
+
+// Combined Schedules tab — delegates to per-source APIs based on data attributes
+if (allSchedulesList) {
+  allSchedulesList.addEventListener("click", async (event) => {
+    // Determine which source this card belongs to by checking which attribute is present
+    const btn = event.target.closest("button");
+    if (!btn) return;
+
+    // Helper: find the status element relative to the clicked button's card
+    const card = btn.closest(".scheduler-card");
+    const getStatusEl = (attr) => card?.querySelector(`[${attr}]`);
+
+    // Play latest
+    for (const src of ["", "bbc-", "wwf-", "nts-", "fip-"]) {
+      const attr = `data-${src}schedule-play-output`;
+      const playBtn = btn.matches(`[${attr}]`) ? btn : null;
+      if (playBtn) {
+        try {
+          await playFromDownloadedFile({
+            outputDir: playBtn.getAttribute(attr),
+            fileName: playBtn.getAttribute(`data-${src}schedule-play-file`),
+            title: playBtn.getAttribute(`data-${src}schedule-play-title`) || "",
+            source: "Local",
+            subtitle: "Latest scheduled download",
+            image: playBtn.getAttribute(`data-${src}schedule-play-image`) || "",
+            episodeUrl: playBtn.getAttribute(`data-${src}schedule-play-episode-url`) || "",
+            sourceType: playBtn.getAttribute(`data-${src}schedule-play-source-type`) || src.replace("-", "") || "rte"
+          });
+        } catch {}
+        return;
+      }
+    }
+
+    // Toggle / Run / Remove — map source prefix to API methods
+    const srcMap = {
+      "":     { toggle: "setScheduleEnabled",    run: "runScheduleNow",    remove: "removeSchedule" },
+      "bbc-": { toggle: "setBbcScheduleEnabled", run: "runBbcScheduleNow", remove: "removeBbcSchedule" },
+      "wwf-": { toggle: "setWwfScheduleEnabled", run: "runWwfScheduleNow", remove: "removeWwfSchedule" },
+      "nts-": { toggle: "setNtsScheduleEnabled", run: "runNtsScheduleNow", remove: "removeNtsSchedule" },
+      "fip-": { toggle: "setFipScheduleEnabled", run: "runFipScheduleNow", remove: "removeFipSchedule" }
+    };
+    for (const [src, methods] of Object.entries(srcMap)) {
+      const toggleBtn = btn.matches(`[data-${src}schedule-toggle]`) ? btn : null;
+      if (toggleBtn) {
+        const id = toggleBtn.getAttribute(`data-${src}schedule-toggle`);
+        const enabled = toggleBtn.getAttribute("data-enabled") !== "1";
+        await window.rteDownloader[methods.toggle](id, enabled);
+        await renderAllSchedules();
+        return;
+      }
+      const runBtn = btn.matches(`[data-${src}schedule-run]`) ? btn : null;
+      if (runBtn) {
+        const id = runBtn.getAttribute(`data-${src}schedule-run`);
+        const statusEl = getStatusEl(`data-${src}schedule-status`);
+        if (statusEl) { statusEl.style.display = "block"; statusEl.textContent = "Running..."; }
+        try {
+          await window.rteDownloader[methods.run](id);
+          await renderAllSchedules();
+        } catch (error) {
+          if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+        }
+        return;
+      }
+      const removeBtn = btn.matches(`[data-${src}schedule-remove]`) ? btn : null;
+      if (removeBtn) {
+        const id = removeBtn.getAttribute(`data-${src}schedule-remove`);
+        await window.rteDownloader[methods.remove](id);
+        await renderAllSchedules();
+        return;
+      }
     }
   });
 }
