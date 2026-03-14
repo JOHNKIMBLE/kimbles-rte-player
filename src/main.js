@@ -14,9 +14,11 @@ const {
   getProgramSummary,
   getLiveStationNow,
   normalizeProgramUrl,
+  getRteDiscovery,
   searchPrograms
 } = require("./lib/rte");
 const {
+  getBbcDiscovery,
   getBbcEpisodePlaylist,
   getBbcLiveStations,
   getBbcProgramEpisodes,
@@ -25,6 +27,7 @@ const {
   searchBbcPrograms
 } = require("./lib/bbc");
 const {
+  getWwfDiscovery,
   getWwfEpisodeInfo,
   getWwfEpisodeMixcloudUrl,
   getWwfProgramSummary,
@@ -36,6 +39,7 @@ const {
   normalizeWwfProgramUrl
 } = require("./lib/worldwidefm");
 const {
+  getNtsDiscovery,
   getNtsEpisodeInfo,
   getNtsProgramSummary,
   getNtsProgramEpisodes,
@@ -45,6 +49,16 @@ const {
   LIVE_STATIONS: NTS_LIVE_STATIONS,
   normalizeNtsProgramUrl
 } = require("./lib/nts");
+const {
+  LIVE_STATIONS: FIP_LIVE_STATIONS,
+  getFipNowPlaying,
+  searchFipPrograms,
+  getFipDiscovery,
+  getFipProgramSummary,
+  getFipProgramEpisodes,
+  getFipEpisodeStream,
+  normalizeFipProgramUrl
+} = require("./lib/fip");
 const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
@@ -58,6 +72,7 @@ let scheduler;
 let bbcScheduler;
 let wwfScheduler;
 let ntsScheduler;
+let fipScheduler;
 let appSettings = null;
 const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
 
@@ -1246,6 +1261,162 @@ ipcMain.handle("nts-episode-stream", async (_event, { episodeUrl }) => {
   return resolveNtsEpisodeStream(episodeUrl);
 });
 
+// ── FIP IPC handlers ──────────────────────────────────────────────────────────
+
+async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) throw new Error("episodeUrl is required.");
+  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const download = await downloadFromManifest({
+    sourceUrl,
+    manifestUrl: sourceUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    publishedTime: publishedTime || resolvedTitle,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl,
+    onProgress,
+    sourceType: "fip",
+    forceDownload
+  });
+  const resolvedArtwork = String(artworkUrl || "").trim();
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "fip",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "fip",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    onProgress
+  });
+  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
+}
+
+ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
+  const onProgress = progressToken
+    ? (payload) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) win.webContents.send("download-progress", { token: progressToken, ...payload });
+      }
+    : undefined;
+  return downloadFipEpisode({
+    episodeUrl: String(pageUrl || ""),
+    title: String(title || "").trim(),
+    programTitle: String(programTitle || "").trim(),
+    publishedTime: String(publishedTime || "").trim(),
+    artworkUrl: String(image || "").trim(),
+    onProgress,
+    forceDownload: Boolean(forceDownload)
+  });
+});
+
+ipcMain.handle("fip-live-stations", () => {
+  return FIP_LIVE_STATIONS;
+});
+
+ipcMain.handle("fip-live-now", async (_event, { stationId }) => {
+  return getFipNowPlaying(stationId || "fip");
+});
+
+ipcMain.handle("fip-program-search", async (_event, { query }) => {
+  try {
+    const results = await searchFipPrograms(query || "");
+    return { results };
+  } catch (e) {
+    return { results: [], error: e?.message || "Search unavailable" };
+  }
+});
+
+ipcMain.handle("fip-discovery", async (_event, { count } = {}) => {
+  try {
+    const results = await getFipDiscovery(Math.min(24, Math.max(1, count || 12)));
+    return { results };
+  } catch (e) {
+    return { results: [], error: e?.message || "Discovery unavailable" };
+  }
+});
+
+ipcMain.handle("nts-discovery", async (_event, { count } = {}) => {
+  try {
+    const results = await getNtsDiscovery(Math.min(24, Math.max(1, count || 5)));
+    return { results };
+  } catch (e) {
+    return { results: [], error: e?.message || "Discovery unavailable" };
+  }
+});
+
+ipcMain.handle("wwf-discovery", async (_event, { count } = {}) => {
+  try {
+    const results = await getWwfDiscovery(Math.min(24, Math.max(1, count || 5)));
+    return { results };
+  } catch (e) {
+    return { results: [], error: e?.message || "Discovery unavailable" };
+  }
+});
+
+ipcMain.handle("bbc-discovery", async (_event, { count } = {}) => {
+  try {
+    const results = await getBbcDiscovery(Math.min(24, Math.max(1, count || 5)));
+    return { results };
+  } catch (e) {
+    return { results: [], error: e?.message || "Discovery unavailable" };
+  }
+});
+
+ipcMain.handle("rte-discovery", async (_event, { count } = {}) => {
+  try {
+    const results = await getRteDiscovery(Math.min(24, Math.max(1, count || 5)));
+    return { results };
+  } catch (e) {
+    return { results: [], error: e?.message || "Discovery unavailable" };
+  }
+});
+
+ipcMain.handle("fip-program-summary", async (_event, { programUrl }) => {
+  return getFipProgramSummary(programUrl || "");
+});
+
+ipcMain.handle("fip-program-episodes", async (_event, { programUrl, page = 1 }) => {
+  return getFipProgramEpisodes(programUrl, page);
+});
+
+ipcMain.handle("fip-episode-stream", async (_event, { episodeUrl }) => {
+  return getFipEpisodeStream(episodeUrl, runYtDlpJson);
+});
+
+ipcMain.handle("fip-scheduler-list", async () => {
+  return fipScheduler.list();
+});
+
+ipcMain.handle("fip-scheduler-add", async (_event, { programUrl, options }) => {
+  const normalized = normalizeFipProgramUrl(programUrl || "");
+  return fipScheduler.add(normalized, options || {});
+});
+
+ipcMain.handle("fip-scheduler-remove", async (_event, { scheduleId }) => {
+  fipScheduler.remove(scheduleId);
+  return fipScheduler.list();
+});
+
+ipcMain.handle("fip-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
+  fipScheduler.setEnabled(scheduleId, enabled);
+  return fipScheduler.list();
+});
+
+ipcMain.handle("fip-scheduler-check-one", async (_event, { scheduleId }) => {
+  return fipScheduler.checkOne(scheduleId);
+});
+
 ipcMain.handle("nts-live-stations", () => {
   return NTS_LIVE_STATIONS;
 });
@@ -1600,6 +1771,25 @@ app.whenReady().then(() => {
       })
   });
 
+  fipScheduler = createSchedulerStore({
+    app,
+    dataDir: path.join(app.getPath("userData"), "fip"),
+    getProgramSummary: async (programUrl) => getFipProgramSummary(programUrl),
+    getProgramEpisodes: async (programUrl, page) => getFipProgramEpisodes(programUrl, page),
+    onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("fip", schedule, latest),
+    onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("fip", schedule, downloaded),
+    onScheduleRunError: (schedule, error) => onScheduleError("fip", schedule, error),
+    runEpisodeDownload: async (episode) =>
+      downloadFipEpisode({
+        episodeUrl: episode.episodeUrl,
+        title: episode.title || episode.fullTitle,
+        programTitle: episode.programTitle || "FIP",
+        publishedTime: episode.publishedTime,
+        artworkUrl: episode.image || "",
+        forceDownload: episode.forceDownload || false
+      })
+  });
+
   scheduler.start();
   scheduler.runAll().catch(() => {});
   bbcScheduler.start();
@@ -1608,6 +1798,8 @@ app.whenReady().then(() => {
   wwfScheduler.runAll().catch(() => {});
   ntsScheduler.start();
   ntsScheduler.runAll().catch(() => {});
+  fipScheduler.start();
+  fipScheduler.runAll().catch(() => {});
 
   createWindow();
 
@@ -1636,5 +1828,8 @@ app.on("before-quit", () => {
   }
   if (ntsScheduler) {
     ntsScheduler.stop();
+  }
+  if (fipScheduler) {
+    fipScheduler.stop();
   }
 });

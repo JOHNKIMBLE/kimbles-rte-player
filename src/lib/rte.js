@@ -448,6 +448,14 @@ async function searchPrograms(query) {
   return enriched;
 }
 
+async function getRteDiscovery(count = 5) {
+  try {
+    // Empty query returns up to 40 programs alphabetically — shuffle for discovery
+    const results = await searchPrograms("");
+    return results.sort(() => Math.random() - 0.5).slice(0, count);
+  } catch { return []; }
+}
+
 module.exports = {
   LIVE_STATIONS,
   extractRteInfo,
@@ -457,5 +465,6 @@ module.exports = {
   getProgramSummary,
   getLiveStationNow,
   normalizeProgramUrl,
+  getRteDiscovery,
   searchPrograms
 };

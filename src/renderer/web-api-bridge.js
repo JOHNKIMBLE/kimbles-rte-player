@@ -245,6 +245,18 @@
         }
       }
     },
+    downloadFromFipUrl: async (pageUrl, progressToken, options = {}) => {
+      if (progressToken) {
+        openProgressStream(progressToken);
+      }
+      try {
+        return await API.sendJson("/api/download/fip/url", "POST", { pageUrl, progressToken, ...(options || {}) });
+      } finally {
+        if (progressToken) {
+          setTimeout(() => closeProgressStream(progressToken), 1500);
+        }
+      }
+    },
     onDownloadProgress: (handler) => {
       if (typeof handler !== "function") {
         return () => {};
@@ -263,7 +275,9 @@
     getProgramEpisodes: (programUrl, page = 1) =>
       API.getJson(`/api/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
     searchPrograms: (query) => API.getJson(`/api/program/search?q=${encodeURIComponent(query || "")}`),
+    getRteDiscovery: (count) => API.getJson(`/api/rte/discovery?count=${encodeURIComponent(count || 5)}`),
     searchBbcPrograms: (query) => API.getJson(`/api/bbc/program/search?q=${encodeURIComponent(query || "")}`),
+    getBbcDiscovery: (count) => API.getJson(`/api/bbc/discovery?count=${encodeURIComponent(count || 5)}`),
     getBbcProgramEpisodes: (programUrl, page = 1) =>
       API.getJson(`/api/bbc/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
     getBbcEpisodePlaylist: (episodeUrl) =>
@@ -273,6 +287,7 @@
     getWwfLiveStations: () => API.getJson("/api/wwf/live/stations"),
     getWwfLiveNow: () => API.getJson("/api/wwf/live/now"),
     searchWwfPrograms: (query) => API.getJson(`/api/wwf/program/search?q=${encodeURIComponent(query || "")}`),
+    getWwfDiscovery: (count) => API.getJson(`/api/wwf/discovery?count=${encodeURIComponent(count || 5)}`),
     getWwfProgramEpisodes: (programUrl, page = 1) =>
       API.getJson(`/api/wwf/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
     getWwfProgramSummary: (programUrl) =>
@@ -284,6 +299,7 @@
     getNtsLiveStations: () => API.getJson("/api/nts/live/stations"),
     getNtsLiveNow: (channelId) => API.getJson(`/api/nts/live/now/${encodeURIComponent(channelId || "")}`),
     searchNtsPrograms: (query, options) => API.getJson(`/api/nts/program/search?q=${encodeURIComponent(query || "")}&sort=${encodeURIComponent((options?.sort) || "recent")}`),
+    getNtsDiscovery: (count) => API.getJson(`/api/nts/discovery?count=${encodeURIComponent(count || 5)}`),
     getNtsProgramEpisodes: (programUrl, page = 1) =>
       API.getJson(`/api/nts/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
     getNtsProgramSummary: (programUrl) =>
@@ -337,6 +353,23 @@
     setNtsScheduleEnabled: (scheduleId, enabled) =>
       API.sendJson(`/api/nts/scheduler/${encodeURIComponent(scheduleId)}`, "PATCH", { enabled }),
     runNtsScheduleNow: (scheduleId) => API.sendJson(`/api/nts/scheduler/${encodeURIComponent(scheduleId)}/run`, "POST", {}),
+    getFipLiveStations: () => API.getJson("/api/fip/live/stations"),
+    getFipNowPlaying: (stationId) => API.getJson(`/api/fip/live/now/${encodeURIComponent(stationId || "fip")}`),
+    searchFipPrograms: (query) => API.getJson(`/api/fip/program/search?q=${encodeURIComponent(query || "")}`),
+    getFipDiscovery: (count) => API.getJson(`/api/fip/discovery?count=${encodeURIComponent(count || 12)}`),
+    getFipProgramEpisodes: (programUrl, page = 1) =>
+      API.getJson(`/api/fip/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
+    getFipProgramSummary: (programUrl) =>
+      API.getJson(`/api/fip/program/summary?url=${encodeURIComponent(programUrl)}`),
+    getFipEpisodeStream: (episodeUrl) =>
+      API.getJson(`/api/fip/episode/stream?url=${encodeURIComponent(episodeUrl)}`),
+    listFipSchedules: () => API.getJson("/api/fip/scheduler"),
+    addFipSchedule: (programUrl, options = {}) =>
+      API.sendJson("/api/fip/scheduler", "POST", { programUrl, backfillCount: Number(options.backfillCount || 0) }),
+    removeFipSchedule: (scheduleId) => API.sendJson(`/api/fip/scheduler/${encodeURIComponent(scheduleId)}`, "DELETE", {}),
+    setFipScheduleEnabled: (scheduleId, enabled) =>
+      API.sendJson(`/api/fip/scheduler/${encodeURIComponent(scheduleId)}`, "PATCH", { enabled }),
+    runFipScheduleNow: (scheduleId) => API.sendJson(`/api/fip/scheduler/${encodeURIComponent(scheduleId)}/run`, "POST", {}),
     getDownloadQueueStats: () => API.getJson("/api/download-queue/stats"),
     getDownloadQueueSnapshot: () => API.getJson("/api/download-queue"),
     pauseDownloadQueue: () => API.sendJson("/api/download-queue/pause", "POST", {}),

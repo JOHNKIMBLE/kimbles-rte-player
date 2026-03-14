@@ -25,8 +25,10 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getProgramEpisodes: (programUrl, page = 1) =>
     ipcRenderer.invoke("rte-program-episodes", { programUrl, page }),
   searchPrograms: (query) => ipcRenderer.invoke("rte-program-search", { query }),
+  getRteDiscovery: (count) => ipcRenderer.invoke("rte-discovery", { count }),
   getBbcLiveStations: () => ipcRenderer.invoke("bbc-live-stations"),
   searchBbcPrograms: (query) => ipcRenderer.invoke("bbc-program-search", { query }),
+  getBbcDiscovery: (count) => ipcRenderer.invoke("bbc-discovery", { count }),
   getBbcProgramEpisodes: (programUrl, page = 1) =>
     ipcRenderer.invoke("bbc-program-episodes", { programUrl, page }),
   getBbcEpisodePlaylist: (episodeUrl) => ipcRenderer.invoke("bbc-episode-playlist", { episodeUrl }),
@@ -34,6 +36,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getWwfLiveStations: () => ipcRenderer.invoke("wwf-live-stations"),
   getWwfLiveNow: () => ipcRenderer.invoke("wwf-live-now"),
   searchWwfPrograms: (query) => ipcRenderer.invoke("wwf-program-search", { query }),
+  getWwfDiscovery: (count) => ipcRenderer.invoke("wwf-discovery", { count }),
   getWwfProgramEpisodes: (programUrl, page = 1) =>
     ipcRenderer.invoke("wwf-program-episodes", { programUrl, page }),
   getWwfProgramSummary: (programUrl) => ipcRenderer.invoke("wwf-program-summary", { programUrl }),
@@ -42,6 +45,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getNtsLiveStations: () => ipcRenderer.invoke("nts-live-stations"),
   getNtsLiveNow: (channelId) => ipcRenderer.invoke("nts-live-now", { channelId }),
   searchNtsPrograms: (query, options) => ipcRenderer.invoke("nts-program-search", { query, options }),
+  getNtsDiscovery: (count) => ipcRenderer.invoke("nts-discovery", { count }),
   getNtsProgramEpisodes: (programUrl, page = 1) =>
     ipcRenderer.invoke("nts-program-episodes", { programUrl, page }),
   getNtsProgramSummary: (programUrl) => ipcRenderer.invoke("nts-program-summary", { programUrl }),
@@ -76,6 +80,22 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   setNtsScheduleEnabled: (scheduleId, enabled) =>
     ipcRenderer.invoke("nts-scheduler-set-enabled", { scheduleId, enabled }),
   runNtsScheduleNow: (scheduleId) => ipcRenderer.invoke("nts-scheduler-check-one", { scheduleId }),
+  downloadFromFipUrl: (pageUrl, progressToken, options = {}) =>
+    ipcRenderer.invoke("download-fip-url", { pageUrl, progressToken, ...(options || {}) }),
+  getFipLiveStations: () => ipcRenderer.invoke("fip-live-stations"),
+  getFipNowPlaying: (stationId) => ipcRenderer.invoke("fip-live-now", { stationId }),
+  searchFipPrograms: (query) => ipcRenderer.invoke("fip-program-search", { query }),
+  getFipDiscovery: (count) => ipcRenderer.invoke("fip-discovery", { count }),
+  getFipProgramEpisodes: (programUrl, page = 1) =>
+    ipcRenderer.invoke("fip-program-episodes", { programUrl, page }),
+  getFipProgramSummary: (programUrl) => ipcRenderer.invoke("fip-program-summary", { programUrl }),
+  getFipEpisodeStream: (episodeUrl) => ipcRenderer.invoke("fip-episode-stream", { episodeUrl }),
+  listFipSchedules: () => ipcRenderer.invoke("fip-scheduler-list"),
+  addFipSchedule: (programUrl, options = {}) => ipcRenderer.invoke("fip-scheduler-add", { programUrl, options }),
+  removeFipSchedule: (scheduleId) => ipcRenderer.invoke("fip-scheduler-remove", { scheduleId }),
+  setFipScheduleEnabled: (scheduleId, enabled) =>
+    ipcRenderer.invoke("fip-scheduler-set-enabled", { scheduleId, enabled }),
+  runFipScheduleNow: (scheduleId) => ipcRenderer.invoke("fip-scheduler-check-one", { scheduleId }),
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
   previewCue: (payload) => ipcRenderer.invoke("cue-preview", payload || {}),
   getDownloadQueueStats: () => ipcRenderer.invoke("download-queue-stats"),

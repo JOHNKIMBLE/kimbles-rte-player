@@ -550,16 +550,18 @@ async function getWwfLiveNow() {
         liveNowCache.fetchedAt = now;
         return fallback;
       }
+      // Fall back to most recently ended show (schedule gap / end of day)
+      const past = slots.filter((s) => s.endTimestamp <= now).sort((a, b) => b.endTimestamp - a.endTimestamp)[0];
       const fallback = {
         stationName: "Worldwide FM",
-        programmeName: "Live",
+        programmeName: past ? past.programmeName : "Live",
         description: "",
-        image: "",
+        image: past ? past.image || "" : "",
         location: "",
         timeSlot: "",
         startTimestamp: undefined,
         endTimestamp: undefined,
-        episodeUrl: ""
+        episodeUrl: past ? past.episodeUrl : ""
       };
       liveNowCache.data = fallback;
       liveNowCache.fetchedAt = now;
@@ -1868,6 +1870,41 @@ function normalizeWwfProgramUrl(input) {
   return raw;
 }
 
+async function getWwfDiscovery(count = 5) {
+  const hosts = await fetchWwfHostSlugs(true).catch(() => []);
+  const shuffled = [...hosts].sort(() => Math.random() - 0.5);
+  const sample = shuffled.slice(0, Math.min(count * 4, shuffled.length));
+  const results = [];
+  const concurrency = 4;
+  let idx = 0;
+  async function worker() {
+    while (idx < sample.length && results.length < count) {
+      const h = sample[idx++];
+      // Use /hosts/ URL so getWwfProgramSummary fetches real host metadata
+      const hostUrl = `${BASE_URL}/hosts/${h.slug}`;
+      try {
+        const meta = await getWwfProgramSummary(hostUrl);
+        const title = meta?.title || h.title || "";
+        // Skip genre/type stubs — real host pages have at least an image or description
+        if (meta && title && !title.startsWith("http") && (meta.image || meta.description)) results.push({
+          source: "wwf",
+          programUrl: hostUrl,
+          title,
+          description: meta.description || "",
+          image: meta.image || "",
+          cadence: meta.cadence || "irregular",
+          airtime: meta.timeSlot || "",
+          runSchedule: meta.runSchedule || "",
+          location: meta.location || "",
+          genres: meta.genres || []
+        });
+      } catch { /* skip */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, sample.length) }, () => worker()));
+  return results.slice(0, count);
+}
+
 module.exports = {
   BASE_URL,
   LIVE_STATIONS,
@@ -1877,6 +1914,7 @@ module.exports = {
   getWwfProgramEpisodes,
   searchWwfPrograms,
   getWwfEpisodePlaylist,
+  getWwfDiscovery,
   getWwfLiveNow,
   fetchRecentEpisodes,
   fetchWwfScheduleEpisodes,

@@ -1137,6 +1137,27 @@ async function getNtsLiveNow(channelId) {
   }
 }
 
+async function getNtsDiscovery(count = 5) {
+  const shows = await fetchAllNtsShows(true).catch(() => []);
+  const shuffled = [...shows].sort(() => Math.random() - 0.5);
+  const sample = shuffled.slice(0, Math.min(count * 2, shuffled.length));
+  const results = [];
+  const concurrency = 4;
+  let idx = 0;
+  async function worker() {
+    while (idx < sample.length && results.length < count) {
+      const s = sample[idx++];
+      const url = `${BASE_URL}/shows/${s.alias}`;
+      try {
+        const meta = await getNtsProgramSummary(url);
+        if (meta && meta.title) results.push(meta);
+      } catch { /* skip */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, sample.length) }, () => worker()));
+  return results.slice(0, count);
+}
+
 module.exports = {
   BASE_URL,
   LIVE_STATIONS,
@@ -1146,6 +1167,7 @@ module.exports = {
   searchNtsPrograms,
   getNtsEpisodePlaylist,
   getNtsLiveNow,
+  getNtsDiscovery,
   normalizeNtsProgramUrl,
   normalizeShowUrl,
   normalizeEpisodeUrl,

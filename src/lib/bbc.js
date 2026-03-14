@@ -780,11 +780,14 @@ async function getBbcProgramEpisodes(programUrl, runYtDlpJson, page = 1) {
   const cadenceInfo = inferCadence(mapped);
   const summary = await getBbcProgramSummary(normalizedProgramUrl, runYtDlpJson);
   const safePage = Math.max(1, Number(page) || 1);
+  // Program image: prefer summary, fall back to first episode's image
+  const programImage = summary.image || mapped.find((e) => e.image)?.image || "";
   return {
     source: "bbc",
     programUrl: normalizedProgramUrl,
     title: summary.title || cleanText(payload?.title || "BBC Program"),
     description: summary.description || cleanText(payload?.description || ""),
+    image: programImage,
     episodes: mapped,
     totalItems: mapped.length,
     page: safePage,
@@ -807,7 +810,27 @@ async function getBbcEpisodePlaylist(episodeUrl) {
   };
 }
 
+async function getBbcDiscovery(count = 5) {
+  const TERMS = ["music", "arts", "jazz", "soul", "world", "electronic", "dance", "classical", "comedy", "culture", "documentary"];
+  const shuffled = [...TERMS].sort(() => Math.random() - 0.5);
+  // Run 2 random terms in parallel to build a large enough pool
+  const [a, b] = await Promise.allSettled([
+    searchBbcPrograms(shuffled[0]),
+    searchBbcPrograms(shuffled[1])
+  ]);
+  const aResults = a.status === "fulfilled" ? a.value : [];
+  const bResults = b.status === "fulfilled" ? b.value : [];
+  const seen = new Set();
+  const pool = [];
+  for (const r of [...aResults, ...bResults]) {
+    const key = r.programUrl || r.url || r.title;
+    if (key && !seen.has(key)) { seen.add(key); pool.push(r); }
+  }
+  return pool.sort(() => Math.random() - 0.5).slice(0, count);
+}
+
 module.exports = {
+  getBbcDiscovery,
   getBbcEpisodePlaylist,
   getBbcLiveStations,
   getBbcProgramEpisodes,

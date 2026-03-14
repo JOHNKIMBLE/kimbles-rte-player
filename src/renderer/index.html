@@ -21,6 +21,8 @@
         <button id="tabBbcBtn" class="secondary">BBC</button>
         <button id="tabWwfBtn" class="secondary">Worldwide FM</button>
         <button id="tabNtsBtn" class="secondary">NTS</button>
+        <button id="tabFipBtn" class="secondary">FIP</button>
+        <button id="tabSchedulesBtn" class="secondary">Schedules</button>
         <button id="tabSettingsBtn" class="secondary">Settings</button>
       </div>
     </header>
@@ -82,6 +84,13 @@
         <button id="addScheduleBtn" class="secondary">Add Scheduler</button>
       </div>
       <div id="episodesResult" class="list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>RTE Discovery</h2>
+      <p class="hint">Discover random RTE shows. Click a card to explore, or add directly to the scheduler.</p>
+      <button id="rteDiscoverBtn" class="secondary">Discover Shows</button>
+      <div id="rteDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
     </section>
 
     <section class="panel">
@@ -150,6 +159,13 @@
       </section>
 
       <section class="panel">
+        <h2>BBC Discovery</h2>
+        <p class="hint">Discover random BBC shows. Click a card to explore, or add directly to the scheduler.</p>
+        <button id="bbcDiscoverBtn" class="secondary">Discover Shows</button>
+        <div id="bbcDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
+      </section>
+
+      <section class="panel">
         <h2>BBC Schedulers</h2>
         <p class="hint">Scheduler checks for new BBC episodes in background and auto-downloads unseen ones.</p>
         <div id="bbcScheduleList" class="list"></div>
@@ -212,6 +228,13 @@
           <button id="wwfAddScheduleBtn" class="secondary">Add Scheduler</button>
         </div>
         <div id="wwfEpisodesResult" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Worldwide FM Discovery</h2>
+        <p class="hint">Discover random Worldwide FM shows. Click a card to explore, or add directly to the scheduler.</p>
+        <button id="wwfDiscoverBtn" class="secondary">Discover Shows</button>
+        <div id="wwfDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
       </section>
 
       <section class="panel">
@@ -283,9 +306,94 @@
       </section>
 
       <section class="panel">
+        <h2>NTS Discovery</h2>
+        <p class="hint">Discover random NTS shows. Click a card to explore, or add directly to the scheduler.</p>
+        <button id="ntsDiscoverBtn" class="secondary">Discover Shows</button>
+        <div id="ntsDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
+      </section>
+
+      <section class="panel">
         <h2>NTS Schedulers</h2>
         <p class="hint">Scheduler checks for new NTS episodes in background and auto-downloads unseen ones.</p>
         <div id="ntsScheduleList" class="list"></div>
+      </section>
+    </div>
+
+    <div id="fipTabContent" class="hidden">
+      <section class="panel">
+        <h2>FIP Live</h2>
+        <div class="row">
+          <select id="fipStationSelect"></select>
+          <button id="fipRefreshLiveBtn" class="secondary">Refresh</button>
+        </div>
+        <div class="nts-live-section-wrap">
+          <div id="fipLiveNow" class="nts-live-card-wrap status muted">Select a station to view now-playing info.</div>
+          <div class="nts-live-audio-wrap nts-live-audio-hidden" id="fipLiveAudioWrap">
+            <audio id="fipLiveAudio" controls preload="none" style="width:100%;"></audio>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>FIP Quick Download</h2>
+        <div class="row">
+          <input id="fipUrlInput" type="url" placeholder="https://www.radiofrance.fr/fip/podcasts/..." />
+          <button id="fipDownloadBtn">Download</button>
+        </div>
+        <div id="fipResult" class="status muted">Idle</div>
+        <pre id="fipLog" class="log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>FIP Explorer</h2>
+        <div class="row">
+          <input id="fipProgramSearchInput" type="text" placeholder="e.g. Certains l'aiment FIP" />
+          <button id="fipProgramSearchBtn">Search</button>
+        </div>
+        <div id="fipProgramSearchResult" class="list hidden"></div>
+        <div class="row">
+          <input id="fipProgramUrlInput" type="text" placeholder="Show URL or slug e.g. certains-laiment-fip" />
+          <button id="fipLoadProgramBtn">Load Episodes</button>
+        </div>
+        <div id="fipProgramMeta" class="status muted">No show loaded.</div>
+        <div class="row">
+          <button id="fipPrevPageBtn" class="secondary">Prev Page</button>
+          <button id="fipNextPageBtn" class="secondary">Next Page</button>
+        </div>
+        <div class="row">
+          <label for="fipScheduleBackfillMode">Scheduler Backfill</label>
+          <select id="fipScheduleBackfillMode">
+            <option value="new-only">New only</option>
+            <option value="latest-n" selected>Latest N now</option>
+          </select>
+          <input id="fipScheduleBackfillCount" type="number" min="1" max="100" value="5" />
+          <button id="fipAddScheduleBtn" class="secondary">Add Scheduler</button>
+        </div>
+        <div id="fipEpisodesResult" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>FIP Discovery</h2>
+        <p class="hint">Discover random FIP shows. Click a card to explore, or add directly to the scheduler.</p>
+        <button id="fipDiscoverBtn" class="secondary">Discover Shows</button>
+        <div id="fipDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
+      </section>
+
+      <section class="panel">
+        <h2>FIP Schedulers</h2>
+        <p class="hint">Scheduler checks for new FIP podcast episodes in background and auto-downloads unseen ones.</p>
+        <div id="fipScheduleList" class="list"></div>
+      </section>
+    </div>
+
+    <div id="schedulesTabContent" class="hidden">
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">All Schedules</h2>
+          <button id="refreshAllSchedulesBtn" class="secondary">Refresh All</button>
+        </div>
+        <p class="hint">Combined view of active schedulers across all sources.</p>
+        <div id="allSchedulesList" class="list"></div>
       </section>
     </div>
 
@@ -306,6 +414,11 @@
             <input id="episodesPerPageInput" type="number" min="1" max="50" step="1" value="5" />
           </div>
           <div class="hint">Number of episodes shown per page in all program explorers (RTE, BBC, NTS, WWF). Default: 5.</div>
+          <div class="row setting-row">
+            <label for="discoveryCountInput">Discovery Cards Per Load</label>
+            <input id="discoveryCountInput" type="number" min="1" max="24" step="1" value="5" />
+          </div>
+          <div class="hint">Number of random show cards loaded per Discovery section. Default: 5.</div>
         </div>
         <div class="settings-group">
           <div class="subheading">Download Path</div>
