@@ -363,6 +363,8 @@
       API.getJson(`/api/fip/program/summary?url=${encodeURIComponent(programUrl)}`),
     getFipEpisodeStream: (episodeUrl) =>
       API.getJson(`/api/fip/episode/stream?url=${encodeURIComponent(episodeUrl)}`),
+    getFipEpisodeTracklist: (episodeUrl, startTs, durationSecs) =>
+      API.getJson(`/api/fip/episode/tracklist?url=${encodeURIComponent(episodeUrl)}${startTs ? `&startTs=${encodeURIComponent(startTs)}` : ""}${durationSecs ? `&durationSecs=${encodeURIComponent(durationSecs)}` : ""}`),
     listFipSchedules: () => API.getJson("/api/fip/scheduler"),
     addFipSchedule: (programUrl, options = {}) =>
       API.sendJson("/api/fip/scheduler", "POST", { programUrl, backfillCount: Number(options.backfillCount || 0) }),
@@ -370,6 +372,62 @@
     setFipScheduleEnabled: (scheduleId, enabled) =>
       API.sendJson(`/api/fip/scheduler/${encodeURIComponent(scheduleId)}`, "PATCH", { enabled }),
     runFipScheduleNow: (scheduleId) => API.sendJson(`/api/fip/scheduler/${encodeURIComponent(scheduleId)}/run`, "POST", {}),
+    downloadFromKexpUrl: async (pageUrl, progressToken, options = {}) => {
+      if (progressToken) openProgressStream(progressToken);
+      try {
+        return await API.sendJson("/api/download/kexp/url", "POST", { pageUrl, progressToken, ...(options || {}) });
+      } finally {
+        if (progressToken) setTimeout(() => closeProgressStream(progressToken), 1500);
+      }
+    },
+    downloadFromKexpExtendedUrl: async (pageUrl, progressToken, options = {}) => {
+      if (progressToken) openProgressStream(progressToken);
+      try {
+        return await API.sendJson("/api/download/kexp-extended/url", "POST", { pageUrl, progressToken, ...(options || {}) });
+      } finally {
+        if (progressToken) setTimeout(() => closeProgressStream(progressToken), 1500);
+      }
+    },
+    downloadFromUrl: async (source, pageUrl, progressToken, options = {}) => {
+      if (progressToken) openProgressStream(progressToken);
+      try {
+        return await API.sendJson(`/api/download/${source}/url`, "POST", { pageUrl, progressToken, ...(options || {}) });
+      } finally {
+        if (progressToken) setTimeout(() => closeProgressStream(progressToken), 1500);
+      }
+    },
+    getKexpLiveStations: () => API.getJson("/api/kexp/live/stations"),
+    getKexpNowPlaying: () => API.getJson("/api/kexp/live/now"),
+    searchKexpPrograms: (query) => API.getJson(`/api/kexp/program/search?q=${encodeURIComponent(query || "")}`),
+    getKexpDiscovery: (count) => API.getJson(`/api/kexp/discovery?count=${encodeURIComponent(count || 12)}`),
+    getKexpProgramEpisodes: (programUrl, page = 1) =>
+      API.getJson(`/api/kexp/program/episodes?url=${encodeURIComponent(programUrl)}&page=${encodeURIComponent(page)}`),
+    getKexpProgramSummary: (programUrl) =>
+      API.getJson(`/api/kexp/program/summary?url=${encodeURIComponent(programUrl)}`),
+    getKexpEpisodeTracklist: (episodeUrl) =>
+      API.getJson(`/api/kexp/episode/tracklist?url=${encodeURIComponent(episodeUrl)}`),
+    getKexpEpisodeStream: (episodeUrl, startTime) =>
+      API.getJson(`/api/kexp/episode/stream?url=${encodeURIComponent(episodeUrl)}${startTime ? `&startTime=${encodeURIComponent(startTime)}` : ""}`),
+    getKexpSchedule: () => API.getJson("/api/kexp/schedule"),
+    // Extended archive (Splixer)
+    searchKexpExtendedPrograms: (query) =>
+      API.getJson(`/api/kexp/extended/program/search?q=${encodeURIComponent(query || "")}`),
+    getKexpExtendedDiscovery: () => API.getJson("/api/kexp/extended/discovery"),
+    getKexpExtendedProgramSummary: (programUrl) =>
+      API.getJson(`/api/kexp/extended/program/summary?url=${encodeURIComponent(programUrl)}`),
+    getKexpExtendedProgramEpisodes: (programUrl, page = 1) =>
+      API.getJson(`/api/kexp/extended/program/episodes?url=${encodeURIComponent(programUrl)}&page=${page}`),
+    getKexpExtendedEpisodeStream: (episodeUrl) =>
+      API.getJson(`/api/kexp/extended/episode/stream?url=${encodeURIComponent(episodeUrl)}`),
+    getKexpExtendedEpisodeTracklist: (episodeUrl) =>
+      API.getJson(`/api/kexp/extended/episode/tracklist?url=${encodeURIComponent(episodeUrl)}`),
+    listKexpSchedules: () => API.getJson("/api/kexp/scheduler"),
+    addKexpSchedule: (programUrl, options = {}) =>
+      API.sendJson("/api/kexp/scheduler", "POST", { programUrl, backfillCount: Number(options.backfillCount || 0) }),
+    removeKexpSchedule: (scheduleId) => API.sendJson(`/api/kexp/scheduler/${encodeURIComponent(scheduleId)}`, "DELETE", {}),
+    setKexpScheduleEnabled: (scheduleId, enabled) =>
+      API.sendJson(`/api/kexp/scheduler/${encodeURIComponent(scheduleId)}`, "PATCH", { enabled }),
+    runKexpScheduleNow: (scheduleId) => API.sendJson(`/api/kexp/scheduler/${encodeURIComponent(scheduleId)}/run`, "POST", {}),
     getDownloadQueueStats: () => API.getJson("/api/download-queue/stats"),
     getDownloadQueueSnapshot: () => API.getJson("/api/download-queue"),
     pauseDownloadQueue: () => API.sendJson("/api/download-queue/pause", "POST", {}),

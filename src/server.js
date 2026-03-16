@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const { Readable } = require("node:stream");
 const express = require("express");
 const {
@@ -48,16 +49,35 @@ const {
 } = require("./lib/nts");
 const {
   LIVE_STATIONS: FIP_LIVE_STATIONS,
-  getFipLiveStations,
   getFipNowPlaying,
   searchFipPrograms,
   getFipDiscovery,
   getFipProgramSummary,
   getFipProgramEpisodes,
   getFipEpisodeStream,
+  getFipEpisodeTracklist,
   normalizeFipProgramUrl
 } = require("./lib/fip");
-const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
+const {
+  LIVE_STATIONS: KEXP_LIVE_STATIONS,
+  normalizeKexpProgramUrl,
+  getKexpNowPlaying,
+  searchKexpPrograms,
+  getKexpDiscovery,
+  getKexpProgramSummary,
+  getKexpProgramEpisodes,
+  getKexpEpisodeTracklist,
+  getKexpSchedule,
+  getKexpEpisodeStream,
+  searchKexpExtendedPrograms,
+  getKexpExtendedDiscovery,
+  getKexpExtendedProgramSummary,
+  getKexpExtendedEpisodes,
+  getKexpExtendedEpisodeStream,
+  getKexpExtendedEpisodeTracklist,
+  ISO_DAY_NAMES: KEXP_ISO_DAY_NAMES
+} = require("./lib/kexp");
+const { runYtDlpDownload, runYtDlpJson, runYtDlpGetUrl, spawnYtDlpPipe } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
@@ -73,6 +93,7 @@ app.use(express.static(rendererDir));
 app.use("/build", express.static(path.join(__dirname, "..", "build")));
 const progressSubscribers = new Map();
 const localPlaybackTokens = new Map();
+const wwfTempTokens = new Map();
 
 const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
@@ -395,6 +416,7 @@ async function maybeGenerateCue({
   episodeTitle,
   programTitle,
   tracklistUrl = "",
+  fileStartOffset = 0,
   force = false,
   revealErrors = false,
   onProgress = null
@@ -430,7 +452,8 @@ async function maybeGenerateCue({
       songrecSampleSeconds: Number(settings.songrecSampleSeconds || 20),
       ffmpegCueSilenceDetect: settings.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect),
       ffmpegCueLoudnessDetect: settings.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect),
-      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect)
+      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect),
+      fileStartOffset: Number(fileStartOffset) || 0
       }
     });
   } catch (error) {
@@ -452,14 +475,15 @@ async function previewCue({
   durationSeconds = 0,
   outputDir = "",
   fileName = "",
+  fileStartOffset = 0,
   onProgress = null
 }) {
   const settings = readSettings();
   const raw = String(sourceType || "rte").toLowerCase();
-  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : raw === "fip" ? "fip" : "rte";
+  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : raw === "fip" ? "fip" : raw === "kexp" ? "kexp" : "rte";
   const safeOutputDir = String(outputDir || "").trim();
   const safeFileName = String(fileName || "").trim();
-  let inputSource = "";
+  let inputSource;
 
   if (safeOutputDir && safeFileName) {
     inputSource = path.join(safeOutputDir, safeFileName);
@@ -496,7 +520,8 @@ async function previewCue({
       songrecSampleSeconds: Number(settings.songrecSampleSeconds || 20),
       ffmpegCueSilenceDetect: settings.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect),
       ffmpegCueLoudnessDetect: settings.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect),
-      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect)
+      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect),
+      fileStartOffset: Number(fileStartOffset) || 0
     }
   });
 }
@@ -653,27 +678,19 @@ function feedDataDirFor(sourceType) {
 async function resolveWwfEpisodeStream(episodeUrl) {
   const url = String(episodeUrl || "").trim();
   if (!url) throw new Error("episodeUrl is required.");
-  const tryStream = async (sourceUrl) => {
-    const json = await runYtDlpJson({ url: sourceUrl, args: ["-J", "--no-playlist", "--playlist-items", "1"] });
-    const direct = String(
-      json?.url || json?.requested_downloads?.[0]?.url || json?.formats?.find((f) => f && String(f.protocol || "").includes("m3u8"))?.url || ""
-    ).trim();
-    if (!direct) throw new Error("No playable stream URL found.");
-    return { episodeUrl: url, streamUrl: direct, title: String(json?.title || "").trim(), image: String(json?.thumbnail || "").trim() };
-  };
-  try {
-    return await tryStream(url);
-  } catch {
+
+  // Resolve Mixcloud URL if needed (skip re-fetch if already a Mixcloud URL)
+  let sourceUrl;
+  if (/mixcloud\.com\//i.test(url)) {
+    sourceUrl = url;
+  } else {
     const mixcloudUrl = await getWwfEpisodeMixcloudUrl(url).catch(() => "");
-    if (mixcloudUrl) {
-      try {
-        return await tryStream(mixcloudUrl);
-      } catch (e) {
-        throw new Error(e?.message || "Mixcloud source failed.");
-      }
-    }
-    throw new Error("No playable Worldwide FM stream found. Episodes are mirrored on Mixcloud.");
+    sourceUrl = mixcloudUrl || url;
   }
+
+  // Mixcloud uses AES-128 encrypted HLS — pipe yt-dlp decoded output for fast
+  // playback start (~5-10s). No seek support.
+  return { episodeUrl: url, streamUrl: `/api/wwf/ytdlp-pipe?url=${encodeURIComponent(sourceUrl)}`, title: "", image: "" };
 }
 
 async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
@@ -802,6 +819,63 @@ async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTi
     episodeUrl: sourceUrl,
     episodeTitle: resolvedTitle,
     programTitle: programTitle || "FIP",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
+  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
+}
+
+async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) throw new Error("episodeUrl is required.");
+  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "kexp-episode");
+
+  // If already a direct CDN URL (e.g. CloudFront from KEXP Extended), use it directly
+  let sgUrl, sgOffset;
+  if (/cloudfront\.net\/segments\//i.test(sourceUrl)) {
+    sgUrl = sourceUrl;
+    sgOffset = 0;
+  } else {
+    const streamInfo = await getKexpEpisodeStream(sourceUrl, null, publishedTime);
+    sgUrl = streamInfo.streamUrl;
+    sgOffset = Number(streamInfo.startOffset) || 0;
+  }
+
+  let download;
+  try {
+    download = await downloadFromManifest({
+      sourceUrl: sgUrl,
+      manifestUrl: sgUrl,
+      title: resolvedTitle,
+      programTitle: programTitle || "KEXP",
+      publishedTime: publishedTime || resolvedTitle,
+      episodeUrl: sourceUrl,
+      clipId: sourceUrl,
+      progressToken,
+      sourceType: "kexp",
+      forceDownload
+    });
+  } catch (err) {
+    throw err;
+  }
+  const resolvedArtwork = String(artworkUrl || "").trim();
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "kexp",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: String(sourceUrl)
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "kexp",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    fileStartOffset: sgOffset,
     onProgress: (progress) => emitProgressEvent(progressToken, progress)
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
@@ -971,6 +1045,24 @@ const fipScheduler = createSchedulerStore({
     })
 });
 
+const kexpScheduler = createSchedulerStore({
+  dataDir: path.join(DATA_DIR, "kexp"),
+  getProgramSummary: async (programUrl) => getKexpProgramSummary(programUrl),
+  getProgramEpisodes: async (programUrl, page) => getKexpProgramEpisodes(programUrl, page),
+  onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("kexp", schedule, latest),
+  onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("kexp", schedule, downloaded),
+  onScheduleRunError: (schedule, error) => onScheduleError("kexp", schedule, error),
+  runEpisodeDownload: async (episode) =>
+    downloadKexpEpisode({
+      episodeUrl: episode.episodeUrl,
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || "KEXP",
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      forceDownload: episode.forceDownload || false
+    })
+});
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -1049,6 +1141,26 @@ app.get("/api/wwf/episode/playlist", async (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
+});
+
+app.get("/api/wwf/ytdlp-pipe", (req, res) => {
+  const url = String(req.query.url || "").trim();
+  if (!/mixcloud\.com\//i.test(url)) {
+    return res.status(400).json({ error: "Invalid URL: must be a Mixcloud URL" });
+  }
+  res.setHeader("Content-Type", "audio/mpeg");
+  res.setHeader("Transfer-Encoding", "chunked");
+  const child = spawnYtDlpPipe(url);
+  child.stdout.pipe(res);
+  req.on("close", () => { try { child.kill(); } catch {} });
+  child.on("error", () => { try { res.end(); } catch {} });
+});
+
+app.get("/api/wwf/temp-audio/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const entry = wwfTempTokens.get(token);
+  if (!entry || !fs.existsSync(entry.path)) return res.status(404).end();
+  res.sendFile(entry.path);
 });
 
 app.get("/api/wwf/episode/stream", async (req, res) => {
@@ -1229,6 +1341,18 @@ app.get("/api/fip/episode/stream", async (req, res) => {
     const episodeUrl = String(req.query.url || "");
     const data = await getFipEpisodeStream(episodeUrl, runYtDlpJson);
     res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/fip/episode/tracklist", async (req, res) => {
+  try {
+    const episodeUrl   = String(req.query.url || "");
+    const startTs      = Number(req.query.startTs || 0);
+    const durationSecs = Number(req.query.durationSecs || 0);
+    const tracks = await getFipEpisodeTracklist(episodeUrl, { startTs, durationSecs });
+    res.json({ tracks });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1756,6 +1880,7 @@ app.post("/api/cue/preview", async (req, res) => {
       durationSeconds: Number(req.body.durationSeconds || 0),
       outputDir: String(req.body.outputDir || ""),
       fileName: String(req.body.fileName || ""),
+      fileStartOffset: Number(req.body.fileStartOffset || 0),
       onProgress: (progress) => emitProgressEvent(progressToken, progress)
     });
     res.json(cue);
@@ -1859,9 +1984,13 @@ app.post("/api/wwf/scheduler", async (req, res) => {
 });
 
 app.patch("/api/wwf/scheduler/:id", (req, res) => {
-  const enabled = Boolean(req.body.enabled);
-  const data = wwfScheduler.setEnabled(req.params.id, enabled);
-  res.json(data);
+  try {
+    const enabled = Boolean(req.body.enabled);
+    const data = wwfScheduler.setEnabled(req.params.id, enabled);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.post("/api/wwf/scheduler/:id/run", async (req, res) => {
@@ -1895,9 +2024,13 @@ app.post("/api/nts/scheduler", async (req, res) => {
 });
 
 app.patch("/api/nts/scheduler/:id", (req, res) => {
-  const enabled = Boolean(req.body.enabled);
-  const data = ntsScheduler.setEnabled(req.params.id, enabled);
-  res.json(data);
+  try {
+    const enabled = Boolean(req.body.enabled);
+    const data = ntsScheduler.setEnabled(req.params.id, enabled);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.post("/api/nts/scheduler/:id/run", async (req, res) => {
@@ -1954,23 +2087,272 @@ app.delete("/api/fip/scheduler/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// ── KEXP routes ───────────────────────────────────────────────────────────────
+
+app.get("/api/kexp/live/stations", (_req, res) => {
+  res.json(KEXP_LIVE_STATIONS);
+});
+
+app.get("/api/kexp/live/now", async (_req, res) => {
+  try {
+    const data = await getKexpNowPlaying();
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/program/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "");
+    const data = await searchKexpPrograms(query);
+    res.json({ results: data });
+  } catch (error) {
+    res.json({ results: [], error: error.message || "Search unavailable" });
+  }
+});
+
+app.get("/api/kexp/discovery", async (req, res) => {
+  try {
+    const count = Math.min(24, Math.max(1, parseInt(req.query.count || "12", 10)));
+    const data = await getKexpDiscovery(count);
+    res.json(data);
+  } catch (error) {
+    res.json([]);
+  }
+});
+
+app.get("/api/kexp/program/summary", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const data = await getKexpProgramSummary(programUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/program/episodes", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const page = Number(req.query.page || 1);
+    const data = await getKexpProgramEpisodes(programUrl, page);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/episode/tracklist", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getKexpEpisodeTracklist(episodeUrl);
+    res.json({ tracks: data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/episode/stream", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const startTime = String(req.query.startTime || "");
+    const data = await getKexpEpisodeStream(episodeUrl, runYtDlpJson, startTime);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/schedule", async (_req, res) => {
+  try {
+    const data = await getKexpSchedule();
+    res.json({ schedule: data, days: KEXP_ISO_DAY_NAMES });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// ── KEXP Extended Archive (Splixer) routes ─────────────────────────────────
+
+app.get("/api/kexp/extended/program/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "");
+    const data = await searchKexpExtendedPrograms(query);
+    res.json({ results: data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/extended/discovery", async (_req, res) => {
+  try {
+    const data = await getKexpExtendedDiscovery(12);
+    res.json({ results: data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/extended/program/summary", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const data = await getKexpExtendedProgramSummary(programUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/extended/program/episodes", async (req, res) => {
+  try {
+    const programUrl = String(req.query.url || "");
+    const page = parseInt(req.query.page || "1", 10);
+    const data = await getKexpExtendedEpisodes(programUrl, page);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/extended/episode/stream", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getKexpExtendedEpisodeStream(episodeUrl);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/extended/episode/tracklist", async (req, res) => {
+  try {
+    const episodeUrl = String(req.query.url || "");
+    const data = await getKexpExtendedEpisodeTracklist(episodeUrl);
+    res.json({ tracks: data });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/download/kexp-extended/url", async (req, res) => {
+  try {
+    const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
+    const forceDownload = Boolean(req.body.forceDownload);
+    const providedTitle = String(req.body.title || "").trim();
+    const providedProgramTitle = String(req.body.programTitle || "").trim();
+    const publishedTime = String(req.body.publishedTime || "").trim();
+    const providedImage = String(req.body.image || "").trim();
+    // Resolve stream URL directly from Splixer/CloudFront
+    const streamInfo = await getKexpExtendedEpisodeStream(pageUrl);
+    const streamUrl = streamInfo.streamUrl;
+    const title = providedTitle || streamInfo.title;
+    const programTitle = providedProgramTitle || streamInfo.programTitle;
+    const artworkUrl = providedImage || streamInfo.image;
+    const broadcastedAt = publishedTime || streamInfo.broadcastedAt || "";
+    const data = await downloadKexpEpisode({
+      episodeUrl: streamUrl,
+      title,
+      programTitle,
+      publishedTime: broadcastedAt,
+      artworkUrl,
+      progressToken,
+      forceDownload
+    });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/download/kexp/url", async (req, res) => {
+  try {
+    const pageUrl = String(req.body.pageUrl || "");
+    const progressToken = String(req.body.progressToken || "");
+    const forceDownload = Boolean(req.body.forceDownload);
+    const providedTitle = String(req.body.title || "").trim();
+    const providedProgramTitle = String(req.body.programTitle || "").trim();
+    const publishedTime = String(req.body.publishedTime || "").trim();
+    const providedImage = String(req.body.image || "").trim();
+    const data = await downloadKexpEpisode({
+      episodeUrl: pageUrl,
+      title: providedTitle,
+      programTitle: providedProgramTitle,
+      publishedTime,
+      artworkUrl: providedImage,
+      progressToken,
+      forceDownload
+    });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/kexp/scheduler", (_req, res) => {
+  res.json(kexpScheduler.list());
+});
+
+app.post("/api/kexp/scheduler", async (req, res) => {
+  try {
+    const programUrl = String(req.body.programUrl || "").trim();
+    const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
+    const normalized = normalizeKexpProgramUrl(programUrl || "");
+    const data = await kexpScheduler.add(normalized, { backfillCount });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/kexp/scheduler/:id", (req, res) => {
+  try {
+    const enabled = Boolean(req.body.enabled);
+    const data = kexpScheduler.setEnabled(req.params.id, enabled);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/kexp/scheduler/:id/run", async (req, res) => {
+  try {
+    const data = await kexpScheduler.checkOne(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/kexp/scheduler/:id", (req, res) => {
+  kexpScheduler.remove(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get("/", (_req, res) => {
   res.sendFile(path.join(rendererDir, "index.html"));
 });
 
-scheduler.start();
-scheduler.runAll().catch(() => {});
-bbcScheduler.start();
-bbcScheduler.runAll().catch(() => {});
-wwfScheduler.start();
-wwfScheduler.runAll().catch(() => {});
-ntsScheduler.start();
-ntsScheduler.runAll().catch(() => {});
-fipScheduler.start();
-fipScheduler.runAll().catch(() => {});
+if (require.main === module) {
+  scheduler.start();
+  scheduler.runAll().catch(() => {});
+  bbcScheduler.start();
+  bbcScheduler.runAll().catch(() => {});
+  wwfScheduler.start();
+  wwfScheduler.runAll().catch(() => {});
+  ntsScheduler.start();
+  ntsScheduler.runAll().catch(() => {});
+  fipScheduler.start();
+  fipScheduler.runAll().catch(() => {});
+  kexpScheduler.start();
+  kexpScheduler.runAll().catch(() => {});
 
-app.listen(PORT, () => {
-  console.log(`Kimble's RTE Player API listening on ${PORT}`);
-  console.log(`DATA_DIR=${DATA_DIR}`);
-  console.log(`DOWNLOAD_DIR=${DOWNLOAD_DIR}`);
-});
+  app.listen(PORT, () => {
+    console.log(`Kimble's RTE Player API listening on ${PORT}`);
+    console.log(`DATA_DIR=${DATA_DIR}`);
+    console.log(`DOWNLOAD_DIR=${DOWNLOAD_DIR}`);
+  });
+}
+
+module.exports = app;

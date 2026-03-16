@@ -30,11 +30,9 @@ const wwfTabContent = document.getElementById("wwfTabContent");
 const wwfStationSelect = document.getElementById("wwfStationSelect");
 const wwfRefreshLiveBtn = document.getElementById("wwfRefreshLiveBtn");
 const wwfLiveNow = document.getElementById("wwfLiveNow");
-const wwfLivePlayerFrame = document.getElementById("wwfLivePlayerFrame");
 const wwfUrlInput = document.getElementById("wwfUrlInput");
 const wwfDownloadBtn = document.getElementById("wwfDownloadBtn");
 const wwfResult = document.getElementById("wwfResult");
-const wwfLog = document.getElementById("wwfLog");
 const wwfProgramUrlInput = document.getElementById("wwfProgramUrlInput");
 const wwfLoadProgramBtn = document.getElementById("wwfLoadProgramBtn");
 const wwfProgramMeta = document.getElementById("wwfProgramMeta");
@@ -62,7 +60,6 @@ const fipLiveAudioWrap = document.getElementById("fipLiveAudioWrap");
 const fipUrlInput = document.getElementById("fipUrlInput");
 const fipDownloadBtn = document.getElementById("fipDownloadBtn");
 const fipResult = document.getElementById("fipResult");
-const fipLog = document.getElementById("fipLog");
 const fipProgramUrlInput = document.getElementById("fipProgramUrlInput");
 const fipLoadProgramBtn = document.getElementById("fipLoadProgramBtn");
 const fipProgramMeta = document.getElementById("fipProgramMeta");
@@ -78,15 +75,47 @@ const fipScheduleBackfillCount = document.getElementById("fipScheduleBackfillCou
 const fipDiscoverBtn = document.getElementById("fipDiscoverBtn");
 const fipDiscoveryResult = document.getElementById("fipDiscoveryResult");
 const fipScheduleList = document.getElementById("fipScheduleList");
+const tabKexpBtn = document.getElementById("tabKexpBtn");
+const kexpTabContent = document.getElementById("kexpTabContent");
+const kexpLiveNow = document.getElementById("kexpLiveNow");
+const kexpLiveAudio = document.getElementById("kexpLiveAudio");
+const kexpLiveAudioWrap = document.getElementById("kexpLiveAudioWrap");
+const kexpLiveInfo = document.getElementById("kexpLiveInfo");
+const kexpUrlInput = document.getElementById("kexpUrlInput");
+const kexpDownloadBtn = document.getElementById("kexpDownloadBtn");
+const kexpResult = document.getElementById("kexpResult");
+const kexpProgramUrlInput = document.getElementById("kexpProgramUrlInput");
+const kexpLoadProgramBtn = document.getElementById("kexpLoadProgramBtn");
+const kexpProgramMeta = document.getElementById("kexpProgramMeta");
+const kexpPrevPageBtn = document.getElementById("kexpPrevPageBtn");
+const kexpNextPageBtn = document.getElementById("kexpNextPageBtn");
+const kexpEpisodesResult = document.getElementById("kexpEpisodesResult");
+const kexpProgramSearchInput = document.getElementById("kexpProgramSearchInput");
+const kexpProgramSearchBtn = document.getElementById("kexpProgramSearchBtn");
+const kexpProgramSearchResult = document.getElementById("kexpProgramSearchResult");
+const kexpAddScheduleBtn = document.getElementById("kexpAddScheduleBtn");
+const kexpScheduleBackfillMode = document.getElementById("kexpScheduleBackfillMode");
+const kexpScheduleBackfillCount = document.getElementById("kexpScheduleBackfillCount");
+const kexpDiscoverBtn = document.getElementById("kexpDiscoverBtn");
+const kexpDiscoveryResult = document.getElementById("kexpDiscoveryResult");
+const kexpScheduleList = document.getElementById("kexpScheduleList");
+// Extended archive
+const kexpExtSearchInput = document.getElementById("kexpExtSearchInput");
+const kexpExtSearchBtn = document.getElementById("kexpExtSearchBtn");
+const kexpExtDiscoverBtn = document.getElementById("kexpExtDiscoverBtn");
+const kexpExtSearchResult = document.getElementById("kexpExtSearchResult");
+const kexpExtProgramMeta = document.getElementById("kexpExtProgramMeta");
+const kexpExtPaginationRow = document.getElementById("kexpExtPaginationRow");
+const kexpExtPrevPageBtn = document.getElementById("kexpExtPrevPageBtn");
+const kexpExtNextPageBtn = document.getElementById("kexpExtNextPageBtn");
+const kexpExtEpisodesResult = document.getElementById("kexpExtEpisodesResult");
 const ntsStationSelect = document.getElementById("ntsStationSelect");
 const ntsRefreshLiveBtn = document.getElementById("ntsRefreshLiveBtn");
 const ntsLiveNow = document.getElementById("ntsLiveNow");
 const ntsLiveAudio = document.getElementById("ntsLiveAudio");
-const ntsLivePlayerFrame = document.getElementById("ntsLivePlayerFrame");
 const ntsUrlInput = document.getElementById("ntsUrlInput");
 const ntsDownloadBtn = document.getElementById("ntsDownloadBtn");
 const ntsResult = document.getElementById("ntsResult");
-const ntsLog = document.getElementById("ntsLog");
 const ntsProgramUrlInput = document.getElementById("ntsProgramUrlInput");
 const ntsLoadProgramBtn = document.getElementById("ntsLoadProgramBtn");
 const ntsProgramMeta = document.getElementById("ntsProgramMeta");
@@ -253,6 +282,19 @@ const state = {
   fipProgramMaxPages: 1,
   fipEpisodesPayload: null,
   fipDownloadedAudioByEpisode: {},
+  kexpProgramUrl: "",
+  kexpProgramPage: 1,
+  kexpProgramMaxPages: 1,
+  kexpEpisodesPayload: null,
+  kexpDownloadedAudioByEpisode: {},
+  kexpTracksByEpisode: {},
+  kexpChaptersByEpisode: {},
+  kexpExtProgramUrl: "",
+  kexpExtProgramPage: 1,
+  kexpExtProgramMaxPages: 1,
+  kexpExtDownloadedAudioByEpisode: {},
+  fipTracksByEpisode: {},
+  fipChaptersByEpisode: {},
   episodesPerPage: 5,
   discoveryCount: 5
 };
@@ -269,10 +311,12 @@ let wwfSearchDebounceTimer = null;
 let ntsSearchDebounceTimer = null;
 let fipSearchDebounceTimer = null;
 let bbcSearchDebounceTimer = null;
+let kexpSearchDebounceTimer = null;
 const downloadProgressHandlers = new Map();
 let queueRefreshTimer = null;
 let scheduleRefreshTimer = null;
 let fipLiveInterval = null;
+let kexpLiveInterval = null;
 let activeNowPlaying = null;
 let activeHls = null;
 let pendingNowPlayingVisible = false;
@@ -728,16 +772,20 @@ async function playFromDownloadedFile({
 }
 
 function getTracksCache(sourceType) {
-  if (sourceType === "bbc") return state.bbcTracksByEpisode;
-  if (sourceType === "wwf") return state.wwfTracksByEpisode;
-  if (sourceType === "nts") return state.ntsTracksByEpisode;
+  if (sourceType === "bbc")  return state.bbcTracksByEpisode;
+  if (sourceType === "wwf")  return state.wwfTracksByEpisode;
+  if (sourceType === "nts")  return state.ntsTracksByEpisode;
+  if (sourceType === "kexp") return state.kexpTracksByEpisode;
+  if (sourceType === "fip")  return state.fipTracksByEpisode;
   return state.rteTracksByClip;
 }
 
 function getChaptersCache(sourceType) {
-  if (sourceType === "bbc") return state.bbcChaptersByEpisode;
-  if (sourceType === "wwf") return state.wwfChaptersByEpisode;
-  if (sourceType === "nts") return state.ntsChaptersByEpisode;
+  if (sourceType === "bbc")  return state.bbcChaptersByEpisode;
+  if (sourceType === "wwf")  return state.wwfChaptersByEpisode;
+  if (sourceType === "nts")  return state.ntsChaptersByEpisode;
+  if (sourceType === "kexp") return state.kexpChaptersByEpisode;
+  if (sourceType === "fip")  return state.fipChaptersByEpisode;
   return state.rteChaptersByClip;
 }
 
@@ -768,6 +816,14 @@ function setCachedChapters(sourceType, cacheKey, chapters) {
     state.ntsChaptersByEpisode[String(cacheKey || "")] = Array.isArray(chapters) ? chapters : [];
     return;
   }
+  if (sourceType === "kexp") {
+    state.kexpChaptersByEpisode[String(cacheKey || "")] = Array.isArray(chapters) ? chapters : [];
+    return;
+  }
+  if (sourceType === "fip") {
+    setFipEpisodeChapters(cacheKey, chapters);
+    return;
+  }
   setEpisodeChapters(cacheKey, chapters);
 }
 
@@ -784,6 +840,12 @@ async function ensureEpisodeTracks(sourceType, cacheKey, episodeUrl) {
       payload = await window.rteDownloader.getWwfEpisodePlaylist(episodeUrl);
     } else if (sourceType === "nts") {
       payload = await window.rteDownloader.getNtsEpisodePlaylist(episodeUrl);
+    } else if (sourceType === "kexp") {
+      const kexpTracks = await window.rteDownloader.getKexpEpisodeTracklist(episodeUrl);
+      payload = { tracks: Array.isArray(kexpTracks) ? kexpTracks : [] };
+    } else if (sourceType === "fip") {
+      const fipData = await window.rteDownloader.getFipEpisodeTracklist(episodeUrl);
+      payload = { tracks: Array.isArray(fipData) ? fipData : (fipData?.tracks || []) };
     } else {
       payload = await window.rteDownloader.getEpisodePlaylist(episodeUrl);
     }
@@ -816,6 +878,7 @@ async function queueBackgroundCuePreview({
   durationSeconds = 0,
   outputDir = "",
   fileName = "",
+  fileStartOffset = 0,
   statusUpdater = null
 }) {
   const inflightKey = `${sourceType}:${cacheKey}:${outputDir && fileName ? "local" : "remote"}`;
@@ -849,6 +912,7 @@ async function queueBackgroundCuePreview({
         durationSeconds,
         outputDir,
         fileName,
+        fileStartOffset,
         progressToken
       });
       if (Array.isArray(cue?.chapters) && cue.chapters.length) {
@@ -891,10 +955,11 @@ async function playEpisodeWithBackgroundCue({
   fileName = "",
   streamUrl = "",
   playbackKey = "",
+  startOffset = 0,
   statusUpdater = null
 }) {
   const raw = String(sourceType || "").toLowerCase();
-  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : "rte";
+  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : raw === "fip" ? "fip" : raw === "kexp" ? "kexp" : "rte";
   const safeCacheKey = String(cacheKey || "").trim();
   const safePlaybackKey = String(playbackKey || `${safeSourceType}:${safeCacheKey}`).trim();
   const safeEpisodeUrl = String(episodeUrl || "").trim();
@@ -921,6 +986,13 @@ async function playEpisodeWithBackgroundCue({
     chaptersFromTracks = chapters.length > 0;
   }
 
+  // If the audio file has a start offset (e.g. KEXP sg-offset), shift all chapter
+  // positions so they align with the correct currentTime in the audio element.
+  const safeStartOffset = Number(startOffset) || 0;
+  if (safeStartOffset > 0 && chaptersFromTracks && chapters.length) {
+    chapters = chapters.map((ch) => ({ ...ch, startSec: (ch.startSec || 0) + safeStartOffset }));
+  }
+
   await startGlobalNowPlaying({
     source: sourceLabel,
     title,
@@ -930,7 +1002,8 @@ async function playEpisodeWithBackgroundCue({
     chapters,
     tracks,
     chaptersFromTracks,
-    playbackKey: safePlaybackKey
+    playbackKey: safePlaybackKey,
+    startOffset: Number(startOffset) || 0
   });
 
   if (!hasResolvedCue) {
@@ -946,6 +1019,7 @@ async function playEpisodeWithBackgroundCue({
       durationSeconds,
       outputDir: safeOutputDir,
       fileName: safeFileName,
+      fileStartOffset: Number(startOffset) || 0,
       statusUpdater
     }).catch(() => {});
   }
@@ -1070,9 +1144,9 @@ function renderPathFormatPreview() {
 }
 
 function setActiveTab(tabName) {
-  const valid = ["bbc", "wwf", "nts", "fip", "schedules", "settings"];
+  const valid = ["bbc", "wwf", "nts", "fip", "kexp", "schedules", "settings"];
   state.activeTab = valid.includes(tabName) ? tabName : "rte";
-  if (["rte", "bbc", "wwf", "nts", "fip"].includes(state.activeTab)) {
+  if (["rte", "bbc", "wwf", "nts", "fip", "kexp"].includes(state.activeTab)) {
     state.lastSourceTab = state.activeTab;
   }
   const isRte = state.activeTab === "rte";
@@ -1080,6 +1154,7 @@ function setActiveTab(tabName) {
   const isWwf = state.activeTab === "wwf";
   const isNts = state.activeTab === "nts";
   const isFip = state.activeTab === "fip";
+  const isKexp = state.activeTab === "kexp";
   const isSchedules = state.activeTab === "schedules";
   const isSettings = state.activeTab === "settings";
   rteTabContent.classList.toggle("hidden", !isRte);
@@ -1087,6 +1162,7 @@ function setActiveTab(tabName) {
   if (wwfTabContent) wwfTabContent.classList.toggle("hidden", !isWwf);
   if (ntsTabContent) ntsTabContent.classList.toggle("hidden", !isNts);
   if (fipTabContent) fipTabContent.classList.toggle("hidden", !isFip);
+  if (kexpTabContent) kexpTabContent.classList.toggle("hidden", !isKexp);
   if (schedulesTabContent) schedulesTabContent.classList.toggle("hidden", !isSchedules);
   if (settingsTabContent) settingsTabContent.classList.toggle("hidden", !isSettings);
   tabRteBtn.classList.toggle("active-tab", isRte);
@@ -1094,6 +1170,7 @@ function setActiveTab(tabName) {
   if (tabWwfBtn) tabWwfBtn.classList.toggle("active-tab", isWwf);
   if (tabNtsBtn) tabNtsBtn.classList.toggle("active-tab", isNts);
   if (tabFipBtn) tabFipBtn.classList.toggle("active-tab", isFip);
+  if (tabKexpBtn) tabKexpBtn.classList.toggle("active-tab", isKexp);
   if (tabSchedulesBtn) tabSchedulesBtn.classList.toggle("active-tab", isSchedules);
   tabSettingsBtn.classList.toggle("active-tab", isSettings);
   if (isSchedules) {
@@ -1157,30 +1234,21 @@ function setActiveTab(tabName) {
   } else {
     if (fipLiveInterval) { clearInterval(fipLiveInterval); fipLiveInterval = null; }
   }
+  if (isKexp) {
+    refreshKexpLiveNow().catch(() => {});
+    if (kexpLiveInterval) clearInterval(kexpLiveInterval);
+    kexpLiveInterval = setInterval(() => {
+      if (state.activeTab === "kexp") refreshKexpLiveNow().catch(() => {});
+      else { clearInterval(kexpLiveInterval); kexpLiveInterval = null; }
+    }, 30000);
+    renderKexpScheduleList().catch(() => {});
+  } else {
+    if (kexpLiveInterval) { clearInterval(kexpLiveInterval); kexpLiveInterval = null; }
+  }
   downloadDirInput.value = getActiveDownloadDir();
   renderPathFormatPreview();
 }
 
-function parseOffsetToMinutes(offsetText) {
-  const match = String(offsetText || "").match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/i);
-  if (!match) {
-    return 0;
-  }
-
-  const sign = match[1] === "-" ? -1 : 1;
-  const hours = Number(match[2] || 0);
-  const mins = Number(match[3] || 0);
-  return sign * (hours * 60 + mins);
-}
-
-function getTimeZoneOffsetMinutes(timeZone, date) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    timeZoneName: "shortOffset"
-  }).formatToParts(date);
-  const tzName = parts.find((part) => part.type === "timeZoneName")?.value || "GMT+0";
-  return parseOffsetToMinutes(tzName);
-}
 
 function utcTimeToLocal(hhmm) {
   const match = String(hhmm).match(/^(\d{1,2}):(\d{2})$/);
@@ -1312,18 +1380,19 @@ function renderSearchPrograms(items) {
 
   programSearchResult.innerHTML = items
     .map((item) => {
-      const imageHtml = item.image
-        ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy" />`
-        : `<img alt="No artwork" loading="lazy" />`;
-
+      const genresHtml = (item.genres && item.genres.length)
+        ? `<div class="genre-pills">${item.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+        : "";
+      const desc = (item.description || "").trim();
       return `
         <div class="item clickable" data-load-program-url="${escapeHtml(item.programUrl)}">
           <div class="search-card">
-            <div>${imageHtml}</div>
+            <div>${item.image ? `<img src="${escapeHtml(item.image)}" alt="" class="episode-thumb" loading="lazy" />` : `<img alt="" class="episode-thumb" loading="lazy" />`}</div>
             <div>
               <div class="item-title">${escapeHtml(item.title)}</div>
               ${item.runSchedule ? `<div class="item-meta">🕐 ${escapeHtml(toLocalSchedule(item.runSchedule))}</div>` : ""}
-              ${item.description ? `<div class="item-meta">${escapeHtml(item.description)}</div>` : ""}
+              ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : ""}
+              ${genresHtml}
             </div>
           </div>
         </div>
@@ -1375,24 +1444,7 @@ async function runBbcProgramSearch(query) {
     }
 
     bbcProgramSearchResult.innerHTML = items
-      .map((item) => {
-        const imageHtml = item.image
-          ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || "BBC Program")}" loading="lazy" />`
-          : `<img alt="No artwork" loading="lazy" />`;
-
-        return `
-        <div class="item clickable" data-load-bbc-program-url="${escapeHtml(item.programUrl)}">
-          <div class="search-card">
-            <div>${imageHtml}</div>
-            <div>
-              <div class="item-title">${escapeHtml(item.title || "BBC Program")}</div>
-              ${item.description ? `<div class="item-meta">${escapeHtml(item.description)}</div>` : ""}
-              <div class="item-meta">${escapeHtml(item.programUrl)}</div>
-            </div>
-          </div>
-        </div>
-      `;
-      })
+      .map((item) => renderBbcShowCard(item, { showScheduleBtn: true }))
       .join("");
   } catch (error) {
     bbcProgramSearchResult.innerHTML = `<div class="item">${escapeHtml(error.message)}</div>`;
@@ -1486,7 +1538,8 @@ async function startGlobalNowPlaying({
   chapters = [],
   tracks = [],
   chaptersFromTracks = false,
-  playbackKey = ""
+  playbackKey = "",
+  startOffset = 0
 }) {
   const url = String(streamUrl || "").trim();
   if (!url) {
@@ -1554,8 +1607,17 @@ async function startGlobalNowPlaying({
     return;
   }
 
+  const safeOffset = Number(startOffset) || 0;
+  const applyOffset = (audio) => {
+    if (safeOffset > 0) {
+      const seek = () => { audio.currentTime = safeOffset; audio.removeEventListener("loadedmetadata", seek); };
+      audio.addEventListener("loadedmetadata", seek);
+    }
+  };
+
   if (!looksLikeHls) {
     nowPlayingAudio.src = url;
+    applyOffset(nowPlayingAudio);
     nowPlayingAudio.play().catch(() => {
       revealPendingPlayer();
     });
@@ -1564,6 +1626,7 @@ async function startGlobalNowPlaying({
 
   if (nowPlayingAudio.canPlayType("application/vnd.apple.mpegurl")) {
     nowPlayingAudio.src = url;
+    applyOffset(nowPlayingAudio);
     nowPlayingAudio.play().catch(() => {
       revealPendingPlayer();
     });
@@ -1587,10 +1650,11 @@ function setEpisodeStatus(clipId, text, isError = false) {
 }
 
 function getCueDebugNode(sourceType, key) {
-  if (sourceType === "bbc") {
-    const encodedKey = encodeURIComponent(String(key || ""));
-    return document.querySelector(`[data-bbc-episode-cue-debug="${encodedKey}"]`);
-  }
+  const encodedKey = encodeURIComponent(String(key || ""));
+  if (sourceType === "bbc")  return document.querySelector(`[data-bbc-episode-cue-debug="${encodedKey}"]`);
+  if (sourceType === "kexp") return document.querySelector(`[data-kexp-episode-cue-debug="${encodedKey}"]`);
+  if (sourceType === "fip")  return document.querySelector(`[data-fip-episode-cue-debug="${encodedKey}"]`);
+  if (sourceType === "wwf")  return document.querySelector(`[data-wwf-episode-cue-debug="${encodedKey}"]`);
   return document.querySelector(`[data-episode-cue-debug="${String(key || "")}"]`);
 }
 
@@ -1761,12 +1825,19 @@ function normalizeChapters(chapters) {
 function normalizeTracks(tracks) {
   const rows = Array.isArray(tracks) ? tracks : [];
   return rows
-    .map((track) => ({
-      title: decodeHtmlEntities(String(track?.title || track?.name || track?.track || "")).trim(),
-      artist: decodeHtmlEntities(String(track?.artist || track?.performer || "")).trim(),
-      inferred: Boolean(track?.inferred),
-      inferredSource: decodeHtmlEntities(String(track?.inferredSource || "")).trim()
-    }))
+    .map((track) => {
+      const t = {
+        title: decodeHtmlEntities(String(track?.title || track?.name || track?.track || "")).trim(),
+        artist: decodeHtmlEntities(String(track?.artist || track?.performer || "")).trim(),
+        inferred: Boolean(track?.inferred),
+        inferredSource: decodeHtmlEntities(String(track?.inferredSource || "")).trim()
+      };
+      // Preserve startSeconds if present (used by KEXP and other timed tracklists)
+      if (Number.isFinite(Number(track?.startSeconds)) && Number(track.startSeconds) >= 0) {
+        t.startSeconds = Number(track.startSeconds);
+      }
+      return t;
+    })
     .filter((track) => track.title);
 }
 
@@ -1775,6 +1846,15 @@ function estimateChaptersFromTracks(tracks, durationSeconds) {
   if (!rows.length) {
     return [];
   }
+  // If tracks have timing data (e.g. KEXP), use it directly
+  if (rows.every((t) => Number.isFinite(t.startSeconds))) {
+    return rows.map((track) => ({
+      startSec: track.startSeconds,
+      title: String(track?.title || "").trim(),
+      artist: String(track?.artist || "").trim()
+    })).filter((item) => item.title);
+  }
+  // Otherwise evenly divide the duration
   const total = Math.max(Number(durationSeconds || 0), rows.length * 180);
   const step = total / rows.length;
   return rows.map((track, index) => ({
@@ -2152,12 +2232,13 @@ function renderWwfEpisodes(payload) {
           ${descHtml}
           ${genresHtml}
           <div class="item-actions">
-            <button class="secondary" data-wwf-play-url="${escapeHtml(episodeUrl)}" data-wwf-play-title="${escapeHtml(fullTitle)}" data-wwf-play-program-title="${escapeHtml(programTitle)}" data-wwf-play-image="${escapeHtml(episode.image || "")}">Play</button>
+            <button class="secondary" data-wwf-play-url="${escapeHtml(episode.playerUrl || episode.downloadUrl || episodeUrl)}" data-wwf-play-title="${escapeHtml(fullTitle)}" data-wwf-play-program-title="${escapeHtml(programTitle)}" data-wwf-play-image="${escapeHtml(episode.image || "")}">Play</button>
             <button class="secondary" data-wwf-play-local-url="${escapeHtml(episodeUrl)}" data-wwf-play-local-title="${escapeHtml(fullTitle)}" data-wwf-play-local-program-title="${escapeHtml(programTitle)}" data-wwf-play-local-image="${escapeHtml(episode.image || "")}">Play Local</button>
             <button data-wwf-download-url="${escapeHtml(episodeUrl)}" data-wwf-episode-title="${escapeHtml(fullTitle)}" data-wwf-program-title="${escapeHtml(programTitle)}" data-wwf-published="${escapeHtml(published)}" data-wwf-image="${escapeHtml(episode.image || "")}">Download</button>
             <button class="secondary" data-wwf-generate-cue-url="${escapeHtml(episodeUrl)}" data-wwf-generate-cue-title="${escapeHtml(fullTitle)}" data-wwf-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
           </div>
           <div class="item-meta episode-status" data-wwf-episode-status="${statusKey}" style="display:none;"></div>
+          <div class="cue-debug-log" data-wwf-episode-cue-debug="${statusKey}" style="display:none;"></div>
           <div class="episode-inline-playlist" data-wwf-episode-playlist="${statusKey}">
             <div class="playlist-note">Loading tracklist...</div>
           </div>
@@ -2233,12 +2314,15 @@ async function loadBbcProgram(programUrl, page = 1) {
     const desc = (payload.description || "").trim();
     const cadence = String(payload.cadence || "").trim();
     const cadenceBadge = cadence && cadence !== "irregular" && cadence !== "unknown" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const genres = Array.isArray(payload.genres) ? payload.genres : [];
+    const genresHtml = genres.length ? `<div class="genre-pills" style="margin-top:0.3rem;">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
     bbcProgramMeta.innerHTML = `
       ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
       <strong>${escapeHtml(payload.title || "BBC Program")}</strong>${cadenceBadge}<br>
       ${payload.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(payload.runSchedule))}</span><br>` : ""}
       ${payload.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` — ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
       ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 300))}${desc.length > 300 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
       Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
     `;
   }
@@ -2263,12 +2347,15 @@ async function loadProgram(programUrl, page = 1) {
     const desc = (payload.description || "").trim();
     const cadence = String(payload.cadence || "").trim();
     const cadenceBadge = cadence && cadence !== "irregular" && cadence !== "unknown" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const genres = Array.isArray(payload.genres) ? payload.genres : [];
+    const genresHtml = genres.length ? `<div class="genre-pills" style="margin-top:0.3rem;">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
     programMeta.innerHTML = `
       ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
       <strong>${escapeHtml(payload.title)}</strong>${cadenceBadge}<br>
       ${payload.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(payload.runSchedule))}</span><br>` : ""}
       ${payload.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(payload.nextBroadcastAt))}${payload.nextBroadcastTitle ? ` — ${escapeHtml(payload.nextBroadcastTitle)}` : ""}<br>` : ""}
       ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 300))}${desc.length > 300 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
       Page ${state.currentProgramPage} of ${state.currentMaxPages} - ${totalRows} episodes
     `;
   }
@@ -2304,6 +2391,7 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const isWwf = sourceType === "wwf";
   const isNts = sourceType === "nts";
   const isFip = sourceType === "fip";
+  const isKexp = sourceType === "kexp";
   const latestImage = schedule?.latestEpisodeImage || schedule?.image || "";
   const latestPublished = formatLocalDate(schedule?.latestEpisodePublishedTime || "");
   const runLocal = formatRunScheduleLocalOnly(schedule?.runSchedule || "");
@@ -2317,17 +2405,17 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const latestFileTime = schedule?.lastDownloaded?.at ? formatLocalDateTime(schedule.lastDownloaded.at) : "";
   const latestFilePath = String(schedule?.lastDownloaded?.filePath || "").trim();
   const status = String(schedule?.lastStatus || "Idle");
-  const toggleAttr = isFip ? "data-fip-schedule-toggle" : isNts ? "data-nts-schedule-toggle" : isWwf ? "data-wwf-schedule-toggle" : isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
-  const runAttr = isFip ? "data-fip-schedule-run" : isNts ? "data-nts-schedule-run" : isWwf ? "data-wwf-schedule-run" : isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
-  const removeAttr = isFip ? "data-fip-schedule-remove" : isNts ? "data-nts-schedule-remove" : isWwf ? "data-wwf-schedule-remove" : isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
-  const playOutputAttr = isFip ? "data-fip-schedule-play-output" : isNts ? "data-nts-schedule-play-output" : isWwf ? "data-wwf-schedule-play-output" : isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
-  const playFileAttr = isFip ? "data-fip-schedule-play-file" : isNts ? "data-nts-schedule-play-file" : isWwf ? "data-wwf-schedule-play-file" : isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
-  const playTitleAttr = isFip ? "data-fip-schedule-play-title" : isNts ? "data-nts-schedule-play-title" : isWwf ? "data-wwf-schedule-play-title" : isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
-  const playImageAttr = isFip ? "data-fip-schedule-play-image" : isNts ? "data-nts-schedule-play-image" : isWwf ? "data-wwf-schedule-play-image" : isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
-  const playEpisodeUrlAttr = isFip ? "data-fip-schedule-play-episode-url" : isNts ? "data-nts-schedule-play-episode-url" : isWwf ? "data-wwf-schedule-play-episode-url" : isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
-  const playSourceTypeAttr = isFip ? "data-fip-schedule-play-source-type" : isNts ? "data-nts-schedule-play-source-type" : isWwf ? "data-wwf-schedule-play-source-type" : isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
-  const statusAttr = isFip ? "data-fip-schedule-status" : isNts ? "data-nts-schedule-status" : isWwf ? "data-wwf-schedule-status" : isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
-  const playSourceTypeValue = isFip ? "fip" : isNts ? "nts" : isWwf ? "wwf" : isBbc ? "bbc" : "rte";
+  const toggleAttr = isKexp ? "data-kexp-schedule-toggle" : isFip ? "data-fip-schedule-toggle" : isNts ? "data-nts-schedule-toggle" : isWwf ? "data-wwf-schedule-toggle" : isBbc ? "data-bbc-schedule-toggle" : "data-schedule-toggle";
+  const runAttr = isKexp ? "data-kexp-schedule-run" : isFip ? "data-fip-schedule-run" : isNts ? "data-nts-schedule-run" : isWwf ? "data-wwf-schedule-run" : isBbc ? "data-bbc-schedule-run" : "data-schedule-run";
+  const removeAttr = isKexp ? "data-kexp-schedule-remove" : isFip ? "data-fip-schedule-remove" : isNts ? "data-nts-schedule-remove" : isWwf ? "data-wwf-schedule-remove" : isBbc ? "data-bbc-schedule-remove" : "data-schedule-remove";
+  const playOutputAttr = isKexp ? "data-kexp-schedule-play-output" : isFip ? "data-fip-schedule-play-output" : isNts ? "data-nts-schedule-play-output" : isWwf ? "data-wwf-schedule-play-output" : isBbc ? "data-bbc-schedule-play-output" : "data-schedule-play-output";
+  const playFileAttr = isKexp ? "data-kexp-schedule-play-file" : isFip ? "data-fip-schedule-play-file" : isNts ? "data-nts-schedule-play-file" : isWwf ? "data-wwf-schedule-play-file" : isBbc ? "data-bbc-schedule-play-file" : "data-schedule-play-file";
+  const playTitleAttr = isKexp ? "data-kexp-schedule-play-title" : isFip ? "data-fip-schedule-play-title" : isNts ? "data-nts-schedule-play-title" : isWwf ? "data-wwf-schedule-play-title" : isBbc ? "data-bbc-schedule-play-title" : "data-schedule-play-title";
+  const playImageAttr = isKexp ? "data-kexp-schedule-play-image" : isFip ? "data-fip-schedule-play-image" : isNts ? "data-nts-schedule-play-image" : isWwf ? "data-wwf-schedule-play-image" : isBbc ? "data-bbc-schedule-play-image" : "data-schedule-play-image";
+  const playEpisodeUrlAttr = isKexp ? "data-kexp-schedule-play-episode-url" : isFip ? "data-fip-schedule-play-episode-url" : isNts ? "data-nts-schedule-play-episode-url" : isWwf ? "data-wwf-schedule-play-episode-url" : isBbc ? "data-bbc-schedule-play-episode-url" : "data-schedule-play-episode-url";
+  const playSourceTypeAttr = isKexp ? "data-kexp-schedule-play-source-type" : isFip ? "data-fip-schedule-play-source-type" : isNts ? "data-nts-schedule-play-source-type" : isWwf ? "data-wwf-schedule-play-source-type" : isBbc ? "data-bbc-schedule-play-source-type" : "data-schedule-play-source-type";
+  const statusAttr = isKexp ? "data-kexp-schedule-status" : isFip ? "data-fip-schedule-status" : isNts ? "data-nts-schedule-status" : isWwf ? "data-wwf-schedule-status" : isBbc ? "data-bbc-schedule-status" : "data-schedule-status";
+  const playSourceTypeValue = isKexp ? "kexp" : isFip ? "fip" : isNts ? "nts" : isWwf ? "wwf" : isBbc ? "bbc" : "rte";
 
   return `
     <div class="item scheduler-card">
@@ -2394,25 +2482,27 @@ async function renderWwfScheduleList() {
   wwfScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "wwf")).join("");
 }
 
-const SOURCE_LABELS = { rte: "RTÉ", bbc: "BBC", wwf: "WWF", nts: "NTS", fip: "FIP" };
+const SOURCE_LABELS = { rte: "RTÉ", bbc: "BBC", wwf: "WWF", nts: "NTS", fip: "FIP", kexp: "KEXP" };
 
 async function renderAllSchedules() {
   if (!allSchedulesList) return;
   allSchedulesList.innerHTML = `<div class="item muted">Loading…</div>`;
   try {
-    const [rte, bbc, wwf, nts, fip] = await Promise.all([
+    const [rte, bbc, wwf, nts, fip, kexp] = await Promise.all([
       window.rteDownloader?.listSchedules?.().catch(() => []),
       window.rteDownloader?.listBbcSchedules?.().catch(() => []),
       window.rteDownloader?.listWwfSchedules?.().catch(() => []),
       window.rteDownloader?.listNtsSchedules?.().catch(() => []),
-      window.rteDownloader?.listFipSchedules?.().catch(() => [])
+      window.rteDownloader?.listFipSchedules?.().catch(() => []),
+      window.rteDownloader?.listKexpSchedules?.().catch(() => [])
     ]);
     const tagged = [
       ...(rte || []).map((s) => ({ ...s, _source: "rte" })),
       ...(bbc || []).map((s) => ({ ...s, _source: "bbc" })),
       ...(wwf || []).map((s) => ({ ...s, _source: "wwf" })),
       ...(nts || []).map((s) => ({ ...s, _source: "nts" })),
-      ...(fip || []).map((s) => ({ ...s, _source: "fip" }))
+      ...(fip || []).map((s) => ({ ...s, _source: "fip" })),
+      ...(kexp || []).map((s) => ({ ...s, _source: "kexp" }))
     ];
     if (!tagged.length) {
       allSchedulesList.innerHTML = `<div class="item">No schedules yet across any source.</div>`;
@@ -2602,10 +2692,11 @@ async function refreshFipLiveNow() {
   if (!fipLiveNow || !fipStationSelect) return;
   const stationId = fipStationSelect.value || "fip";
   const stationName = fipStationSelect.options[fipStationSelect.selectedIndex]?.text || "FIP";
-  // Hide audio wrap until user clicks Play
   const fipSection = fipLiveNow.closest(".nts-live-section-wrap");
   const audioWrap = fipSection ? fipSection.querySelector(".nts-live-audio-wrap") : fipLiveAudioWrap;
-  if (audioWrap) {
+  const isPlaying = fipLiveAudio && !fipLiveAudio.paused;
+  // Hide audio wrap only when not actively playing
+  if (audioWrap && !isPlaying) {
     audioWrap.classList.add("nts-live-audio-hidden");
     audioWrap.classList.remove("nts-live-audio-at-bottom");
   }
@@ -2632,6 +2723,7 @@ async function refreshFipLiveNow() {
         : `♪ ${escapeHtml(title)}`;
     }
 
+    const playBtnClass = isPlaying ? "nts-live-play-overlay live-overlay-btn hidden" : "nts-live-play-overlay live-overlay-btn";
     const parts = [];
     parts.push(`<div class="nts-live-header status"><strong>${escapeHtml(stationName)}</strong>`);
     if (songLine) parts.push(`<br><span class="muted" style="font-size:0.85em">${songLine}</span>`);
@@ -2640,17 +2732,18 @@ async function refreshFipLiveNow() {
     if (coverUrl) {
       parts.push('<div class="nts-live-hero">');
       parts.push(`<img src="${escapeHtml(coverUrl)}" alt="" class="nts-live-hero-img" loading="lazy" />`);
-      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push(`<button type="button" class="${playBtnClass}" aria-label="Play Live">Play Live</button>`);
       parts.push("</div>");
     } else {
       parts.push('<div class="nts-live-hero nts-live-hero-placeholder">');
-      parts.push('<button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button>');
+      parts.push(`<button type="button" class="${playBtnClass}" aria-label="Play Live">Play Live</button>`);
       parts.push(`<a href="https://www.radiofrance.fr/fip" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">radiofrance.fr/fip</a>`);
       parts.push("</div>");
     }
     fipLiveNow.innerHTML = parts.join("");
   } catch {
-    fipLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>${escapeHtml(stationName)}</strong> — Live</div><div class="nts-live-hero nts-live-hero-placeholder"><button type="button" class="nts-live-play-overlay live-overlay-btn" aria-label="Play Live">Play Live</button></div>`;
+    const catchPlayBtnClass = isPlaying ? "nts-live-play-overlay live-overlay-btn hidden" : "nts-live-play-overlay live-overlay-btn";
+    fipLiveNow.innerHTML = `<div class="nts-live-header status muted"><strong>${escapeHtml(stationName)}</strong> — Live</div><div class="nts-live-hero nts-live-hero-placeholder"><button type="button" class="${catchPlayBtnClass}" aria-label="Play Live">Play Live</button></div>`;
   }
 }
 
@@ -2662,6 +2755,22 @@ function setFipEpisodeStatus(episodeUrl, text, isError = false) {
   el.textContent = text || "";
   el.style.display = text ? "block" : "none";
   el.className = `item-meta episode-status ${isError ? "error" : ""}`;
+}
+
+function setFipEpisodeChapters(episodeUrl, chapters) {
+  state.fipChaptersByEpisode[String(episodeUrl || "")] = Array.isArray(chapters) ? chapters : [];
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const debugEl = fipEpisodesResult?.querySelector(`[data-fip-episode-cue-debug="${key}"]`);
+  if (debugEl && chapters.length) {
+    debugEl.style.display = "";
+  }
+}
+
+// The Radio France songs API has no documented date limit — works for episodes
+// many months old. Show the tracklist section whenever we have a broadcast timestamp.
+function fipEpisodeHasTracklist(episode) {
+  const ts = Number(episode?.broadcastStartTs || 0);
+  return ts > 0 && ts < (Date.now() / 1000) + 300; // has timestamp and isn't in the future
 }
 
 function renderFipEpisodes(payload) {
@@ -2682,6 +2791,12 @@ function renderFipEpisodes(payload) {
     const genresHtml = (episode.genres && episode.genres.length)
       ? `<div class="genre-pills">${episode.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
       : "";
+    const hasTracklist = fipEpisodeHasTracklist(episode);
+    const startTs     = Number(episode.broadcastStartTs || 0);
+    const durSecs     = episode.duration ? String(episode.duration) : "";
+    const playlistHtml = hasTracklist
+      ? `<div class="episode-inline-playlist" data-fip-episode-playlist="${statusKey}" data-fip-start-ts="${startTs}" data-fip-duration="${escapeHtml(durSecs)}"><div class="playlist-note">Loading tracklist...</div></div>`
+      : `<div class="playlist-note">No broadcast timestamp available — tracklist cannot be loaded.</div>`;
     return `
       <div class="item">
         ${img}
@@ -2691,13 +2806,77 @@ function renderFipEpisodes(payload) {
         ${genresHtml}
         <div class="item-actions">
           <button class="secondary" data-fip-play-url="${escapeHtml(episodeUrl)}" data-fip-play-title="${escapeHtml(fullTitle)}" data-fip-play-program-title="${escapeHtml(programTitle)}" data-fip-play-image="${escapeHtml(episode.image || "")}">Play</button>
+          <button class="secondary" data-fip-play-local-url="${escapeHtml(episodeUrl)}" data-fip-play-local-title="${escapeHtml(fullTitle)}" data-fip-play-local-program-title="${escapeHtml(programTitle)}" data-fip-play-local-image="${escapeHtml(episode.image || "")}">Play Local</button>
           <button data-fip-download-url="${escapeHtml(episodeUrl)}" data-fip-episode-title="${escapeHtml(fullTitle)}" data-fip-program-title="${escapeHtml(programTitle)}" data-fip-published="${escapeHtml(published)}" data-fip-image="${escapeHtml(episode.image || "")}">Download</button>
-          ${episodeUrl ? `<a href="${escapeHtml(episodeUrl)}" target="_blank" rel="noopener noreferrer" class="secondary" style="display:inline-flex;align-items:center;padding:0.3em 0.7em;font-size:0.85em;border-radius:4px;text-decoration:none;">Tracklist ↗</a>` : ""}
+          <button class="secondary" data-fip-generate-cue-url="${escapeHtml(episodeUrl)}" data-fip-generate-cue-title="${escapeHtml(fullTitle)}" data-fip-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
         </div>
         <div class="item-meta episode-status" data-fip-episode-status="${statusKey}" style="display:none;"></div>
+        <div class="cue-debug-log" data-fip-episode-cue-debug="${statusKey}" style="display:none;"></div>
+        ${playlistHtml}
       </div>
     `;
   }).join("");
+  autoLoadFipPlaylists(rows).catch(() => {});
+}
+
+async function autoLoadFipPlaylists(episodes) {
+  if (!window.rteDownloader?.getFipEpisodeTracklist) return;
+  const queue = (episodes || []).filter((e) => e.episodeUrl && fipEpisodeHasTracklist(e));
+  if (!queue.length) return;
+  const concurrency = 3;
+  let index = 0;
+
+  async function worker() {
+    while (index < queue.length) {
+      const ep = queue[index];
+      index += 1;
+      const statusKey  = encodeURIComponent(String(ep.episodeUrl || ""));
+      const node       = fipEpisodesResult?.querySelector(`[data-fip-episode-playlist="${statusKey}"]`);
+      if (!node) continue;
+      const startTs    = Number(node.getAttribute("data-fip-start-ts") || 0);
+      const durStr     = node.getAttribute("data-fip-duration") || "";
+      const durSecs    = durStr ? Number(durStr) || 0 : 0;
+      try {
+        const data   = await window.rteDownloader.getFipEpisodeTracklist(ep.episodeUrl, startTs || undefined, durSecs || undefined);
+        const tracks = Array.isArray(data) ? data : (data?.tracks || []);
+        if (tracks.length) {
+          node.innerHTML = renderPlaylistTracks(tracks);
+        } else {
+          node.innerHTML = `<div class="playlist-note">No song data found for this episode.</div>`;
+        }
+      } catch {
+        node.innerHTML = `<div class="playlist-note">Tracklist unavailable.</div>`;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()));
+}
+
+function renderBbcShowCard(r, { showScheduleBtn = false } = {}) {
+  const genresHtml = (r.genres && r.genres.length)
+    ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+    : "";
+  const cadenceLabel = r.cadence && r.cadence !== "irregular" && r.cadence !== "unknown"
+    ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1)
+    : "";
+  const desc = (r.description || "").trim();
+  const schedBtn = showScheduleBtn
+    ? `<button class="secondary bbc-quick-schedule-btn" data-bbc-schedule-url="${escapeHtml(r.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
+    : "";
+  return `
+  <div class="item clickable" data-load-bbc-program-url="${escapeHtml(r.programUrl)}">
+    <div class="search-card">
+      <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : `<img alt="" class="episode-thumb" loading="lazy" />`}</div>
+      <div>
+        <div class="item-title">${escapeHtml(r.title || "BBC Program")}</div>
+        ${cadenceLabel ? `<div class="item-meta"><strong>${escapeHtml(cadenceLabel)}</strong></div>` : ""}
+        ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : ""}
+        ${genresHtml}
+        ${schedBtn}
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderFipShowCard(r, { showScheduleBtn = false } = {}) {
@@ -2769,6 +2948,380 @@ async function renderFipScheduleList() {
     return;
   }
   fipScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "fip")).join("");
+}
+
+// ── KEXP ──────────────────────────────────────────────────────────────────────
+
+const KEXP_STREAM_URL = "https://kexp.streamguys1.com/kexp160.aac";
+
+async function refreshKexpLiveNow() {
+  if (!kexpLiveNow) return;
+  const isPlaying = kexpLiveAudio && !kexpLiveAudio.paused;
+  if (kexpLiveAudioWrap && !isPlaying) {
+    kexpLiveAudioWrap.classList.add("nts-live-audio-hidden");
+    kexpLiveAudioWrap.classList.remove("nts-live-audio-at-bottom");
+  }
+  if (!window.rteDownloader?.getKexpNowPlaying) {
+    if (kexpLiveInfo) kexpLiveInfo.innerHTML = `<div class="nts-live-header status muted"><strong>KEXP 90.3 FM</strong> — Live</div>`;
+    kexpLiveNow.innerHTML = `<div class="nts-live-hero nts-live-hero-placeholder"></div>`;
+    return;
+  }
+  try {
+    const info = await window.rteDownloader.getKexpNowPlaying();
+    const play = info?.play;
+    const show = info?.show;
+    const coverUrl = play?.image || show?.image || "";
+    const isPlayingNow = kexpLiveAudio && !kexpLiveAudio.paused;
+
+    // Info area — station name, now-playing track, album, DJ, show — displayed above image
+    const infoLines = [];
+    infoLines.push(`<div class="nts-live-header status"><strong>KEXP 90.3 FM</strong>`);
+    if (play?.artist || play?.title) {
+      const trackLine = [play.artist, play.title].filter(Boolean).join(" — ");
+      infoLines.push(`<br><span class="muted" style="font-size:0.85em">♪ ${escapeHtml(trackLine)}</span>`);
+    }
+    if (play?.album) {
+      infoLines.push(`<br><span class="muted" style="font-size:0.82em">Album: ${escapeHtml(play.album)}</span>`);
+    }
+    if (show?.hosts) {
+      infoLines.push(`<br><span class="muted" style="font-size:0.82em">DJ: ${escapeHtml(show.hosts)}</span>`);
+    }
+    if (show?.programTitle) {
+      infoLines.push(`<br><span class="muted" style="font-size:0.82em">${escapeHtml(show.programTitle)}</span>`);
+    }
+    if (play?.comment) {
+      infoLines.push(`<br><span class="muted" style="font-size:0.8em;font-style:italic;">"${escapeHtml(play.comment)}"</span>`);
+    }
+    infoLines.push("</div>");
+    if (kexpLiveInfo) kexpLiveInfo.innerHTML = infoLines.join("");
+
+    // Hero area — image only, play overlay button; audio bar is CSS-positioned at bottom of image wrap
+    const playBtnClass = isPlayingNow ? "nts-live-play-overlay live-overlay-btn hidden" : "nts-live-play-overlay live-overlay-btn";
+    const heroLines = [];
+    if (coverUrl) {
+      heroLines.push('<div class="nts-live-hero">');
+      heroLines.push(`<img src="${escapeHtml(coverUrl)}" alt="" class="nts-live-hero-img" loading="lazy" />`);
+      heroLines.push(`<button type="button" class="${playBtnClass}" aria-label="Play Live">Play Live</button>`);
+      heroLines.push("</div>");
+    } else {
+      heroLines.push('<div class="nts-live-hero nts-live-hero-placeholder">');
+      heroLines.push(`<button type="button" class="${playBtnClass}" aria-label="Play Live">Play Live</button>`);
+      heroLines.push(`<a href="https://www.kexp.org/listen" target="_blank" rel="noopener noreferrer" class="nts-live-fallback-link">kexp.org/listen</a>`);
+      heroLines.push("</div>");
+    }
+    kexpLiveNow.innerHTML = heroLines.join("");
+  } catch {
+    if (kexpLiveInfo) kexpLiveInfo.innerHTML = `<div class="nts-live-header status muted"><strong>KEXP 90.3 FM</strong> — Live</div>`;
+    kexpLiveNow.innerHTML = `<div class="nts-live-hero nts-live-hero-placeholder"></div>`;
+  }
+}
+
+function formatKexpEpisodeWindow(start, end) {
+  if (!start) return "Date unknown";
+  try {
+    const startD = new Date(start);
+    if (isNaN(startD.getTime())) return start;
+    const dateOpts = { month: "short", day: "numeric", year: "numeric" };
+    const timeOpts = { hour: "numeric", minute: "2-digit", hour12: state.timeFormat !== "24h" };
+    const dateStr = startD.toLocaleDateString(undefined, dateOpts);
+    const startTime = startD.toLocaleTimeString(undefined, timeOpts);
+    if (end) {
+      const endD = new Date(end);
+      if (!isNaN(endD.getTime())) {
+        const endTime = endD.toLocaleTimeString(undefined, timeOpts);
+        return `${dateStr} · ${startTime}–${endTime}`;
+      }
+    }
+    return `${dateStr} · ${startTime}`;
+  } catch {
+    return start;
+  }
+}
+
+function setKexpEpisodeStatus(episodeUrl, text, isError = false) {
+  if (!kexpEpisodesResult) return;
+  const key = encodeURIComponent(String(episodeUrl || ""));
+  const el = kexpEpisodesResult.querySelector(`[data-kexp-episode-status="${key}"]`);
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "block" : "none";
+  el.className = `item-meta episode-status ${isError ? "error" : ""}`;
+}
+
+// KEXP only keeps ~2 weeks of archive recordings via get_streaming_url
+const KEXP_ARCHIVE_DAYS = 14;
+
+function kexpArchiveAvailable(publishedTime) {
+  if (!publishedTime) return false;
+  const d = new Date(publishedTime);
+  if (isNaN(d.getTime())) return false;
+  return (Date.now() - d.getTime()) < KEXP_ARCHIVE_DAYS * 24 * 60 * 60 * 1000;
+}
+
+function renderKexpEpisodes(payload) {
+  if (!kexpEpisodesResult) return;
+  const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
+  if (!rows.length) {
+    kexpEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
+    return;
+  }
+  const programTitle = String(payload?.title || "KEXP").trim();
+  kexpEpisodesResult.innerHTML = rows.map((episode) => {
+    const episodeUrl = String(episode.episodeUrl || "").trim();
+    const statusKey = encodeURIComponent(episodeUrl);
+    const published = String(episode.publishedTime || "").trim();
+    const fullTitle = String(episode.fullTitle || episode.title || "").trim();
+    const hosts = String(episode.hosts || "").trim();
+    const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+    const genresHtml = (episode.genres && episode.genres.length)
+      ? `<div class="genre-pills">${episode.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+      : "";
+    const timeWindow = formatKexpEpisodeWindow(published, episode.endTime);
+    const hasArchive = kexpArchiveAvailable(published);
+    const unavailableAttr = !hasArchive ? ` class="item kexp-unavailable" title="Archive window has passed — audio may be unavailable"` : ` class="item"`;
+    return `
+      <div${unavailableAttr}>
+        ${img}
+        <div class="item-title">${escapeHtml(fullTitle)}</div>
+        ${hosts ? `<div class="item-meta muted">DJ: ${escapeHtml(hosts)}</div>` : ""}
+        <div class="item-meta">${escapeHtml(timeWindow)}</div>
+        ${genresHtml}
+        <div class="item-actions">
+          <button class="secondary" data-kexp-play-url="${escapeHtml(episodeUrl)}" data-kexp-play-title="${escapeHtml(fullTitle)}" data-kexp-play-program-title="${escapeHtml(programTitle)}" data-kexp-play-image="${escapeHtml(episode.image || "")}" data-kexp-play-published="${escapeHtml(published)}">Play</button>
+          <button class="secondary" data-kexp-play-local-url="${escapeHtml(episodeUrl)}" data-kexp-play-local-title="${escapeHtml(fullTitle)}" data-kexp-play-local-program-title="${escapeHtml(programTitle)}" data-kexp-play-local-image="${escapeHtml(episode.image || "")}">Play Local</button>
+          <button data-kexp-download-url="${escapeHtml(episodeUrl)}" data-kexp-episode-title="${escapeHtml(fullTitle)}" data-kexp-program-title="${escapeHtml(programTitle)}" data-kexp-published="${escapeHtml(published)}" data-kexp-image="${escapeHtml(episode.image || "")}">Download</button>
+          <button class="secondary" data-kexp-generate-cue-url="${escapeHtml(episodeUrl)}" data-kexp-generate-cue-title="${escapeHtml(fullTitle)}" data-kexp-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
+        </div>
+        <div class="item-meta episode-status" data-kexp-episode-status="${statusKey}" style="display:none;"></div>
+        <div class="cue-debug-log" data-kexp-episode-cue-debug="${statusKey}" style="display:none;"></div>
+        <div class="episode-inline-playlist" data-kexp-episode-playlist="${statusKey}">
+          <div class="playlist-note">Loading tracklist...</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+  autoLoadKexpPlaylists(rows).catch(() => {});
+}
+
+async function autoLoadKexpPlaylists(episodes) {
+  if (!window.rteDownloader?.getKexpEpisodeTracklist) return;
+  const queue = (episodes || []).filter((e) => e.episodeUrl);
+  const concurrency = 3;
+  let index = 0;
+
+  async function worker() {
+    while (index < queue.length) {
+      const ep = queue[index];
+      index += 1;
+      const statusKey = encodeURIComponent(String(ep.episodeUrl || ""));
+      const node = kexpEpisodesResult?.querySelector(`[data-kexp-episode-playlist="${statusKey}"]`);
+      if (!node) continue;
+      try {
+        const data = await window.rteDownloader.getKexpEpisodeTracklist(ep.episodeUrl);
+        const tracks = Array.isArray(data) ? data : (data?.tracks || []);
+        if (tracks.length) {
+          node.innerHTML = renderPlaylistTracks(tracks);
+        } else {
+          node.innerHTML = `<div class="playlist-note">No tracks logged for this show.</div>`;
+        }
+      } catch {
+        node.innerHTML = `<div class="playlist-note">Tracklist unavailable.</div>`;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()));
+}
+
+function renderKexpShowCard(r, { showScheduleBtn = false } = {}) {
+  const genresHtml = (r.genres && r.genres.length)
+    ? `<div class="genre-pills">${r.genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>`
+    : "";
+  const cadenceLabel = r.cadence && r.cadence !== "irregular" ? r.cadence.charAt(0).toUpperCase() + r.cadence.slice(1) : "";
+  const desc = (r.description || "").trim();
+  const location = (r.location || "").trim();
+  const schedBtn = showScheduleBtn
+    ? `<button class="secondary kexp-quick-schedule-btn" data-kexp-schedule-url="${escapeHtml(r.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
+    : "";
+  return `
+  <div class="item clickable" data-kexp-program-url="${escapeHtml(r.programUrl)}">
+    <div class="search-card">
+      <div>${r.image ? `<img src="${escapeHtml(r.image)}" alt="" class="episode-thumb" loading="lazy" />` : `<img alt="" class="episode-thumb" loading="lazy" />`}</div>
+      <div>
+        <div class="item-title">${escapeHtml(r.title || "Show")}</div>
+        ${cadenceLabel ? `<div class="item-meta"><strong>${escapeHtml(cadenceLabel)}</strong></div>` : ""}
+        ${r.airtime || r.timeSlot ? `<div class="item-meta">🕐 ${escapeHtml(r.airtime || r.timeSlot)}</div>` : ""}
+        ${location ? `<div class="item-meta">📍 ${escapeHtml(location)}</div>` : ""}
+        ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "…" : ""}</div>` : ""}
+        ${genresHtml}
+        ${schedBtn}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── KEXP Extended Archive rendering ──────────────────────────────────────────
+
+function renderKexpExtEpisodes(payload, programTitle) {
+  if (!kexpExtEpisodesResult) return;
+  const rows = Array.isArray(payload?.episodes) ? payload.episodes : [];
+  if (!rows.length) {
+    kexpExtEpisodesResult.innerHTML = `<div class="item">No episodes found.</div>`;
+    return;
+  }
+  const pTitle = String(programTitle || payload?.title || "KEXP Extended").trim();
+  kexpExtEpisodesResult.innerHTML = rows.map((episode) => {
+    const episodeUrl = String(episode.episodeUrl || "").trim();
+    const statusKey = encodeURIComponent(episodeUrl);
+    const published = String(episode.publishedTime || "").trim();
+    const fullTitle = String(episode.fullTitle || episode.title || "").trim();
+    const hosts = String(episode.hosts || "").trim();
+    const durationSec = Number(episode.duration || 0);
+    const durationStr = durationSec > 0 ? formatDurationFromSeconds(durationSec) : "";
+    const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
+    const timeStr = published ? new Date(published).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" }) : "";
+    return `
+      <div class="item">
+        ${img}
+        <div class="item-title">${escapeHtml(fullTitle || pTitle)}</div>
+        ${hosts ? `<div class="item-meta muted">DJ: ${escapeHtml(hosts)}</div>` : ""}
+        ${timeStr ? `<div class="item-meta">${escapeHtml(timeStr)}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}</div>` : ""}
+        <div class="item-actions">
+          <button class="secondary" data-kexp-ext-play-url="${escapeHtml(episodeUrl)}" data-kexp-ext-play-title="${escapeHtml(fullTitle)}" data-kexp-ext-play-program-title="${escapeHtml(pTitle)}" data-kexp-ext-play-image="${escapeHtml(episode.image || "")}">Play</button>
+          <button class="secondary" data-kexp-ext-play-local-url="${escapeHtml(episodeUrl)}" data-kexp-ext-play-local-title="${escapeHtml(fullTitle)}" data-kexp-ext-play-local-program-title="${escapeHtml(pTitle)}" data-kexp-ext-play-local-image="${escapeHtml(episode.image || "")}">Play Local</button>
+          <button data-kexp-ext-download-url="${escapeHtml(episodeUrl)}" data-kexp-ext-episode-title="${escapeHtml(fullTitle)}" data-kexp-ext-program-title="${escapeHtml(pTitle)}" data-kexp-ext-published="${escapeHtml(published)}" data-kexp-ext-image="${escapeHtml(episode.image || "")}">Download</button>
+          <button class="secondary" data-kexp-ext-generate-cue-url="${escapeHtml(episodeUrl)}" data-kexp-ext-generate-cue-title="${escapeHtml(fullTitle)}" data-kexp-ext-generate-cue-program-title="${escapeHtml(pTitle)}">Generate CUE</button>
+        </div>
+        <div class="item-meta episode-status" data-kexp-ext-episode-status="${statusKey}" style="display:none;"></div>
+        <div class="cue-debug-log" data-kexp-ext-episode-cue-debug="${statusKey}" style="display:none;"></div>
+        <div class="episode-inline-playlist" data-kexp-ext-episode-playlist="${statusKey}">
+          <div class="playlist-note">Loading tracklist...</div>
+        </div>
+      </div>`;
+  }).join("");
+  autoLoadKexpExtPlaylists(rows).catch(() => {});
+}
+
+async function autoLoadKexpExtPlaylists(episodes) {
+  if (!window.rteDownloader?.getKexpExtendedEpisodeTracklist) return;
+  const queue = (episodes || []).filter((e) => e.episodeUrl);
+  const concurrency = 2;
+  let index = 0;
+  async function worker() {
+    while (index < queue.length) {
+      const ep = queue[index++];
+      const statusKey = encodeURIComponent(String(ep.episodeUrl || ""));
+      const node = kexpExtEpisodesResult?.querySelector(`[data-kexp-ext-episode-playlist="${statusKey}"]`);
+      if (!node) continue;
+      try {
+        const data = await window.rteDownloader.getKexpExtendedEpisodeTracklist(ep.episodeUrl);
+        const tracks = Array.isArray(data) ? data : (data?.tracks || []);
+        node.innerHTML = tracks.length ? renderPlaylistTracks(tracks) : `<div class="playlist-note">No tracks logged.</div>`;
+      } catch {
+        node.innerHTML = `<div class="playlist-note">Tracklist unavailable.</div>`;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()));
+}
+
+async function loadKexpExtendedProgram(programUrl, page = 1) {
+  if (!window.rteDownloader?.getKexpExtendedProgramEpisodes) return;
+  const pageNum = Math.max(1, Number(page) || 1);
+  const perPage = getEpisodesPerPage();
+
+  if (kexpExtProgramMeta) {
+    kexpExtProgramMeta.style.display = "block";
+    kexpExtProgramMeta.textContent = "Loading…";
+  }
+  if (kexpExtEpisodesResult) kexpExtEpisodesResult.innerHTML = "";
+
+  let summary = null;
+  try { summary = await window.rteDownloader.getKexpExtendedProgramSummary(programUrl); } catch {}
+
+  const payload = await window.rteDownloader.getKexpExtendedProgramEpisodes(programUrl, pageNum);
+  const total = Number(payload?.total || 0);
+  const totalPages = total ? Math.max(1, Math.ceil(total / perPage)) : (payload?.hasMore ? pageNum + 1 : pageNum);
+  const clampedPage = Math.max(1, Math.min(totalPages, pageNum));
+
+  state.kexpExtProgramUrl = programUrl;
+  state.kexpExtProgramPage = clampedPage;
+  state.kexpExtProgramMaxPages = totalPages;
+
+  const title = summary?.title || "KEXP Extended Show";
+  const desc = (summary?.description || "").trim();
+  const img = (summary?.image || "").trim();
+  const genres = summary?.genres || [];
+  const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+
+  if (kexpExtProgramMeta) {
+    kexpExtProgramMeta.style.display = "block";
+    kexpExtProgramMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:120px;margin-bottom:0.4rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(title)}</strong><br>
+      ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 250))}${desc.length > 250 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
+      <span class="muted">Page ${clampedPage} of ${totalPages}${total ? ` — ${total} episodes` : ""}</span>
+    `;
+  }
+  if (kexpExtPaginationRow) kexpExtPaginationRow.style.display = "flex";
+
+  // Client-side slice for perPage
+  if (payload.episodes) {
+    const offset = ((clampedPage - 1) * perPage) % perPage; // server returns per-page already
+    payload.episodes = payload.episodes.slice(0, perPage);
+  }
+  renderKexpExtEpisodes(payload, title);
+}
+
+async function loadKexpProgram(programUrl, page = 1) {
+  if (!window.rteDownloader?.getKexpProgramEpisodes) return;
+  const perPage = getEpisodesPerPage();
+  const serverPage = Math.max(1, Math.ceil((((Number(page) || 1) - 1) * perPage + 1) / 20));
+  const payload = await window.rteDownloader.getKexpProgramEpisodes(programUrl, serverPage);
+  const totalItems = Number(payload?.total || 0);
+  const totalPages = totalItems ? Math.max(1, Math.ceil(totalItems / perPage)) : (payload?.hasMore ? (Number(page) || 1) + 1 : Number(page) || 1);
+  const targetPage = Math.max(1, Math.min(totalPages, Number(page) || 1));
+  const clientOffset = ((targetPage - 1) * perPage) % 20;
+  if (payload.episodes) payload.episodes = payload.episodes.slice(clientOffset, clientOffset + perPage);
+  state.kexpProgramUrl = programUrl;
+  state.kexpProgramPage = targetPage;
+  state.kexpProgramMaxPages = totalPages;
+  state.kexpEpisodesPayload = payload;
+  if (kexpProgramUrlInput) kexpProgramUrlInput.value = programUrl;
+  if (kexpProgramMeta) {
+    // Try to get summary for display
+    let summary = null;
+    try { summary = await window.rteDownloader.getKexpProgramSummary(programUrl); } catch {}
+    const title = summary?.title || "KEXP Program";
+    const desc = (summary?.description || "").trim();
+    const img = (summary?.image || "").trim();
+    const genres = summary?.genres || [];
+    const genresHtml = genres.length ? `<div class="genre-pills">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    const cadence = String(summary?.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const location = String(summary?.location || "").trim();
+    kexpProgramMeta.innerHTML = `
+      ${img ? `<img src="${escapeHtml(img)}" alt="" class="episode-thumb" style="max-width:160px;margin-bottom:0.5rem;" loading="lazy" /><br>` : ""}
+      <strong>${escapeHtml(title)}</strong>${cadenceBadge}<br>
+      ${location ? `<span class="muted">${escapeHtml(location)}</span><br>` : ""}
+      ${desc ? `<span class="muted">${escapeHtml(desc.slice(0, 300))}${desc.length > 300 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
+      Page ${state.kexpProgramPage} of ${state.kexpProgramMaxPages}${totalItems ? ` — ${totalItems} shows` : ""}
+    `;
+    payload.title = title;
+  }
+  renderKexpEpisodes(payload);
+}
+
+async function renderKexpScheduleList() {
+  if (!kexpScheduleList || !window.rteDownloader?.listKexpSchedules) return;
+  const schedules = await window.rteDownloader.listKexpSchedules();
+  if (!schedules.length) {
+    kexpScheduleList.innerHTML = `<div class="item">No KEXP schedules yet.</div>`;
+    return;
+  }
+  kexpScheduleList.innerHTML = schedules.map((s) => renderSchedulerCard(s, "kexp")).join("");
 }
 
 async function loadSettings() {
@@ -3248,7 +3801,25 @@ programSearchResult.addEventListener("click", (event) => {
   }
 });
 
-bbcProgramSearchResult.addEventListener("click", (event) => {
+bbcProgramSearchResult.addEventListener("click", async (event) => {
+  const schedBtn = event.target.closest(".bbc-quick-schedule-btn");
+  if (schedBtn) {
+    event.stopPropagation();
+    const url = schedBtn.getAttribute("data-bbc-schedule-url") || "";
+    if (!url || !window.rteDownloader?.addBbcSchedule) return;
+    schedBtn.textContent = "Adding…";
+    schedBtn.disabled = true;
+    try {
+      await window.rteDownloader.addBbcSchedule(url, { backfillCount: 1 });
+      schedBtn.textContent = "✓ Scheduled";
+      await refreshBbcSchedules();
+    } catch {
+      schedBtn.textContent = "Error";
+      schedBtn.disabled = false;
+    }
+    return;
+  }
+
   const item = event.target.closest(".item[data-load-bbc-program-url]");
   if (!item) {
     return;
@@ -3387,13 +3958,21 @@ bbcPrevPageBtn.addEventListener("click", () => {
   state.bbcProgramPage -= 1;
   renderBbcEpisodes(state.bbcEpisodesPayload || { episodes: [] });
   const totalRows = Number(state.bbcEpisodesPayload?.episodes?.length || 0);
-  bbcProgramMeta.innerHTML = `
-    <strong>${escapeHtml(state.bbcEpisodesPayload?.title || "BBC Program")}</strong><br>
-    ${escapeHtml(state.bbcEpisodesPayload?.description || "")}<br>
-    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(toLocalSchedule(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
-    ${state.bbcEpisodesPayload?.nextBroadcastAt ? `Next show: ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastAt)}${state.bbcEpisodesPayload?.nextBroadcastTitle ? ` - ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastTitle)}` : ""}<br>` : ""}
-    Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
-  `;
+  {
+    const p = state.bbcEpisodesPayload || {};
+    const cadence = String(p.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" && cadence !== "unknown" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const genres = Array.isArray(p.genres) ? p.genres : [];
+    const genresHtml = genres.length ? `<div class="genre-pills" style="margin-top:0.3rem;">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    bbcProgramMeta.innerHTML = `
+      <strong>${escapeHtml(p.title || "BBC Program")}</strong>${cadenceBadge}<br>
+      ${p.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(p.runSchedule))}</span><br>` : ""}
+      ${p.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(p.nextBroadcastAt))}${p.nextBroadcastTitle ? ` — ${escapeHtml(p.nextBroadcastTitle)}` : ""}<br>` : ""}
+      ${p.description ? `<span class="muted">${escapeHtml(String(p.description).slice(0, 300))}${String(p.description).length > 300 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
+      Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
+    `;
+  }
 });
 
 bbcNextPageBtn.addEventListener("click", () => {
@@ -3408,13 +3987,21 @@ bbcNextPageBtn.addEventListener("click", () => {
   state.bbcProgramPage += 1;
   renderBbcEpisodes(state.bbcEpisodesPayload || { episodes: [] });
   const totalRows = Number(state.bbcEpisodesPayload?.episodes?.length || 0);
-  bbcProgramMeta.innerHTML = `
-    <strong>${escapeHtml(state.bbcEpisodesPayload?.title || "BBC Program")}</strong><br>
-    ${escapeHtml(state.bbcEpisodesPayload?.description || "")}<br>
-    ${state.bbcEpisodesPayload?.runSchedule ? `${escapeHtml(toLocalSchedule(state.bbcEpisodesPayload.runSchedule))}<br>` : ""}
-    ${state.bbcEpisodesPayload?.nextBroadcastAt ? `Next show: ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastAt)}${state.bbcEpisodesPayload?.nextBroadcastTitle ? ` - ${escapeHtml(state.bbcEpisodesPayload.nextBroadcastTitle)}` : ""}<br>` : ""}
-    Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
-  `;
+  {
+    const p = state.bbcEpisodesPayload || {};
+    const cadence = String(p.cadence || "").trim();
+    const cadenceBadge = cadence && cadence !== "irregular" && cadence !== "unknown" ? ` <span class="genre-pill">${escapeHtml(cadence)}</span>` : "";
+    const genres = Array.isArray(p.genres) ? p.genres : [];
+    const genresHtml = genres.length ? `<div class="genre-pills" style="margin-top:0.3rem;">${genres.map((g) => `<span class="genre-pill">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+    bbcProgramMeta.innerHTML = `
+      <strong>${escapeHtml(p.title || "BBC Program")}</strong>${cadenceBadge}<br>
+      ${p.runSchedule ? `<span class="muted">🕐 ${escapeHtml(toLocalSchedule(p.runSchedule))}</span><br>` : ""}
+      ${p.nextBroadcastAt ? `Next: ${escapeHtml(localizeNextBroadcast(p.nextBroadcastAt))}${p.nextBroadcastTitle ? ` — ${escapeHtml(p.nextBroadcastTitle)}` : ""}<br>` : ""}
+      ${p.description ? `<span class="muted">${escapeHtml(String(p.description).slice(0, 300))}${String(p.description).length > 300 ? "…" : ""}</span><br>` : ""}
+      ${genresHtml}
+      Page ${state.bbcProgramPage} of ${state.bbcProgramMaxPages} - ${totalRows} episodes
+    `;
+  }
 });
 
 tabRteBtn.addEventListener("click", () => {
@@ -3432,6 +4019,9 @@ if (tabNtsBtn) {
 }
 if (tabFipBtn) {
   tabFipBtn.addEventListener("click", () => setActiveTab("fip"));
+}
+if (tabKexpBtn) {
+  tabKexpBtn.addEventListener("click", () => setActiveTab("kexp"));
 }
 if (tabSchedulesBtn) {
   tabSchedulesBtn.addEventListener("click", () => setActiveTab("schedules"));
@@ -4384,6 +4974,7 @@ if (wwfEpisodesResult) {
           setWwfEpisodeStatus(playUrl, "No stream URL. Download the episode, then use Play Local.", true);
           return;
         }
+        setWwfEpisodeStatus(playUrl, "Buffering Mixcloud stream — audio will start in ~5–10s...");
         await playEpisodeWithBackgroundCue({
           sourceType: "wwf",
           cacheKey: playUrl,
@@ -4398,7 +4989,7 @@ if (wwfEpisodesResult) {
           playbackKey: `wwf:remote:${playUrl}`,
           statusUpdater: (text, isError = false) => setWwfEpisodeStatus(playUrl, text, isError)
         });
-        setWwfEpisodeStatus(playUrl, "Playing. If no sound, press Play in the bar below or use Play Local.");
+        setWwfEpisodeStatus(playUrl, "Buffering — audio will start shortly. If silent after 10s, try Play Local.");
       } catch (error) {
         setWwfEpisodeStatus(playUrl, `Play failed: ${error.message}. Try Download then Play Local.`, true);
       } finally {
@@ -4420,12 +5011,57 @@ if (wwfEpisodesResult) {
       try {
         const data = await window.rteDownloader.downloadFromWwfUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image });
         state.wwfDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
-        setWwfEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+        if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
+          state.wwfChaptersByEpisode[String(episodeUrl || "")] = data.cue.chapters;
+        }
+        const cueText = data?.cue?.cuePath ? ` + CUE ready${formatCueSource(data.cue)}${formatCueAlignment(data.cue)}` : "";
+        setWwfEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}${cueText}`);
       } catch (error) {
         setWwfEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
       } finally {
         detach();
         setButtonBusy(downloadBtn, false, "Download");
+      }
+      return;
+    }
+
+    const cueBtn = event.target.closest("button[data-wwf-generate-cue-url]");
+    if (cueBtn) {
+      const episodeUrl = cueBtn.getAttribute("data-wwf-generate-cue-url") || "";
+      const title = cueBtn.getAttribute("data-wwf-generate-cue-title") || "wwf-episode";
+      const programTitle = cueBtn.getAttribute("data-wwf-generate-cue-program-title") || "Worldwide FM";
+      const saved = state.wwfDownloadedAudioByEpisode[episodeUrl];
+      if (!saved) {
+        setWwfEpisodeStatus(episodeUrl, "Download episode first, then generate CUE.", true);
+        return;
+      }
+      setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+      setWwfEpisodeStatus(episodeUrl, "Generating CUE/chapters...");
+      clearCueDebugLog("wwf", episodeUrl);
+      const cueProgressToken = createProgressToken(`wwf-cue-${Date.now()}`);
+      const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+        if (progress?.kind === "cue" && progress?.message) {
+          appendCueDebugLog("wwf", episodeUrl, progress.message);
+        }
+        setWwfEpisodeStatus(episodeUrl, formatProgressText(progress, "Generating CUE/chapters..."));
+      });
+      try {
+        const cue = await window.rteDownloader.generateCue({
+          sourceType: "wwf",
+          episodeUrl,
+          title,
+          programTitle,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          progressToken: cueProgressToken
+        });
+        state.wwfChaptersByEpisode[String(episodeUrl || "")] = cue.chapters || [];
+        setWwfEpisodeStatus(episodeUrl, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
+      } catch (error) {
+        setWwfEpisodeStatus(episodeUrl, `CUE failed: ${error.message}`, true);
+      } finally {
+        detachCueProgress();
+        setButtonBusy(cueBtn, false, "Generate CUE");
       }
     }
   });
@@ -4679,7 +5315,7 @@ if (fipAddScheduleBtn) {
     const programUrl = fipProgramUrlInput ? fipProgramUrlInput.value.trim() : "";
     if (!programUrl || !window.rteDownloader?.addFipSchedule) return;
     const backfillMode = fipScheduleBackfillMode ? fipScheduleBackfillMode.value : "new-only";
-    const backfillCount = backfillMode === "latest-n"
+    const backfillCount = backfillMode === "backfill"
       ? Math.max(1, Math.min(100, Number(fipScheduleBackfillCount?.value || 5)))
       : 0;
     setButtonBusy(fipAddScheduleBtn, true, "Add Scheduler", "Adding...");
@@ -4724,14 +5360,14 @@ if (fipDiscoverBtn && fipDiscoveryResult) {
       schedBtn.textContent = "Adding…";
       schedBtn.disabled = true;
       try {
-        const backfillMode = fipScheduleBackfillMode ? fipScheduleBackfillMode.value : "latest-n";
-        const backfillCount = backfillMode === "latest-n"
+        const backfillMode = fipScheduleBackfillMode ? fipScheduleBackfillMode.value : "new-only";
+        const backfillCount = backfillMode === "backfill"
           ? Math.max(1, Math.min(100, Number(fipScheduleBackfillCount?.value || 5)))
           : 0;
         await window.rteDownloader.addFipSchedule(url, { backfillCount });
         schedBtn.textContent = "✓ Scheduled";
         await renderFipScheduleList();
-      } catch (err) {
+      } catch (_) {
         schedBtn.textContent = "Error";
         schedBtn.disabled = false;
       }
@@ -4944,6 +5580,40 @@ if (fipEpisodesResult) {
       return;
     }
 
+    const playLocalBtn = event.target.closest("button[data-fip-play-local-url]");
+    if (playLocalBtn) {
+      const episodeUrl = playLocalBtn.getAttribute("data-fip-play-local-url") || "";
+      const playTitle = playLocalBtn.getAttribute("data-fip-play-local-title") || "";
+      const playProgramTitle = playLocalBtn.getAttribute("data-fip-play-local-program-title") || "FIP";
+      const playImage = playLocalBtn.getAttribute("data-fip-play-local-image") || "";
+      const saved = state.fipDownloadedAudioByEpisode[episodeUrl];
+      if (!saved?.outputDir || !saved?.fileName) {
+        setFipEpisodeStatus(episodeUrl, "Download this episode first, then use Play Local.", true);
+        return;
+      }
+      setButtonBusy(playLocalBtn, true, "Play Local", "Loading...");
+      try {
+        await playEpisodeWithBackgroundCue({
+          sourceType: "fip",
+          cacheKey: episodeUrl,
+          sourceLabel: "FIP Local",
+          title: playTitle || saved.fileName,
+          programTitle: playProgramTitle || saved.programTitle || "",
+          image: playImage,
+          episodeUrl,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          playbackKey: `fip:local:${episodeUrl}`,
+          statusUpdater: (text, isError = false) => setFipEpisodeStatus(episodeUrl, text, isError)
+        });
+      } catch (error) {
+        setFipEpisodeStatus(episodeUrl, `Play Local failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playLocalBtn, false, "Play Local");
+      }
+      return;
+    }
+
     const downloadBtn = event.target.closest("button[data-fip-download-url]");
     if (downloadBtn) {
       const episodeUrl = downloadBtn.getAttribute("data-fip-download-url") || "";
@@ -4958,12 +5628,57 @@ if (fipEpisodesResult) {
       try {
         const data = await window.rteDownloader.downloadFromFipUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image });
         state.fipDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
-        setFipEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+        if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
+          setFipEpisodeChapters(episodeUrl, data.cue.chapters);
+        }
+        const cueText = data?.cue?.cuePath ? ` + CUE ready${formatCueSource(data.cue)}${formatCueAlignment(data.cue)}` : "";
+        setFipEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}${cueText}`);
       } catch (error) {
         setFipEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
       } finally {
         detach();
         setButtonBusy(downloadBtn, false, "Download");
+      }
+      return;
+    }
+
+    const cueBtn = event.target.closest("button[data-fip-generate-cue-url]");
+    if (cueBtn) {
+      const episodeUrl = cueBtn.getAttribute("data-fip-generate-cue-url") || "";
+      const title = cueBtn.getAttribute("data-fip-generate-cue-title") || "fip-episode";
+      const programTitle = cueBtn.getAttribute("data-fip-generate-cue-program-title") || "FIP";
+      const saved = state.fipDownloadedAudioByEpisode[episodeUrl];
+      if (!saved) {
+        setFipEpisodeStatus(episodeUrl, "Download episode first, then generate CUE.", true);
+        return;
+      }
+      setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+      setFipEpisodeStatus(episodeUrl, "Generating CUE/chapters...");
+      clearCueDebugLog("fip", episodeUrl);
+      const cueProgressToken = createProgressToken(`fip-cue-${Date.now()}`);
+      const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+        if (progress?.kind === "cue" && progress?.message) {
+          appendCueDebugLog("fip", episodeUrl, progress.message);
+        }
+        setFipEpisodeStatus(episodeUrl, formatProgressText(progress, "Generating CUE/chapters..."));
+      });
+      try {
+        const cue = await window.rteDownloader.generateCue({
+          sourceType: "fip",
+          episodeUrl,
+          title,
+          programTitle,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          progressToken: cueProgressToken
+        });
+        setFipEpisodeChapters(episodeUrl, cue.chapters || []);
+        setFipEpisodeStatus(episodeUrl, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
+      } catch (error) {
+        setFipEpisodeStatus(episodeUrl, `CUE failed: ${error.message}`, true);
+      } finally {
+        detachCueProgress();
+        setButtonBusy(cueBtn, false, "Generate CUE");
       }
     }
   });
@@ -5020,6 +5735,585 @@ if (fipScheduleList) {
   });
 }
 
+// ── KEXP event listeners ──────────────────────────────────────────────────────
+
+
+
+if (kexpLiveNow) {
+  kexpLiveNow.addEventListener("click", (event) => {
+    const overlayBtn = event.target.closest(".live-overlay-btn");
+    if (overlayBtn && kexpLiveAudio) {
+      if (!kexpLiveAudio.src) kexpLiveAudio.src = KEXP_STREAM_URL;
+      kexpLiveAudio.play().catch(() => {});
+      if (kexpLiveAudioWrap) {
+        kexpLiveAudioWrap.classList.remove("nts-live-audio-hidden");
+        kexpLiveAudioWrap.classList.add("nts-live-audio-at-bottom");
+      }
+      overlayBtn.classList.add("hidden");
+    }
+  });
+}
+
+if (kexpDownloadBtn && kexpUrlInput) {
+  kexpDownloadBtn.addEventListener("click", async () => {
+    const pageUrl = kexpUrlInput.value.trim();
+    if (!pageUrl) {
+      if (kexpResult) kexpResult.textContent = "Enter a show URL.";
+      return;
+    }
+    const progressToken = createProgressToken("kexp-quick");
+    const detach = attachDownloadProgress(progressToken, (p) => {
+      if (kexpResult) kexpResult.textContent = formatProgressText(p, "Downloading...");
+    });
+    setButtonBusy(kexpDownloadBtn, true, "Download", "Downloading...");
+    if (kexpResult) kexpResult.textContent = "Starting...";
+    try {
+      const data = await window.rteDownloader.downloadFromKexpUrl(pageUrl, progressToken, { forceDownload: false });
+      if (kexpResult) kexpResult.textContent = `Saved: ${data.outputDir}\\${data.fileName}`;
+    } catch (error) {
+      if (kexpResult) kexpResult.textContent = error.message;
+    } finally {
+      detach();
+      setButtonBusy(kexpDownloadBtn, false, "Download");
+    }
+  });
+}
+
+if (kexpProgramSearchBtn) {
+  kexpProgramSearchBtn.addEventListener("click", async () => {
+    const q = kexpProgramSearchInput ? kexpProgramSearchInput.value.trim() : "";
+    if (!window.rteDownloader?.searchKexpPrograms || !kexpProgramSearchResult) return;
+    kexpProgramSearchResult.innerHTML = `<div class="item muted">Searching…</div>`;
+    kexpProgramSearchResult.classList.remove("hidden");
+    try {
+      const results = await window.rteDownloader.searchKexpPrograms(q);
+      const rows = Array.isArray(results?.results) ? results.results : Array.isArray(results) ? results : [];
+      if (!rows.length) {
+        kexpProgramSearchResult.innerHTML = `<div class="item muted">No results found.</div>`;
+        return;
+      }
+      kexpProgramSearchResult.innerHTML = rows.map((r) => renderKexpShowCard(r)).join("");
+    } catch (err) {
+      kexpProgramSearchResult.innerHTML = `<div class="item muted error">Search failed: ${escapeHtml(err.message)}</div>`;
+    }
+  });
+}
+
+if (kexpProgramSearchInput) {
+  kexpProgramSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); kexpProgramSearchBtn?.click(); }
+  });
+  kexpProgramSearchInput.addEventListener("input", () => {
+    clearTimeout(kexpSearchDebounceTimer);
+    kexpSearchDebounceTimer = setTimeout(() => kexpProgramSearchBtn?.click(), 400);
+  });
+}
+
+if (kexpProgramSearchResult) {
+  kexpProgramSearchResult.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-kexp-program-url]");
+    if (!item) return;
+    const url = item.getAttribute("data-kexp-program-url") || "";
+    if (url && kexpProgramUrlInput) kexpProgramUrlInput.value = url;
+    kexpProgramSearchResult.classList.add("hidden");
+    if (url) {
+      setButtonBusy(kexpLoadProgramBtn, true, "Load Shows");
+      loadKexpProgram(url, 1)
+        .catch(() => { if (kexpProgramMeta) kexpProgramMeta.textContent = "Error loading program."; })
+        .finally(() => setButtonBusy(kexpLoadProgramBtn, false, "Load Shows"));
+    }
+  });
+}
+
+if (kexpLoadProgramBtn) {
+  kexpLoadProgramBtn.addEventListener("click", () => {
+    const url = kexpProgramUrlInput ? kexpProgramUrlInput.value.trim() : "";
+    if (!url) return;
+    setButtonBusy(kexpLoadProgramBtn, true, "Load Shows");
+    loadKexpProgram(url, 1)
+      .catch(() => { if (kexpProgramMeta) kexpProgramMeta.textContent = "Error loading program."; })
+      .finally(() => setButtonBusy(kexpLoadProgramBtn, false, "Load Shows"));
+  });
+}
+
+if (kexpPrevPageBtn) {
+  kexpPrevPageBtn.addEventListener("click", () => {
+    if (state.kexpProgramPage <= 1 || !state.kexpProgramUrl) return;
+    loadKexpProgram(state.kexpProgramUrl, state.kexpProgramPage - 1).catch(() => {});
+  });
+}
+
+if (kexpNextPageBtn) {
+  kexpNextPageBtn.addEventListener("click", () => {
+    if (state.kexpProgramPage >= state.kexpProgramMaxPages || !state.kexpProgramUrl) return;
+    loadKexpProgram(state.kexpProgramUrl, state.kexpProgramPage + 1).catch(() => {});
+  });
+}
+
+if (kexpAddScheduleBtn) {
+  kexpAddScheduleBtn.addEventListener("click", async () => {
+    const programUrl = kexpProgramUrlInput ? kexpProgramUrlInput.value.trim() : "";
+    if (!programUrl || !window.rteDownloader?.addKexpSchedule) return;
+    const backfillMode = kexpScheduleBackfillMode ? kexpScheduleBackfillMode.value : "new-only";
+    const backfillCount = backfillMode === "backfill"
+      ? Math.max(1, Math.min(100, Number(kexpScheduleBackfillCount?.value || 5)))
+      : 0;
+    setButtonBusy(kexpAddScheduleBtn, true, "Add Scheduler", "Adding...");
+    try {
+      await window.rteDownloader.addKexpSchedule(programUrl, { backfillCount });
+      await renderKexpScheduleList();
+    } catch (err) {
+      if (kexpProgramMeta) kexpProgramMeta.textContent = `Scheduler error: ${err.message}`;
+    } finally {
+      setButtonBusy(kexpAddScheduleBtn, false, "Add Scheduler");
+    }
+  });
+}
+
+if (kexpDiscoverBtn && kexpDiscoveryResult) {
+  kexpDiscoverBtn.addEventListener("click", async () => {
+    if (!window.rteDownloader?.getKexpDiscovery) return;
+    setButtonBusy(kexpDiscoverBtn, true, "Discover Shows", "Loading...");
+    kexpDiscoveryResult.innerHTML = `<div class="item muted">Fetching random shows…</div>`;
+    try {
+      const results = await window.rteDownloader.getKexpDiscovery(getDiscoveryCount());
+      const rows = Array.isArray(results) ? results : [];
+      if (!rows.length) {
+        kexpDiscoveryResult.innerHTML = `<div class="item muted">No shows found.</div>`;
+        return;
+      }
+      kexpDiscoveryResult.innerHTML = rows.map((r) => renderKexpShowCard(r, { showScheduleBtn: true })).join("");
+    } catch (err) {
+      kexpDiscoveryResult.innerHTML = `<div class="item muted error">Discovery failed: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      setButtonBusy(kexpDiscoverBtn, false, "Discover Shows");
+    }
+  });
+
+  kexpDiscoveryResult.addEventListener("click", async (event) => {
+    const schedBtn = event.target.closest(".kexp-quick-schedule-btn");
+    if (schedBtn) {
+      event.stopPropagation();
+      const url = schedBtn.getAttribute("data-kexp-schedule-url") || "";
+      if (!url || !window.rteDownloader?.addKexpSchedule) return;
+      schedBtn.textContent = "Adding…";
+      schedBtn.disabled = true;
+      try {
+        await window.rteDownloader.addKexpSchedule(url, { backfillCount: 1 });
+        schedBtn.textContent = "✓ Scheduled";
+        await renderKexpScheduleList();
+      } catch (_) {
+        schedBtn.textContent = "Error";
+        schedBtn.disabled = false;
+      }
+      return;
+    }
+    const item = event.target.closest("[data-kexp-program-url]");
+    if (!item) return;
+    const url = item.getAttribute("data-kexp-program-url") || "";
+    if (url && kexpProgramUrlInput) kexpProgramUrlInput.value = url;
+    if (url) {
+      setButtonBusy(kexpLoadProgramBtn, true, "Load Shows");
+      loadKexpProgram(url, 1)
+        .catch(() => { if (kexpProgramMeta) kexpProgramMeta.textContent = "Error loading program."; })
+        .finally(() => setButtonBusy(kexpLoadProgramBtn, false, "Load Shows"));
+      kexpProgramMeta?.scrollIntoView({ behavior: "smooth" });
+    }
+  });
+}
+
+if (kexpEpisodesResult) {
+  kexpEpisodesResult.addEventListener("click", async (event) => {
+    const playLocalBtn = event.target.closest("button[data-kexp-play-local-url]");
+    if (playLocalBtn) {
+      const episodeUrl = playLocalBtn.getAttribute("data-kexp-play-local-url") || "";
+      const playTitle = playLocalBtn.getAttribute("data-kexp-play-local-title") || "";
+      const playProgramTitle = playLocalBtn.getAttribute("data-kexp-play-local-program-title") || "";
+      const playImage = playLocalBtn.getAttribute("data-kexp-play-local-image") || "";
+      const saved = state.kexpDownloadedAudioByEpisode[episodeUrl];
+      if (!saved?.outputDir || !saved?.fileName) {
+        setKexpEpisodeStatus(episodeUrl, "Download this episode first, then use Play Local.", true);
+        return;
+      }
+      setButtonBusy(playLocalBtn, true, "Play Local", "Loading...");
+      try {
+        await playEpisodeWithBackgroundCue({
+          sourceType: "kexp",
+          cacheKey: episodeUrl,
+          sourceLabel: "KEXP",
+          title: playTitle,
+          programTitle: playProgramTitle,
+          image: playImage,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          useLocalFile: true,
+          playbackKey: `kexp:local:${episodeUrl}`,
+          statusUpdater: (text, isError = false) => setKexpEpisodeStatus(episodeUrl, text, isError)
+        });
+      } catch (error) {
+        setKexpEpisodeStatus(episodeUrl, `Play Local failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playLocalBtn, false, "Play Local");
+      }
+      return;
+    }
+    const playBtn = event.target.closest("button[data-kexp-play-url]");
+    if (playBtn) {
+      const playUrl = playBtn.getAttribute("data-kexp-play-url") || "";
+      const playTitle = playBtn.getAttribute("data-kexp-play-title") || "";
+      const playProgramTitle = playBtn.getAttribute("data-kexp-play-program-title") || "";
+      const playImage = playBtn.getAttribute("data-kexp-play-image") || "";
+      setButtonBusy(playBtn, true, "Play", "Loading...");
+      try {
+        const playPublished = playBtn.getAttribute("data-kexp-play-published") || "";
+        const stream = await window.rteDownloader.getKexpEpisodeStream(playUrl, playPublished);
+        await playEpisodeWithBackgroundCue({
+          sourceType: "kexp",
+          cacheKey: playUrl,
+          episodeUrl: playUrl,
+          sourceLabel: "KEXP",
+          title: playTitle,
+          programTitle: playProgramTitle,
+          image: playImage,
+          streamUrl: stream.streamUrl || stream,
+          startOffset: Number(stream.startOffset) || 0,
+          playbackKey: `kexp:remote:${playUrl}`,
+          statusUpdater: (text, isError = false) => setKexpEpisodeStatus(playUrl, text, isError)
+        });
+      } catch (error) {
+        setKexpEpisodeStatus(playUrl, `Play failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(playBtn, false, "Play");
+      }
+      return;
+    }
+    const cueBtn = event.target.closest("button[data-kexp-generate-cue-url]");
+    if (cueBtn) {
+      const episodeUrlCue = cueBtn.getAttribute("data-kexp-generate-cue-url") || "";
+      const titleCue = cueBtn.getAttribute("data-kexp-generate-cue-title") || "kexp-episode";
+      const programTitleCue = cueBtn.getAttribute("data-kexp-generate-cue-program-title") || "KEXP";
+      const saved = state.kexpDownloadedAudioByEpisode[episodeUrlCue];
+      if (!saved) {
+        setKexpEpisodeStatus(episodeUrlCue, "Download episode first, then generate CUE.", true);
+        return;
+      }
+      setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+      setKexpEpisodeStatus(episodeUrlCue, "Generating CUE/chapters...");
+      clearCueDebugLog("kexp", episodeUrlCue);
+      const cueProgressToken = createProgressToken(`kexp-cue-${Date.now()}`);
+      const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+        if (progress?.kind === "cue" && progress?.message) {
+          appendCueDebugLog("kexp", episodeUrlCue, progress.message);
+        }
+        setKexpEpisodeStatus(episodeUrlCue, formatProgressText(progress, "Generating CUE/chapters..."));
+      });
+      try {
+        const cue = await window.rteDownloader.generateCue({
+          sourceType: "kexp",
+          episodeUrl: episodeUrlCue,
+          title: titleCue,
+          programTitle: programTitleCue,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          progressToken: cueProgressToken
+        });
+        setCachedChapters("kexp", episodeUrlCue, cue.chapters || []);
+        setKexpEpisodeStatus(episodeUrlCue, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
+      } catch (error) {
+        setKexpEpisodeStatus(episodeUrlCue, `CUE failed: ${error.message}`, true);
+      } finally {
+        detachCueProgress();
+        setButtonBusy(cueBtn, false, "Generate CUE");
+      }
+      return;
+    }
+    const downloadBtn = event.target.closest("button[data-kexp-download-url]");
+    if (downloadBtn) {
+      const episodeUrl = downloadBtn.getAttribute("data-kexp-download-url") || "";
+      const title = downloadBtn.getAttribute("data-kexp-episode-title") || "kexp-episode";
+      const programTitle = downloadBtn.getAttribute("data-kexp-program-title") || "KEXP";
+      const publishedTime = downloadBtn.getAttribute("data-kexp-published") || "";
+      const image = downloadBtn.getAttribute("data-kexp-image") || "";
+      setKexpEpisodeStatus(episodeUrl, "Starting download...");
+      setButtonBusy(downloadBtn, true, "Download", "Downloading...");
+      const progressToken = createProgressToken("kexp-episode");
+      const detach = attachDownloadProgress(progressToken, (p) => setKexpEpisodeStatus(episodeUrl, formatProgressText(p, "Downloading...")));
+      try {
+        const data = await window.rteDownloader.downloadFromKexpUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image });
+        state.kexpDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
+        setKexpEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+      } catch (error) {
+        setKexpEpisodeStatus(episodeUrl, `Download failed: ${error.message}`, true);
+      } finally {
+        detach();
+        setButtonBusy(downloadBtn, false, "Download");
+      }
+    }
+  });
+}
+
+// ── KEXP Extended Archive event handlers ─────────────────────────────────────
+
+function setKexpExtEpisodeStatus(episodeUrl, text, isError = false) {
+  const key = encodeURIComponent(episodeUrl);
+  const el = kexpExtEpisodesResult?.querySelector(`[data-kexp-ext-episode-status="${key}"]`);
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = text ? "block" : "none";
+  el.classList.toggle("error", isError);
+}
+
+if (kexpExtSearchBtn && kexpExtSearchResult) {
+  kexpExtSearchBtn.addEventListener("click", async () => {
+    if (!window.rteDownloader?.searchKexpExtendedPrograms) return;
+    const query = kexpExtSearchInput ? kexpExtSearchInput.value.trim() : "";
+    setButtonBusy(kexpExtSearchBtn, true, "Search", "Searching...");
+    kexpExtSearchResult.innerHTML = `<div class="item muted">Searching…</div>`;
+    kexpExtSearchResult.classList.remove("hidden");
+    try {
+      const data = await window.rteDownloader.searchKexpExtendedPrograms(query);
+      const rows = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
+      kexpExtSearchResult.innerHTML = rows.length
+        ? rows.map((r) => renderKexpShowCard(r)).join("")
+        : `<div class="item muted">No results found.</div>`;
+    } catch (err) {
+      kexpExtSearchResult.innerHTML = `<div class="item muted error">Search failed: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      setButtonBusy(kexpExtSearchBtn, false, "Search");
+    }
+  });
+  kexpExtSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") kexpExtSearchBtn.click(); });
+}
+
+if (kexpExtDiscoverBtn) {
+  kexpExtDiscoverBtn.addEventListener("click", async () => {
+    if (!window.rteDownloader?.getKexpExtendedDiscovery) return;
+    setButtonBusy(kexpExtDiscoverBtn, true, "Discover", "Loading...");
+    if (kexpExtSearchResult) {
+      kexpExtSearchResult.innerHTML = `<div class="item muted">Fetching shows…</div>`;
+      kexpExtSearchResult.classList.remove("hidden");
+    }
+    try {
+      const data = await window.rteDownloader.getKexpExtendedDiscovery();
+      const rows = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
+      if (kexpExtSearchResult) {
+        kexpExtSearchResult.innerHTML = rows.length
+          ? rows.map((r) => renderKexpShowCard(r)).join("")
+          : `<div class="item muted">No shows found.</div>`;
+      }
+    } catch (err) {
+      if (kexpExtSearchResult) kexpExtSearchResult.innerHTML = `<div class="item muted error">Failed: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      setButtonBusy(kexpExtDiscoverBtn, false, "Discover");
+    }
+  });
+}
+
+if (kexpExtSearchResult) {
+  kexpExtSearchResult.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-kexp-program-url]");
+    if (!item) return;
+    const url = item.getAttribute("data-kexp-program-url") || "";
+    kexpExtSearchResult.classList.add("hidden");
+    if (url) loadKexpExtendedProgram(url, 1).catch(() => {
+      if (kexpExtProgramMeta) { kexpExtProgramMeta.style.display = "block"; kexpExtProgramMeta.textContent = "Error loading program."; }
+    });
+  });
+}
+
+if (kexpExtPrevPageBtn) {
+  kexpExtPrevPageBtn.addEventListener("click", () => {
+    if (state.kexpExtProgramPage <= 1 || !state.kexpExtProgramUrl) return;
+    loadKexpExtendedProgram(state.kexpExtProgramUrl, state.kexpExtProgramPage - 1).catch(() => {});
+  });
+}
+
+if (kexpExtNextPageBtn) {
+  kexpExtNextPageBtn.addEventListener("click", () => {
+    if (state.kexpExtProgramPage >= state.kexpExtProgramMaxPages || !state.kexpExtProgramUrl) return;
+    loadKexpExtendedProgram(state.kexpExtProgramUrl, state.kexpExtProgramPage + 1).catch(() => {});
+  });
+}
+
+if (kexpExtEpisodesResult) {
+  kexpExtEpisodesResult.addEventListener("click", async (event) => {
+    // Play button
+    const playBtn = event.target.closest("button[data-kexp-ext-play-url]");
+    if (playBtn) {
+      const episodeUrl = playBtn.getAttribute("data-kexp-ext-play-url") || "";
+      const playTitle = playBtn.getAttribute("data-kexp-ext-play-title") || "";
+      const playProgramTitle = playBtn.getAttribute("data-kexp-ext-play-program-title") || "";
+      const playImage = playBtn.getAttribute("data-kexp-ext-play-image") || "";
+      setButtonBusy(playBtn, true, "Play", "Loading...");
+      try {
+        const stream = await window.rteDownloader.getKexpExtendedEpisodeStream(episodeUrl);
+        await playEpisodeWithBackgroundCue({
+          sourceType: "kexp",
+          cacheKey: episodeUrl,
+          sourceLabel: "KEXP Extended",
+          title: playTitle,
+          programTitle: playProgramTitle,
+          image: playImage,
+          streamUrl: stream.streamUrl,
+          playbackKey: `kexp-ext:remote:${episodeUrl}`,
+          statusUpdater: (text, isError = false) => setKexpExtEpisodeStatus(episodeUrl, text, isError)
+        });
+      } catch (err) {
+        setKexpExtEpisodeStatus(episodeUrl, `Play failed: ${err.message}`, true);
+      } finally {
+        setButtonBusy(playBtn, false, "Play");
+      }
+      return;
+    }
+    // Play Local button
+    const playLocalBtn = event.target.closest("button[data-kexp-ext-play-local-url]");
+    if (playLocalBtn) {
+      const episodeUrl = playLocalBtn.getAttribute("data-kexp-ext-play-local-url") || "";
+      const playTitle = playLocalBtn.getAttribute("data-kexp-ext-play-local-title") || "";
+      const playProgramTitle = playLocalBtn.getAttribute("data-kexp-ext-play-local-program-title") || "";
+      const playImage = playLocalBtn.getAttribute("data-kexp-ext-play-local-image") || "";
+      const saved = state.kexpExtDownloadedAudioByEpisode[episodeUrl];
+      if (!saved?.outputDir || !saved?.fileName) {
+        setKexpExtEpisodeStatus(episodeUrl, "Download this episode first, then use Play Local.", true);
+        return;
+      }
+      setButtonBusy(playLocalBtn, true, "Play Local", "Loading...");
+      try {
+        await playEpisodeWithBackgroundCue({
+          sourceType: "kexp",
+          cacheKey: episodeUrl,
+          sourceLabel: "KEXP Extended",
+          title: playTitle,
+          programTitle: playProgramTitle,
+          image: playImage,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          useLocalFile: true,
+          playbackKey: `kexp-ext:local:${episodeUrl}`,
+          statusUpdater: (text, isError = false) => setKexpExtEpisodeStatus(episodeUrl, text, isError)
+        });
+      } catch (err) {
+        setKexpExtEpisodeStatus(episodeUrl, `Play Local failed: ${err.message}`, true);
+      } finally {
+        setButtonBusy(playLocalBtn, false, "Play Local");
+      }
+      return;
+    }
+    // Download button
+    const downloadBtn = event.target.closest("button[data-kexp-ext-download-url]");
+    if (downloadBtn) {
+      const episodeUrl = downloadBtn.getAttribute("data-kexp-ext-download-url") || "";
+      const title = downloadBtn.getAttribute("data-kexp-ext-episode-title") || "kexp-episode";
+      const programTitle = downloadBtn.getAttribute("data-kexp-ext-program-title") || "KEXP";
+      const publishedTime = downloadBtn.getAttribute("data-kexp-ext-published") || "";
+      const image = downloadBtn.getAttribute("data-kexp-ext-image") || "";
+      setKexpExtEpisodeStatus(episodeUrl, "Starting download...");
+      setButtonBusy(downloadBtn, true, "Download", "Downloading...");
+      const progressToken = createProgressToken("kexp-ext-episode");
+      const detach = attachDownloadProgress(progressToken, (p) => setKexpExtEpisodeStatus(episodeUrl, formatProgressText(p, "Downloading...")));
+      try {
+        const data = await window.rteDownloader.downloadFromUrl("kexp-extended", episodeUrl, progressToken, { title, programTitle, publishedTime, image });
+        state.kexpExtDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
+        setKexpExtEpisodeStatus(episodeUrl, `Downloaded: ${data.fileName}`);
+        renderKexpExtEpisodes({ episodes: Array.from(kexpExtEpisodesResult.querySelectorAll(".item")).map(() => null).filter(Boolean) }, programTitle);
+      } catch (err) {
+        setKexpExtEpisodeStatus(episodeUrl, `Download failed: ${err.message}`, true);
+      } finally {
+        detach();
+        setButtonBusy(downloadBtn, false, "Download");
+      }
+      return;
+    }
+    // Generate CUE button
+    const cueBtn = event.target.closest("button[data-kexp-ext-generate-cue-url]");
+    if (cueBtn) {
+      const episodeUrl = cueBtn.getAttribute("data-kexp-ext-generate-cue-url") || "";
+      const titleCue = cueBtn.getAttribute("data-kexp-ext-generate-cue-title") || "kexp-episode";
+      const programTitleCue = cueBtn.getAttribute("data-kexp-ext-generate-cue-program-title") || "KEXP";
+      const saved = state.kexpExtDownloadedAudioByEpisode[episodeUrl];
+      if (!saved) {
+        setKexpExtEpisodeStatus(episodeUrl, "Download episode first, then generate CUE.", true);
+        return;
+      }
+      setButtonBusy(cueBtn, true, "Generate CUE", "Generating...");
+      setKexpExtEpisodeStatus(episodeUrl, "Generating CUE/chapters...");
+      const cueProgressToken = createProgressToken(`kexp-ext-cue-${Date.now()}`);
+      const detachCueProgress = attachDownloadProgress(cueProgressToken, (progress) => {
+        setKexpExtEpisodeStatus(episodeUrl, formatProgressText(progress, "Generating CUE/chapters..."));
+      });
+      try {
+        const cue = await window.rteDownloader.generateCue({
+          sourceType: "kexp",
+          episodeUrl,
+          title: titleCue,
+          programTitle: programTitleCue,
+          outputDir: saved.outputDir,
+          fileName: saved.fileName,
+          progressToken: cueProgressToken
+        });
+        setCachedChapters("kexp", episodeUrl, cue.chapters || []);
+        setKexpExtEpisodeStatus(episodeUrl, `CUE ready: ${cue.cuePath}${formatCueSource(cue)}${formatCueAlignment(cue)}`);
+      } catch (err) {
+        setKexpExtEpisodeStatus(episodeUrl, `CUE failed: ${err.message}`, true);
+      } finally {
+        detachCueProgress();
+        setButtonBusy(cueBtn, false, "Generate CUE");
+      }
+    }
+  });
+}
+
+if (kexpScheduleList) {
+  kexpScheduleList.addEventListener("click", async (event) => {
+    const playLatestBtn = event.target.closest("button[data-kexp-schedule-play-output]");
+    if (playLatestBtn) {
+      try {
+        await playFromDownloadedFile({
+          outputDir: playLatestBtn.getAttribute("data-kexp-schedule-play-output"),
+          fileName: playLatestBtn.getAttribute("data-kexp-schedule-play-file"),
+          title: playLatestBtn.getAttribute("data-kexp-schedule-play-title") || "",
+          source: "KEXP Local",
+          subtitle: "Latest scheduled download",
+          image: playLatestBtn.getAttribute("data-kexp-schedule-play-image") || "",
+          episodeUrl: playLatestBtn.getAttribute("data-kexp-schedule-play-episode-url") || "",
+          sourceType: playLatestBtn.getAttribute("data-kexp-schedule-play-source-type") || "kexp"
+        });
+      } catch (error) {
+        setKexpEpisodeStatus("", `Play failed: ${error.message}`, true);
+      }
+      return;
+    }
+    const toggleBtn = event.target.closest("button[data-kexp-schedule-toggle]");
+    if (toggleBtn) {
+      const id = toggleBtn.getAttribute("data-kexp-schedule-toggle");
+      const enabled = toggleBtn.getAttribute("data-enabled") !== "1";
+      await window.rteDownloader.setKexpScheduleEnabled(id, enabled);
+      await renderKexpScheduleList();
+      return;
+    }
+    const runBtn = event.target.closest("button[data-kexp-schedule-run]");
+    if (runBtn) {
+      const id = runBtn.getAttribute("data-kexp-schedule-run");
+      setButtonBusy(runBtn, true, "Run Now", "Running...");
+      try {
+        await window.rteDownloader.runKexpScheduleNow(id);
+        await renderKexpScheduleList();
+      } catch (error) {
+        if (kexpProgramMeta) kexpProgramMeta.textContent = `Run failed: ${error.message}`;
+      } finally {
+        setButtonBusy(runBtn, false, "Run Now");
+      }
+      return;
+    }
+    const removeBtn = event.target.closest("button[data-kexp-schedule-remove]");
+    if (removeBtn) {
+      const id = removeBtn.getAttribute("data-kexp-schedule-remove");
+      await window.rteDownloader.removeKexpSchedule(id);
+      await renderKexpScheduleList();
+    }
+  });
+}
+
 nowPlayingCloseBtn.addEventListener("click", () => {
   clearGlobalNowPlaying();
 });
@@ -5067,6 +6361,12 @@ nowPlayingAudio.addEventListener("playing", () => {
   if (pendingNowPlayingVisible) {
     nowPlayingBar.classList.remove("hidden");
     pendingNowPlayingVisible = false;
+  }
+  // Clear the "Buffering..." card message once audio actually starts
+  const pk = activeNowPlaying?.playbackKey || "";
+  if (pk.startsWith("wwf:remote:")) {
+    const episodeUrl = pk.slice("wwf:remote:".length);
+    if (episodeUrl) setWwfEpisodeStatus(episodeUrl, "");
   }
 });
 

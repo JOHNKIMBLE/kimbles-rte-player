@@ -17,23 +17,7 @@ const showCache = new Map();
 const latestCache = { fetchedAt: 0, episodes: [], TTL_MS: 1000 * 60 * 15 };
 const allShowsCache = { shows: [], fetchedAt: 0, TTL_MS: 1000 * 60 * 30 };
 
-function decodeHtml(input) {
-  return String(input || "")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function cleanText(input) {
-  return decodeHtml(String(input || "")).replace(/\s+/g, " ").trim();
-}
-
-/** Remove HTML tags and collapse whitespace (use before cleanText when source may be HTML). */
-function stripHtml(input) {
-  return String(input || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-}
+const { cleanText, stripHtml } = require("./utils");
 
 function normalizeShowUrl(inputUrl) {
   const raw = String(inputUrl || "").trim();
@@ -79,15 +63,6 @@ function parseDateNts(text) {
   const mi = months.indexOf(String(match[2]).toLowerCase().slice(0, 3));
   if (mi < 0) return "";
   return `${match[3]}-${String(mi + 1).padStart(2, "0")}-${String(Number(match[1])).padStart(2, "0")}`;
-}
-
-/** Convert "0:00:10" or "1:30:00" to seconds */
-function timestampToSeconds(str) {
-  const parts = String(str || "").trim().split(":").map((p) => parseInt(p, 10));
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1 && !Number.isNaN(parts[0])) return parts[0];
-  return 0;
 }
 
 const FETCH_HEADERS = {
@@ -197,7 +172,7 @@ function parseNtsTimeslot(timeslot) {
   // Parse days
   const DAY_MAP = { MON: "Mon", TUE: "Tue", WED: "Wed", THU: "Thu", FRI: "Fri", SAT: "Sat", SUN: "Sun" };
   const DAY_ORDER = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-  let days = [];
+  const days = [];
   const rangeMatch = dayStr.match(/(\w{3})\w*\s*-\s*(\w{3})\w*/);
   if (rangeMatch) {
     const startIdx = DAY_ORDER.indexOf(rangeMatch[1].slice(0, 3));
@@ -1122,7 +1097,7 @@ async function getNtsLiveNow(channelId) {
     liveNowCache[id === "nts2" ? "nts2" : "nts1"] = result;
     liveNowCache.fetchedAt = now;
     return result;
-  } catch (e) {
+  } catch (_e) {
     return {
       channelId: id,
       stationName,
@@ -1173,5 +1148,6 @@ module.exports = {
   normalizeEpisodeUrl,
   parseTracklistFromEpisodeHtml,
   parseDateNts,
-  generateSlugGuesses
+  generateSlugGuesses,
+  parseNtsTimeslot
 };

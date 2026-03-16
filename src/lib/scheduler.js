@@ -125,7 +125,6 @@ function parseRunScheduleWindows(runScheduleText) {
 }
 
 function getUtcNowParts(date = new Date()) {
-  const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const day = date.getUTCDay();
   const minuteOfDay = date.getUTCHours() * 60 + date.getUTCMinutes();
 

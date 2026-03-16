@@ -11,19 +11,7 @@ const DISABLED_BBC_STATION_IDS = new Set(["bbc_5live_sportsextra", "bbc_radio_fo
 const bbcEpisodeDateCache = new Map();
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function decodeHtml(input) {
-  return String(input || "")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&#039;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function cleanText(input) {
-  return decodeHtml(String(input || "")).replace(/\s+/g, " ").trim();
-}
+const { decodeHtml, cleanText, stripHtml, inferCadence } = require("./utils");
 
 function normalizeBbcUrl(inputUrl) {
   const parsed = new URL(String(inputUrl || "").trim());
@@ -72,34 +60,6 @@ function pickEpisodeUrl(entry) {
   return "";
 }
 
-function inferCadence(episodes) {
-  const times = episodes
-    .map((item) => new Date(item.publishedTime || "").getTime())
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => b - a);
-
-  if (times.length < 3) {
-    return {
-      cadence: "unknown",
-      averageDaysBetween: null
-    };
-  }
-
-  const dayDiffs = [];
-  for (let i = 0; i < Math.min(times.length - 1, 8); i += 1) {
-    const diffDays = Math.abs(times[i] - times[i + 1]) / (1000 * 60 * 60 * 24);
-    dayDiffs.push(diffDays);
-  }
-
-  const average = dayDiffs.reduce((sum, value) => sum + value, 0) / dayDiffs.length;
-  if (average <= 2) {
-    return { cadence: "daily", averageDaysBetween: Number(average.toFixed(2)) };
-  }
-  if (average <= 9) {
-    return { cadence: "weekly", averageDaysBetween: Number(average.toFixed(2)) };
-  }
-  return { cadence: "irregular", averageDaysBetween: Number(average.toFixed(2)) };
-}
 
 function mapEpisode(entry, index) {
   const episodeUrl = pickEpisodeUrl(entry);
@@ -153,9 +113,7 @@ async function fetchJson(url) {
   return response.json();
 }
 
-function stripTags(input) {
-  return cleanText(decodeHtml(String(input || "").replace(/<[^>]+>/g, " ")));
-}
+const stripTags = (input) => cleanText(stripHtml(input));
 
 function parsePublishedDateIso(input) {
   const text = cleanText(input || "");
@@ -397,7 +355,6 @@ function toDublinDate(value) {
 }
 
 function toUtcDayAndTime(date) {
-  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const dayIndex = date.getUTCDay();
   const hour = String(date.getUTCHours()).padStart(2, "0");
   const minute = String(date.getUTCMinutes()).padStart(2, "0");
@@ -503,7 +460,7 @@ function extractUpcomingBroadcastsFromJsonLd(html) {
 async function getBbcUpcomingSchedule(programUrl) {
   const normalizedUrl = normalizeBbcProgramUrl(programUrl);
   const upcomingUrl = `${normalizedUrl}/broadcasts/upcoming`;
-  let html = "";
+  let html;
 
   try {
     html = await fetchText(upcomingUrl);
@@ -541,9 +498,10 @@ async function getBbcUpcomingSchedule(programUrl) {
 async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
   const includeSchedule = options.includeSchedule !== false;
   const normalizedUrl = normalizeBbcProgramUrl(programUrl);
-  let title = "";
-  let description = "";
-  let image = "";
+  let title;
+  let description;
+  let image;
+  let genres = [];
 
   try {
     const html = await fetchText(normalizedUrl);
@@ -560,6 +518,26 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
       /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i,
       /<meta\s+name=["']twitter:image(?::src)?["']\s+content=["']([^"']+)["']/i
     ]);
+    // Try to extract genres from JSON-LD schema.org markup
+    for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+      try {
+        const data = JSON.parse(m[1]);
+        const items = Array.isArray(data) ? data : [data];
+        for (const item of items) {
+          if (item.genre) {
+            const g = Array.isArray(item.genre) ? item.genre : [item.genre];
+            genres.push(...g.map((x) => cleanText(String(x))).filter(Boolean));
+          }
+        }
+      } catch {}
+    }
+    // Fallback: keywords meta tag
+    if (!genres.length) {
+      const kwMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
+      if (kwMatch) {
+        genres = kwMatch[1].split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
+      }
+    }
   } catch {
     title = "";
     description = "";
@@ -594,6 +572,7 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
     title: title || "BBC Program",
     description: description || "",
     image: normalizeImageUrl(image),
+    genres: [...new Set(genres)].slice(0, 6),
     runSchedule: schedule.runSchedule || "",
     nextBroadcastAt: schedule.nextBroadcastAt || "",
     nextBroadcastTitle: schedule.nextBroadcastTitle || ""
@@ -788,6 +767,7 @@ async function getBbcProgramEpisodes(programUrl, runYtDlpJson, page = 1) {
     title: summary.title || cleanText(payload?.title || "BBC Program"),
     description: summary.description || cleanText(payload?.description || ""),
     image: programImage,
+    genres: summary.genres || [],
     episodes: mapped,
     totalItems: mapped.length,
     page: safePage,
