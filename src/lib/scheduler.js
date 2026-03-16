@@ -545,15 +545,16 @@ function createSchedulerStore({
       await onScheduleRefreshed(schedule, latest);
     }
 
-    schedule.cadence = latest.cadence;
-    schedule.averageDaysBetween = latest.averageDaysBetween;
-    if (typeof latest.runSchedule === "string") {
+    // Only overwrite existing values if the episode list actually returned new ones
+    if (latest.cadence != null) schedule.cadence = latest.cadence;
+    if (latest.averageDaysBetween != null) schedule.averageDaysBetween = latest.averageDaysBetween;
+    if (typeof latest.runSchedule === "string" && latest.runSchedule) {
       schedule.runSchedule = latest.runSchedule;
     }
-    if (typeof latest.nextBroadcastAt === "string") {
+    if (typeof latest.nextBroadcastAt === "string" && latest.nextBroadcastAt) {
       schedule.nextBroadcastAt = latest.nextBroadcastAt;
     }
-    if (typeof latest.nextBroadcastTitle === "string") {
+    if (typeof latest.nextBroadcastTitle === "string" && latest.nextBroadcastTitle) {
       schedule.nextBroadcastTitle = latest.nextBroadcastTitle;
     }
     schedule.lastCheckedAt = new Date().toISOString();

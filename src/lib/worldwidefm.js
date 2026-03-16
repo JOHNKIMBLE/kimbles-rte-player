@@ -1107,8 +1107,10 @@ function mergeWwfEpisodeSources(scheduleEpisodes, showsEpisodes) {
   }
   const merged = [...byUrl.values()];
   merged.sort((a, b) => {
-    const aTs = a.startTimestamp != null ? a.startTimestamp : (a.publishedTime ? new Date(a.publishedTime + "T12:00:00Z").getTime() : 0);
-    const bTs = b.startTimestamp != null ? b.startTimestamp : (b.publishedTime ? new Date(b.publishedTime + "T12:00:00Z").getTime() : 0);
+    let aTs = a.startTimestamp != null ? a.startTimestamp : (a.publishedTime ? new Date(a.publishedTime + "T12:00:00Z").getTime() : 0);
+    let bTs = b.startTimestamp != null ? b.startTimestamp : (b.publishedTime ? new Date(b.publishedTime + "T12:00:00Z").getTime() : 0);
+    if (!Number.isFinite(aTs)) aTs = 0;
+    if (!Number.isFinite(bTs)) bTs = 0;
     return bTs - aTs;
   });
   return merged;
