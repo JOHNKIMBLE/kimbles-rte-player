@@ -13,7 +13,8 @@ const {
   getLiveStationNow,
   normalizeProgramUrl,
   getRteDiscovery,
-  searchPrograms
+  searchPrograms,
+  configure: configureRte
 } = require("./lib/rte");
 const {
   getBbcDiscovery,
@@ -45,7 +46,8 @@ const {
   getNtsEpisodePlaylist,
   getNtsLiveNow,
   LIVE_STATIONS: NTS_LIVE_STATIONS,
-  normalizeNtsProgramUrl
+  normalizeNtsProgramUrl,
+  configure: configureNts
 } = require("./lib/nts");
 const {
   LIVE_STATIONS: FIP_LIVE_STATIONS,
@@ -56,7 +58,8 @@ const {
   getFipProgramEpisodes,
   getFipEpisodeStream,
   getFipEpisodeTracklist,
-  normalizeFipProgramUrl
+  normalizeFipProgramUrl,
+  configure: configureFip
 } = require("./lib/fip");
 const {
   LIVE_STATIONS: KEXP_LIVE_STATIONS,
@@ -103,6 +106,26 @@ const DOWNLOAD_ARCHIVE_PATH = path.join(DATA_DIR, "download-archive.txt");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
+const { createDiskCache } = require("./lib/disk-cache");
+const { createDownloadHistory } = require("./lib/download-history");
+
+const CACHE_DIR = path.join(DATA_DIR, "cache");
+const diskCache = createDiskCache(CACHE_DIR);
+configureRte({ diskCache });
+configureNts({ diskCache });
+configureFip({ diskCache });
+
+const DOWNLOAD_HISTORY_PATH = path.join(DATA_DIR, "download-history.json");
+const downloadHistory = createDownloadHistory(DOWNLOAD_HISTORY_PATH);
+
+const globalEventSubscribers = new Set();
+function broadcastGlobalEvent(payload) {
+  const line = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of globalEventSubscribers) {
+    try { res.write(line); } catch {}
+  }
+}
 
 function emitProgressEvent(progressToken, payload) {
   if (!progressToken) {
@@ -350,6 +373,20 @@ async function downloadFromManifest({
       sourceType
     }
   );
+
+  if (!result?.existing) {
+    try {
+      downloadHistory.append({
+        sourceType: sourceType || "rte",
+        programTitle: String(programTitle || ""),
+        episodeTitle: String(title || ""),
+        filePath: result?.fileName ? path.join(result.outputDir || outputDir, result.fileName) : "",
+        outputDir: result?.outputDir || outputDir,
+        fileName: result?.fileName || "",
+        episodeUrl: String(episodeUrl || sourceUrl || "")
+      });
+    } catch {}
+  }
 
   return {
     ...result,
@@ -917,6 +954,12 @@ async function onScheduleComplete(sourceType, schedule, downloaded) {
     title: schedule.title,
     count: downloaded.length,
     downloaded
+  });
+  broadcastGlobalEvent({
+    type: "episode.downloaded",
+    source: sourceType,
+    title: schedule.title,
+    episodeTitle: Array.isArray(downloaded) && downloaded[0]?.title ? downloaded[0].title : ""
   });
 }
 
@@ -1808,6 +1851,26 @@ app.post("/api/local-cue-chapters", (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
+});
+
+app.get("/api/events", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  res.write("data: {\"type\":\"ready\"}\n\n");
+  globalEventSubscribers.add(res);
+  req.on("close", () => globalEventSubscribers.delete(res));
+});
+
+app.get("/api/download-history", (_req, res) => {
+  res.json({ history: downloadHistory.list() });
+});
+
+app.delete("/api/download-history", (_req, res) => {
+  downloadHistory.clear();
+  res.json({ ok: true });
 });
 
 app.get("/api/download-queue/stats", (_req, res) => {

@@ -16,7 +16,8 @@ const {
   getLiveStationNow,
   normalizeProgramUrl,
   getRteDiscovery,
-  searchPrograms
+  searchPrograms,
+  configure: configureRte
 } = require("./lib/rte");
 const {
   getBbcDiscovery,
@@ -48,7 +49,8 @@ const {
   getNtsEpisodePlaylist,
   getNtsLiveNow,
   LIVE_STATIONS: NTS_LIVE_STATIONS,
-  normalizeNtsProgramUrl
+  normalizeNtsProgramUrl,
+  configure: configureNts
 } = require("./lib/nts");
 const {
   LIVE_STATIONS: FIP_LIVE_STATIONS,
@@ -59,7 +61,8 @@ const {
   getFipProgramEpisodes,
   getFipEpisodeStream,
   getFipEpisodeTracklist,
-  normalizeFipProgramUrl
+  normalizeFipProgramUrl,
+  configure: configureFip
 } = require("./lib/fip");
 const {
   LIVE_STATIONS: KEXP_LIVE_STATIONS,
@@ -96,6 +99,10 @@ let fipScheduler;
 let kexpScheduler;
 let appSettings = null;
 const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
+
+const { createDiskCache } = require("./lib/disk-cache");
+const { createDownloadHistory } = require("./lib/download-history");
+let downloadHistory = null;
 
 const streamProxyTokens = new Map();
 const ytDlpPipeTokens = new Map();
@@ -545,6 +552,22 @@ async function downloadFromManifest({
       sourceType
     }
   );
+
+  if (!result?.existing) {
+    try {
+      if (downloadHistory) {
+        downloadHistory.append({
+          sourceType: sourceType || "rte",
+          programTitle: String(programTitle || ""),
+          episodeTitle: String(title || ""),
+          filePath: result?.fileName ? path.join(result.outputDir || outputDir, result.fileName) : "",
+          outputDir: result?.outputDir || outputDir,
+          fileName: result?.fileName || "",
+          episodeUrl: String(episodeUrl || sourceUrl || "")
+        });
+      }
+    } catch {}
+  }
 
   return {
     ...result,
@@ -1854,6 +1877,9 @@ ipcMain.handle("settings-pick-download-dir", async (event, _payload = {}) => {
   return response.filePaths[0];
 });
 
+ipcMain.handle("download-history-list", () => downloadHistory ? downloadHistory.list() : []);
+ipcMain.handle("download-history-clear", () => { if (downloadHistory) { downloadHistory.clear(); } return { ok: true }; });
+
 ipcMain.handle("download-queue-stats", async () => {
   return downloadQueue.stats();
 });
@@ -1928,6 +1954,16 @@ async function onScheduleComplete(sourceType, schedule, downloaded) {
     count: downloaded.length,
     downloaded
   });
+  try {
+    const { Notification } = require("electron");
+    if (Notification.isSupported()) {
+      const ep = Array.isArray(downloaded) && downloaded[0]?.title ? downloaded[0].title : "";
+      new Notification({
+        title: `New episode: ${schedule.title}`,
+        body: ep || `${String(sourceType || "").toUpperCase()} download complete`
+      }).show();
+    }
+  } catch {}
 }
 
 async function onScheduleError(sourceType, schedule, error) {
@@ -1942,6 +1978,16 @@ async function onScheduleError(sourceType, schedule, error) {
 
 app.whenReady().then(() => {
   readSettings();
+
+  const DATA_DIR = app.getPath("userData");
+  const CACHE_DIR = path.join(DATA_DIR, "cache");
+  const diskCache = createDiskCache(CACHE_DIR);
+  configureRte({ diskCache });
+  configureNts({ diskCache });
+  configureFip({ diskCache });
+
+  const DOWNLOAD_HISTORY_PATH = path.join(DATA_DIR, "download-history.json");
+  downloadHistory = createDownloadHistory(DOWNLOAD_HISTORY_PATH);
 
   scheduler = createSchedulerStore({
     app,

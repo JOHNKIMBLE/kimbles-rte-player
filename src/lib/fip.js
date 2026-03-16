@@ -9,9 +9,15 @@ const ICECAST_BASE = "https://icecast.radiofrance.fr";
 
 // ── Translation ───────────────────────────────────────────────────────────────
 const translationCache = new Map();
+let _diskCache = null;
+function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 async function translateFr(text) {
   if (!text || text.length < 10) return text;
   const key = text.slice(0, 450);
+  if (!translationCache.has(key) && _diskCache) {
+    const cached = _diskCache.get("fip:trans:" + key, 0); // permanent
+    if (cached != null) translationCache.set(key, cached);
+  }
   if (translationCache.has(key)) return translationCache.get(key);
   try {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(key)}&langpair=fr|en`;
@@ -21,6 +27,7 @@ async function translateFr(text) {
     // Reject if translation looks like an error message or is too short
     const result = (translated.length > 10 && !translated.toLowerCase().includes("mymemory")) ? translated : text;
     translationCache.set(key, result);
+    if (_diskCache) _diskCache.set("fip:trans:" + key, result);
     return result;
   } catch {
     return text;
@@ -999,5 +1006,6 @@ module.exports = {
   getFipEpisodeStream,
   getFipEpisodeTracklist,
   normalizeFipProgramUrl,
-  parseFipAirtime
+  parseFipAirtime,
+  configure
 };

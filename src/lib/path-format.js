@@ -125,7 +125,7 @@ function buildDownloadTarget({
   clipId,
   episodeUrl
 }) {
-  const radio = sourceType === "bbc" ? "BBC" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : "RTE";
+  const radio = sourceType === "bbc" ? "BBC" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : sourceType === "fip" ? "FIP" : sourceType === "kexp" ? "KEXP" : "RTE";
   const releaseDate = extractReleaseDate(publishedTime) || extractReleaseDate(episodeTitle);
   const [year = "", month = "", day = ""] = String(releaseDate).split("-");
   const sourceId = pickSourceId({ clipId, episodeUrl });

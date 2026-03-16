@@ -129,6 +129,8 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   setKexpScheduleEnabled: (scheduleId, enabled) =>
     ipcRenderer.invoke("kexp-scheduler-set-enabled", { scheduleId, enabled }),
   runKexpScheduleNow: (scheduleId) => ipcRenderer.invoke("kexp-scheduler-check-one", { scheduleId }),
+  listDownloadHistory: () => ipcRenderer.invoke("download-history-list"),
+  clearDownloadHistory: () => ipcRenderer.invoke("download-history-clear"),
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
   previewCue: (payload) => ipcRenderer.invoke("cue-preview", payload || {}),
   getDownloadQueueStats: () => ipcRenderer.invoke("download-queue-stats"),

@@ -214,7 +214,34 @@ const nowPlayingCloseBtn = document.getElementById("nowPlayingCloseBtn");
 const nowPlayingChapterControls = document.getElementById("nowPlayingChapterControls");
 const nowPlayingPrevChapterBtn = document.getElementById("nowPlayingPrevChapterBtn");
 const nowPlayingNextChapterBtn = document.getElementById("nowPlayingNextChapterBtn");
+const nowPlayingResumeBtn = document.getElementById("nowPlayingResumeBtn");
+
+function updateResumeBadge() {
+  if (!nowPlayingResumeBtn) return;
+  const key = activeNowPlaying?.playbackKey;
+  if (!key) { nowPlayingResumeBtn.style.display = "none"; return; }
+  const pos = loadResumePosition(key);
+  if (!pos || pos < 5) { nowPlayingResumeBtn.style.display = "none"; return; }
+  nowPlayingResumeBtn.textContent = `Resume from ${formatDurationFromSeconds(Math.floor(pos))}`;
+  nowPlayingResumeBtn.style.display = "";
+}
 const DEFAULT_NOW_PLAYING_ART = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='8' fill='%231f2a3a'/%3E%3Ccircle cx='28' cy='28' r='17' fill='%2335445a'/%3E%3Cpath d='M21 20h4v16h-4zM31 20l10 8-10 8z' fill='%23c9d6e8'/%3E%3C/svg%3E";
+
+const RESUME_KEY_PREFIX = "resume:";
+let resumeSaveTimer = null;
+
+function saveResumePosition(key, pos) {
+  if (!key || pos < 5) return;
+  try { localStorage.setItem(RESUME_KEY_PREFIX + key, String(pos)); } catch {}
+}
+function loadResumePosition(key) {
+  if (!key) return null;
+  try { const v = localStorage.getItem(RESUME_KEY_PREFIX + key); return v ? parseFloat(v) || null : null; } catch { return null; }
+}
+function clearResumePosition(key) {
+  if (!key) return;
+  try { localStorage.removeItem(RESUME_KEY_PREFIX + key); } catch {}
+}
 
 const state = {
   liveStations: [],
@@ -317,6 +344,7 @@ let queueRefreshTimer = null;
 let scheduleRefreshTimer = null;
 let fipLiveInterval = null;
 let kexpLiveInterval = null;
+let healthDashboardTimer = null;
 let activeNowPlaying = null;
 let activeHls = null;
 let pendingNowPlayingVisible = false;
@@ -1175,6 +1203,9 @@ function setActiveTab(tabName) {
   tabSettingsBtn.classList.toggle("active-tab", isSettings);
   if (isSchedules) {
     renderAllSchedules().catch(() => {});
+  } else {
+    clearInterval(healthDashboardTimer);
+    healthDashboardTimer = null;
   }
   if (isWwf) {
     if (wwfStationSelect && state.wwfLiveStations.length === 0 && window.rteDownloader?.getWwfLiveStations) {
@@ -2484,6 +2515,37 @@ async function renderWwfScheduleList() {
 
 const SOURCE_LABELS = { rte: "RTÉ", bbc: "BBC", wwf: "WWF", nts: "NTS", fip: "FIP", kexp: "KEXP" };
 
+function renderHealthDashboard(schedulesMap) {
+  const grid = document.getElementById("healthGrid");
+  if (!grid) return;
+  const sources = [
+    { key: "rte", name: "RTÉ" },
+    { key: "bbc", name: "BBC" },
+    { key: "wwf", name: "Worldwide FM" },
+    { key: "nts", name: "NTS" },
+    { key: "fip", name: "FIP" },
+    { key: "kexp", name: "KEXP" },
+  ];
+  grid.innerHTML = sources.map(({ key, name }) => {
+    const schedules = schedulesMap[key] || [];
+    const count = schedules.length;
+    const retries = schedules.reduce((s, sc) => s + (sc.retryQueue?.length || 0), 0);
+    const lastRun = schedules.map(sc => sc.lastRunAt).filter(Boolean).sort().pop();
+    let dotClass = "health-dot-grey";
+    if (count > 0) {
+      if (retries > 0) dotClass = "health-dot-yellow";
+      else dotClass = "health-dot-green";
+    }
+    const lastRunStr = lastRun ? new Date(lastRun).toLocaleDateString() : "Never";
+    return `<div class="health-card">
+      <div class="health-card-name"><span class="health-dot ${dotClass}"></span>${escapeHtml(name)}</div>
+      <div class="health-card-meta">${count} schedule${count !== 1 ? "s" : ""}</div>
+      <div class="health-card-meta">Last run: ${escapeHtml(lastRunStr)}</div>
+      ${retries > 0 ? `<div class="health-card-meta" style="color:#f1c40f;">${retries} retry${retries !== 1 ? "s" : ""} pending</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
 async function renderAllSchedules() {
   if (!allSchedulesList) return;
   allSchedulesList.innerHTML = `<div class="item muted">Loading…</div>`;
@@ -2496,6 +2558,7 @@ async function renderAllSchedules() {
       window.rteDownloader?.listFipSchedules?.().catch(() => []),
       window.rteDownloader?.listKexpSchedules?.().catch(() => [])
     ]);
+    renderHealthDashboard({ rte: rte || [], bbc: bbc || [], wwf: wwf || [], nts: nts || [], fip: fip || [], kexp: kexp || [] });
     const tagged = [
       ...(rte || []).map((s) => ({ ...s, _source: "rte" })),
       ...(bbc || []).map((s) => ({ ...s, _source: "bbc" })),
@@ -4024,13 +4087,18 @@ if (tabKexpBtn) {
   tabKexpBtn.addEventListener("click", () => setActiveTab("kexp"));
 }
 if (tabSchedulesBtn) {
-  tabSchedulesBtn.addEventListener("click", () => setActiveTab("schedules"));
+  tabSchedulesBtn.addEventListener("click", () => {
+    setActiveTab("schedules");
+    clearInterval(healthDashboardTimer);
+    healthDashboardTimer = setInterval(() => renderAllSchedules().catch(() => {}), 5 * 60 * 1000);
+  });
 }
 if (refreshAllSchedulesBtn) {
   refreshAllSchedulesBtn.addEventListener("click", () => renderAllSchedules().catch(() => {}));
 }
 tabSettingsBtn.addEventListener("click", () => {
   setActiveTab("settings");
+  loadHistory().catch(() => {});
 });
 
 themeToggleBtn.addEventListener("click", () => {
@@ -6318,6 +6386,13 @@ nowPlayingCloseBtn.addEventListener("click", () => {
   clearGlobalNowPlaying();
 });
 
+if (nowPlayingResumeBtn) {
+  nowPlayingResumeBtn.addEventListener("click", () => {
+    const pos = loadResumePosition(activeNowPlaying?.playbackKey);
+    if (pos) nowPlayingAudio.currentTime = pos;
+  });
+}
+
 if (nowPlayingPrevChapterBtn) {
   nowPlayingPrevChapterBtn.addEventListener("click", () => {
     jumpToAdjacentChapter(-1);
@@ -6339,6 +6414,15 @@ nowPlayingImage.addEventListener("error", () => {
 
 nowPlayingAudio.addEventListener("timeupdate", () => {
   refreshNowPlayingTrackLabel();
+  if (activeNowPlaying?.playbackKey && !activeNowPlaying.playbackKey.startsWith("wwf:remote:")) {
+    if (!resumeSaveTimer) {
+      resumeSaveTimer = setTimeout(() => {
+        resumeSaveTimer = null;
+        const pos = nowPlayingAudio.currentTime;
+        if (pos > 5) saveResumePosition(activeNowPlaying.playbackKey, pos);
+      }, 5000);
+    }
+  }
 });
 
 nowPlayingAudio.addEventListener("seeking", () => {
@@ -6351,6 +6435,15 @@ nowPlayingAudio.addEventListener("seeked", () => {
 
 nowPlayingAudio.addEventListener("loadedmetadata", () => {
   refreshNowPlayingTrackLabel();
+  const key = activeNowPlaying?.playbackKey;
+  if (key && !key.startsWith("wwf:remote:")) {
+    const savedPos = loadResumePosition(key);
+    const dur = nowPlayingAudio.duration;
+    if (savedPos && savedPos > 5 && (!isFinite(dur) || savedPos < dur - 30)) {
+      nowPlayingAudio.currentTime = savedPos;
+    }
+  }
+  updateResumeBadge();
 });
 
 nowPlayingAudio.addEventListener("durationchange", () => {
@@ -6371,6 +6464,7 @@ nowPlayingAudio.addEventListener("playing", () => {
 });
 
 nowPlayingAudio.addEventListener("ended", () => {
+  clearResumePosition(activeNowPlaying?.playbackKey);
   clearGlobalNowPlaying();
 });
 
@@ -6773,6 +6867,56 @@ if (downloadQueueRecent) {
   });
 }
 
+// ── Download History ──────────────────────────────────────────────────────────
+let historyAllEntries = [];
+
+async function loadHistory() {
+  try {
+    const result = await window.rteDownloader.listDownloadHistory();
+    historyAllEntries = result?.history || result || [];
+  } catch { historyAllEntries = []; }
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = document.getElementById("historyList");
+  const filter = document.getElementById("historySourceFilter")?.value || "";
+  const search = (document.getElementById("historySearchInput")?.value || "").toLowerCase();
+  if (!list) return;
+  let entries = historyAllEntries;
+  if (filter) entries = entries.filter(e => e.sourceType === filter);
+  if (search) entries = entries.filter(e =>
+    (e.episodeTitle || "").toLowerCase().includes(search) ||
+    (e.programTitle || "").toLowerCase().includes(search)
+  );
+  if (!entries.length) {
+    list.innerHTML = `<div style="color:var(--muted);padding:0.6rem 0;">No history entries.</div>`;
+    return;
+  }
+  list.innerHTML = entries.map(e => {
+    const src = String(e.sourceType || "").toUpperCase();
+    const date = e.savedAt ? new Date(e.savedAt).toLocaleDateString() : "";
+    const pathShort = e.fileName || "";
+    return `<div class="history-entry">
+      <div class="history-entry-date">${escapeHtml(date)}</div>
+      <div class="history-entry-meta">
+        <div class="history-entry-title">${escapeHtml(e.episodeTitle || "Unknown episode")}</div>
+        <div class="history-entry-program">${escapeHtml(e.programTitle || "")} · ${escapeHtml(src)}</div>
+        ${pathShort ? `<div class="history-entry-path">${escapeHtml(pathShort)}</div>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+document.getElementById("historySourceFilter")?.addEventListener("change", renderHistory);
+document.getElementById("historySearchInput")?.addEventListener("input", renderHistory);
+document.getElementById("historyClearBtn")?.addEventListener("click", async () => {
+  if (!confirm("Clear all download history?")) return;
+  await window.rteDownloader.clearDownloadHistory();
+  historyAllEntries = [];
+  renderHistory();
+});
+
 (async function bootstrap() {
   try {
     const savedTheme = localStorage.getItem("kimble_theme") || "dark";
@@ -6788,6 +6932,18 @@ if (downloadQueueRecent) {
     scheduleBackfillCount.disabled = true;
     bbcScheduleBackfillCount.disabled = true;
     await loadSettings();
+    if (typeof window.rteDownloader?.connectGlobalEvents === "function") {
+      if ("Notification" in window) Notification.requestPermission().catch(() => {});
+      window.rteDownloader.connectGlobalEvents((payload) => {
+        if (payload?.type === "episode.downloaded" && "Notification" in window && Notification.permission === "granted") {
+          try {
+            new Notification(`New episode: ${payload.title || ""}`, {
+              body: payload.episodeTitle || `${(payload.source || "").toUpperCase()} download complete`
+            });
+          } catch {}
+        }
+      });
+    }
     await Promise.all([loadLiveStations(), loadBbcLiveStations(), refreshSchedules(), refreshBbcSchedules()]);
     await refreshDownloadQueueSnapshot();
     if (queueRefreshTimer) {

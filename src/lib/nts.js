@@ -16,6 +16,8 @@ const LIVE_STATIONS = [
 const showCache = new Map();
 const latestCache = { fetchedAt: 0, episodes: [], TTL_MS: 1000 * 60 * 15 };
 const allShowsCache = { shows: [], fetchedAt: 0, TTL_MS: 1000 * 60 * 30 };
+let _diskCache = null;
+function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 
 const { cleanText, stripHtml } = require("./utils");
 
@@ -715,6 +717,12 @@ async function fetchNtsShowsFromShowsPage(useCache = true) {
  */
 async function fetchAllNtsShows(useCache = true) {
   const now = Date.now();
+  const DISK_KEY = "nts:allShows";
+  const DISK_TTL = 6 * 60 * 60 * 1000;
+  if (useCache && !allShowsCache.shows.length && _diskCache) {
+    const cached = _diskCache.get(DISK_KEY, DISK_TTL);
+    if (cached) { allShowsCache.shows = cached; allShowsCache.fetchedAt = Date.now(); }
+  }
   if (useCache && allShowsCache.shows.length && now - allShowsCache.fetchedAt < allShowsCache.TTL_MS) {
     return allShowsCache.shows;
   }
@@ -771,6 +779,7 @@ async function fetchAllNtsShows(useCache = true) {
   } catch {}
   allShowsCache.shows = shows;
   allShowsCache.fetchedAt = Date.now();
+  if (_diskCache) _diskCache.set(DISK_KEY, shows);
   return shows;
 }
 
@@ -1149,5 +1158,6 @@ module.exports = {
   parseTracklistFromEpisodeHtml,
   parseDateNts,
   generateSlugGuesses,
-  parseNtsTimeslot
+  parseNtsTimeslot,
+  configure
 };
