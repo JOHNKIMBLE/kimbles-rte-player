@@ -455,14 +455,27 @@ async function getKexpEpisodeTracklist(episodeUrl) {
   const m = String(episodeUrl || "").match(/\/shows\/(\d+)/);
   const showId = m ? m[1] : "";
   if (!showId) return [];
-  // Fetch plays and show start_time in parallel so we can compute show-relative startSeconds
-  const [data, show] = await Promise.all([
-    fetchJson(`${API_BASE}/plays/?show=${showId}&ordering=airdate&limit=200`),
-    fetchJson(`${API_BASE}/shows/${showId}/`).catch(() => ({}))
-  ]);
+  // Fetch show metadata first so we can use its time window to precisely filter plays
+  const show = await fetchJson(`${API_BASE}/shows/${showId}/`).catch(() => ({}));
   const showStartMs = show.start_time ? new Date(show.start_time).getTime() : null;
+  const showEndMs = show.end_time ? new Date(show.end_time).getTime() : null;
+
+  // Use both show ID and time-range params so the API filters tightly even if one is unreliable
+  let playsUrl = `${API_BASE}/plays/?show=${showId}&ordering=airdate&limit=200`;
+  if (show.start_time) playsUrl += `&airdate_after=${encodeURIComponent(show.start_time)}`;
+  if (show.end_time)   playsUrl += `&airdate_before=${encodeURIComponent(show.end_time)}`;
+
+  const data = await fetchJson(playsUrl);
   return (data.results || [])
-    .filter((p) => p.play_type === "trackplay")
+    .filter((p) => {
+      if (p.play_type !== "trackplay") return false;
+      // Client-side time-range guard: drop any plays that fall outside this show's window
+      if (showStartMs !== null && showEndMs !== null && p.airdate) {
+        const ms = new Date(p.airdate).getTime();
+        if (!isNaN(ms) && (ms < showStartMs || ms > showEndMs)) return false;
+      }
+      return true;
+    })
     .map((p) => {
       const track = mapPlay(p);
       if (showStartMs !== null && track.airdate) {

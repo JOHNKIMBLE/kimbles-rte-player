@@ -265,7 +265,8 @@
       "Bash(node --check src/lib/download-history.js)",
       "Bash(node --check src/lib/rte.js)",
       "Bash(node --check src/lib/nts.js)",
-      "Bash(node --check src/lib/fip.js)"
+      "Bash(node --check src/lib/fip.js)",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\lib\\\\kexp.js\")"
     ]
   }
 }

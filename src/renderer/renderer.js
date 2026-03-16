@@ -870,7 +870,7 @@ async function ensureEpisodeTracks(sourceType, cacheKey, episodeUrl) {
       payload = await window.rteDownloader.getNtsEpisodePlaylist(episodeUrl);
     } else if (sourceType === "kexp") {
       const kexpTracks = await window.rteDownloader.getKexpEpisodeTracklist(episodeUrl);
-      payload = { tracks: Array.isArray(kexpTracks) ? kexpTracks : [] };
+      payload = { tracks: Array.isArray(kexpTracks) ? kexpTracks : (kexpTracks?.tracks || []) };
     } else if (sourceType === "fip") {
       const fipData = await window.rteDownloader.getFipEpisodeTracklist(episodeUrl);
       payload = { tracks: Array.isArray(fipData) ? fipData : (fipData?.tracks || []) };
