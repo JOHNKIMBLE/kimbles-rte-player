@@ -18,30 +18,7 @@ const episodesCache = {
   TTL_MS: 1000 * 60 * 15
 };
 
-function decodeHtml(input) {
-  return String(input || "")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#039;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&ndash;/g, "\u2013")
-    .replace(/&mdash;/g, "\u2014")
-    .replace(/&rsquo;/g, "\u2019")
-    .replace(/&lsquo;/g, "\u2018")
-    .replace(/&hellip;/g, "\u2026")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
-}
-
-function cleanText(input) {
-  return decodeHtml(String(input || "")).replace(/\s+/g, " ").trim();
-}
-
-/** Remove HTML tags and collapse whitespace (use before cleanText when source may be HTML). */
-function stripHtml(input) {
-  return String(input || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-}
+const { decodeHtml, cleanText, stripHtml } = require("./utils");
 
 /**
  * Parse RSC (React Server Components) payloads from Next.js pages.
@@ -75,7 +52,7 @@ function buildRscRefMap(html) {
     const refId = "$" + rm[1];
     const contentStart = rm.index + rm[0].length;
     // The text content runs until the next "N:" row marker or end
-    const nextRowMatch = combined.slice(contentStart).match(/\n?\d+:[A-Z\["\{]/);
+    const nextRowMatch = combined.slice(contentStart).match(/\n?\d+:[A-Z["{}]/);
     const contentEnd = nextRowMatch ? contentStart + nextRowMatch.index : combined.length;
     refs[refId] = combined.slice(contentStart, contentEnd);
   }
@@ -84,7 +61,7 @@ function buildRscRefMap(html) {
 
 /** Find and extract a balanced JSON object starting at position idx in text. */
 function extractJsonObject(text, idx) {
-  let depth = 0, start = idx;
+  let depth = 0; const start = idx;
   for (let i = start; i < text.length && i < start + 20000; i++) {
     if (text[i] === "{") depth++;
     else if (text[i] === "}") { depth--; if (depth === 0) return text.slice(start, i + 1); }
@@ -261,6 +238,10 @@ function parseRscEpisodeArchive(html) {
     const imgMatch = after.match(/"image":\{[^}]*"url":"([^"]+)"/) || after.match(/"image":"(https:[^"]+)"/);
     const imgRaw = imgMatch ? imgMatch[1] : "";
     const image = imgRaw ? imgRaw.split("?")[0] + "?w=600&h=600&fit=crop&auto=format,compress&q=60" : "";
+    // Try to extract Mixcloud player_url from the surrounding RSC context
+    const ctx = combined.slice(Math.max(0, pos - 1000), pos + 2000);
+    const playerUrlMatch = ctx.match(/"player_url"\s*:\s*"(https:[^"]*mixcloud[^"]*)"/i);
+    const playerUrl = playerUrlMatch ? playerUrlMatch[1].replace(/\\\//g, "/") : "";
     const { showName, episodeName } = parseTitleParts(title);
     const episodeUrl = `${BASE_URL}/episode/${slug}`;
 
@@ -272,7 +253,8 @@ function parseRscEpisodeArchive(html) {
       showName: showName || title,
       episodeName: episodeName || title,
       episodeUrl,
-      downloadUrl: episodeUrl,
+      downloadUrl: playerUrl || episodeUrl,
+      playerUrl: playerUrl || undefined,
       publishedTime: date,
       image,
       source: "rsc-archive"
@@ -404,25 +386,14 @@ async function fetchText(url) {
   });
 }
 
+/** Return true if value looks like a raw Cosmic CMS MongoDB ObjectID (hex string ≥20 chars). */
+function isCosmicId(val) {
+  return /^[0-9a-f]{20,}$/i.test(String(val || "").trim());
+}
+
 /** Parse schedule array from WWF schedule page HTML (embedded JSON with escaped quotes). Times are GMT. */
 function parseWwfScheduleFromHtml(html) {
   const startIdx = html.indexOf("[{\\\"show_key\\\"");
-  if (startIdx < 0) return [];
-  const endIdx = html.indexOf("}]", startIdx);
-  if (endIdx <= startIdx) return [];
-  const raw = html.slice(startIdx, endIdx + 2);
-  const unescaped = raw.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-  try {
-    const arr = JSON.parse(unescaped);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Generic: find and parse an embedded JSON array in HTML (escaped quotes). startMarker e.g. "[{\\\"show_key\\\"". */
-function parseWwfEmbeddedJsonArray(html, startMarker) {
-  const startIdx = html.indexOf(startMarker);
   if (startIdx < 0) return [];
   const endIdx = html.indexOf("}]", startIdx);
   if (endIdx <= startIdx) return [];
@@ -455,7 +426,9 @@ function mapScheduleItemToEpisode(item) {
   const picture = String(item.picture || "").trim();
   const image = picture ? picture.replace(/^\/\//, "https://") : "";
   const tags = Array.isArray(item.tags) ? item.tags : [];
-  const genres = tags.map((t) => String(t || "").trim()).filter(Boolean);
+  const genres = tags.map((t) => String(t || "").trim()).filter((t) => t && !isCosmicId(t));
+  const rawHosts = Array.isArray(item.hosts) ? item.hosts : [];
+  const hostsClean = rawHosts.map((h) => String(h || "").trim()).filter((h) => h && !isCosmicId(h));
   const publishedTime = date; // YYYY-MM-DD
   return {
     clipId: (episodeUrl.split("/episode/")[1] || episodeUrl) || "",
@@ -475,7 +448,7 @@ function mapScheduleItemToEpisode(item) {
     endTimestamp,
     durationMinutes: duration,
     genres: genres.length ? genres : undefined,
-    hosts: Array.isArray(item.hosts) ? item.hosts : undefined,
+    hosts: hostsClean.length ? hostsClean : undefined,
     source: "schedule"
   };
 }
@@ -592,7 +565,7 @@ async function getWwfLiveNow() {
     liveNowCache.data = result;
     liveNowCache.fetchedAt = now;
     return result;
-  } catch (e) {
+  } catch (_e) {
     liveNowCache.data = {
       stationName: "Worldwide FM",
       programmeName: "Live",
@@ -735,9 +708,9 @@ function parseEpisodesFromShowsHtmlFallback(html) {
     if (!url || seen.has(url)) continue;
     seen.add(url);
     const slug = url.split("/episode/")[1] || "";
-    const imgMatch = html.slice(0, m.index).match(/imgix\.cosmicjs\.com[^"'\s\)]+/);
+    const imgMatch = html.slice(0, m.index).match(/imgix\.cosmicjs\.com[^"'\s)]+/);
     let image = "";
-    if (imgMatch) image = "https://" + imgMatch[0].replace(/^\/\//, "").split(/["'\s\)]/)[0];
+    if (imgMatch) image = "https://" + imgMatch[0].replace(/^\/\//, "").split(/["'\s)]/)[0];
     const block = html.slice(m.index, m.index + 600);
     const dateTimeLocMatch = block.match(/(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s*\|\s*(\d{1,2}:\d{2})\s*(?:\[GMT\])?\s*(?:\|\s*([^|<]+?))?(?:\s*$|\s*<)/m);
     let publishedTime = "";
@@ -789,9 +762,9 @@ function parseEpisodesFromShowsHtmlFallback(html) {
     if (!url || seen.has(url)) continue;
     seen.add(url);
     const slug = url.split("/episode/")[1] || "";
-    const imgMatch = html.slice(0, m.index).match(/imgix\.cosmicjs\.com[^"'\s\)]+/);
+    const imgMatch = html.slice(0, m.index).match(/imgix\.cosmicjs\.com[^"'\s)]+/);
     let image = "";
-    if (imgMatch) image = "https://" + imgMatch[0].replace(/^\/\//, "").split(/["'\s\)]/)[0];
+    if (imgMatch) image = "https://" + imgMatch[0].replace(/^\/\//, "").split(/["'\s)]/)[0];
     const block = html.slice(m.index, m.index + 600);
     const dateTimeLocMatch = block.match(/(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s*\|\s*(\d{1,2}:\d{2})\s*(?:\[GMT\])?\s*(?:\|\s*([^|<]+?))?(?:\s*$|\s*<)/m);
     let publishedTime = "";
@@ -873,15 +846,21 @@ async function fetchRecentEpisodes(useCache = true) {
 
 /** Extract Mixcloud URL from episode page, or build from slug (worldwidefm mirrors to mixcloud.com/worldwidefm/). */
 function parseMixcloudUrlFromEpisodeHtml(html, episodeUrl) {
-  const mixcloudMatch = html.match(/https?:\/\/[^"'\s]*mixcloud\.com\/[^"'\s)]+/i);
+  // Try plain URL match first
+  const mixcloudMatch = html.match(/https?:\/\/[^"'\s]*mixcloud\.com\/worldwidefm\/[^"'\s)]+/i);
   if (mixcloudMatch) {
     const raw = mixcloudMatch[0].replace(/&amp;/g, "&").split(/["'\s)]/)[0];
-    if (raw && /mixcloud\.com\/worldwidefm\//i.test(raw)) return raw;
+    if (raw) return raw;
+  }
+  // Try RSC/JSON escaped URL (e.g. "player_url":"https:\/\/www.mixcloud.com\/worldwidefm\/...")
+  const escapedMatch = html.match(/"player_url"\s*:\s*"(https:[^"]*mixcloud\.com[^"]*)"/i);
+  if (escapedMatch) {
+    return escapedMatch[1].replace(/\\\//g, "/");
   }
   const slug = (episodeUrl || "").split("/episode/")[1] || "";
   if (!slug) return "";
-  const mixcloudSlug = slug.replace(/-(\d{4})$/, (_, y) => "-" + y.slice(-2));
-  return `https://www.mixcloud.com/worldwidefm/${mixcloudSlug}/`;
+  // Use the slug as-is for Mixcloud (don't mangle the year)
+  return `https://www.mixcloud.com/worldwidefm/${slug}/`;
 }
 
 /** Get Mixcloud URL for a WWF episode (for play/download; yt-dlp supports Mixcloud). */
@@ -927,7 +906,7 @@ async function getWwfEpisodeInfo(episodeUrl) {
   const descMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
   const description = cleanText(descMatch?.[1] || "");
   const imgMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-  let image = imgMatch ? cleanText(imgMatch[1]) : "";
+  const image = imgMatch ? cleanText(imgMatch[1]) : "";
   const slug = url.split("/episode/")[1] || "";
   const { showName, episodeName } = parseTitleParts(title);
   const mixcloudUrl = parseMixcloudUrlFromEpisodeHtml(html, url);
@@ -1141,7 +1120,7 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
     fetchWwfScheduleEpisodes(true),
     fetchRecentEpisodes(true).then((e) => e.length ? e : fetchRecentEpisodes(false))
   ]);
-  let all = mergeWwfEpisodeSources(scheduleEpisodes, showsEpisodes);
+  const all = mergeWwfEpisodeSources(scheduleEpisodes, showsEpisodes);
   const isShowsUrl = /worldwidefm\.net\/shows/i.test(programName) || programName === `${BASE_URL}/shows`;
   const isHostUrl = /worldwidefm\.net\/hosts\//i.test(programName);
   const q = programName.toLowerCase();
@@ -1401,7 +1380,7 @@ async function searchWwfPrograms(query) {
   const all = mergeWwfEpisodeSources(scheduleEpisodes, recentEpisodes);
 
   // Collect unique show names from episodes
-  let showNames = [...new Set(all.map((e) => e.showName || e.fullTitle).filter(Boolean))];
+  const showNames = [...new Set(all.map((e) => e.showName || e.fullTitle).filter(Boolean))];
   let matchedShows = showNames;
   if (q) {
     const terms = q.split(/\s+/).filter(Boolean);
@@ -1804,11 +1783,11 @@ async function fetchWwfHostPageEpisodes(hostSlug, useCache = true) {
   try {
     const html = await fetchText(`${BASE_URL}/hosts/${encodeURIComponent(hostSlug)}`);
     // Try RSC episode objects first (same approach as /shows page)
-    let episodes = parseRscEpisodes(html);
+    const episodes = parseRscEpisodes(html);
     // Fallback: extract episode links from HTML/RSC payloads
     if (!episodes.length) {
       const seen = new Set();
-      const linkPattern = /\/episode\/([a-z0-9][a-z0-9\-]*)/gi;
+      const linkPattern = /\/episode\/([a-z0-9][a-z0-9-]*)/gi;
       let m;
       while ((m = linkPattern.exec(html)) !== null) {
         const slug = m[1];
@@ -1848,7 +1827,7 @@ async function discoverHostSlug(episodeUrl) {
   if (!episodeUrl) return "";
   try {
     const html = await fetchText(episodeUrl);
-    const hostMatch = html.match(/\/hosts\/([a-z0-9][a-z0-9\-]*)/i);
+    const hostMatch = html.match(/\/hosts\/([a-z0-9][a-z0-9-]*)/i);
     return hostMatch ? hostMatch[1] : "";
   } catch {
     return "";

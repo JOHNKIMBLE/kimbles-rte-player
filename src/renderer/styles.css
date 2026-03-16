@@ -255,6 +255,13 @@ button:disabled {
 .nts-live-section-wrap {
   position: relative;
 }
+.kexp-live-info {
+  margin-bottom: 0.4rem;
+  line-height: 1.5;
+}
+.kexp-live-image-wrap {
+  position: relative;
+}
 .nts-live-audio-wrap {
   padding: 0.5rem 0;
 }
@@ -482,6 +489,14 @@ button:disabled {
 
 .episode-status {
   margin-top: 0.3rem;
+}
+
+.kexp-unavailable {
+  opacity: 0.45;
+}
+
+.kexp-unavailable:hover {
+  opacity: 0.65;
 }
 
 .episode-status-error {

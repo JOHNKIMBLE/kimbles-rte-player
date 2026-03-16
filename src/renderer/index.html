@@ -22,6 +22,7 @@
         <button id="tabWwfBtn" class="secondary">Worldwide FM</button>
         <button id="tabNtsBtn" class="secondary">NTS</button>
         <button id="tabFipBtn" class="secondary">FIP</button>
+        <button id="tabKexpBtn" class="secondary">KEXP</button>
         <button id="tabSchedulesBtn" class="secondary">Schedules</button>
         <button id="tabSettingsBtn" class="secondary">Settings</button>
       </div>
@@ -363,8 +364,8 @@
         <div class="row">
           <label for="fipScheduleBackfillMode">Scheduler Backfill</label>
           <select id="fipScheduleBackfillMode">
-            <option value="new-only">New only</option>
-            <option value="latest-n" selected>Latest N now</option>
+            <option value="new-only" selected>New episodes only</option>
+            <option value="backfill">Download latest N episodes now</option>
           </select>
           <input id="fipScheduleBackfillCount" type="number" min="1" max="100" value="5" />
           <button id="fipAddScheduleBtn" class="secondary">Add Scheduler</button>
@@ -383,6 +384,70 @@
         <h2>FIP Schedulers</h2>
         <p class="hint">Scheduler checks for new FIP podcast episodes in background and auto-downloads unseen ones.</p>
         <div id="fipScheduleList" class="list"></div>
+      </section>
+    </div>
+
+    <div id="kexpTabContent" class="hidden">
+      <section class="panel">
+        <h2>KEXP 90.3 FM — Live</h2>
+        <div id="kexpLiveInfo" class="kexp-live-info"></div>
+        <div class="kexp-live-image-wrap">
+          <div id="kexpLiveNow" class="nts-live-card-wrap status muted">Loading now-playing…</div>
+          <div class="nts-live-audio-wrap nts-live-audio-hidden" id="kexpLiveAudioWrap">
+            <audio id="kexpLiveAudio" controls preload="none" style="width:100%;"></audio>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>KEXP Quick Download</h2>
+        <div class="row">
+          <input id="kexpUrlInput" type="url" placeholder="https://www.kexp.org/shows/12345/" />
+          <button id="kexpDownloadBtn">Download</button>
+        </div>
+        <div id="kexpResult" class="status muted">Idle</div>
+      </section>
+
+      <section class="panel">
+        <h2>KEXP Program Explorer</h2>
+        <div class="row">
+          <input id="kexpProgramSearchInput" type="text" placeholder="Search by show name, genre, description…" />
+          <button id="kexpProgramSearchBtn">Search</button>
+        </div>
+        <div id="kexpProgramSearchResult" class="list hidden"></div>
+        <div class="row">
+          <input id="kexpProgramUrlInput" type="text" placeholder="Program ID or API URL, e.g. 123" />
+          <button id="kexpLoadProgramBtn">Load Shows</button>
+        </div>
+        <div id="kexpProgramMeta" class="status muted">No program loaded.</div>
+        <div class="row">
+          <button id="kexpPrevPageBtn" class="secondary">Prev Page</button>
+          <button id="kexpNextPageBtn" class="secondary">Next Page</button>
+        </div>
+        <div class="row">
+          <label for="kexpScheduleBackfillMode">Scheduler Backfill</label>
+          <select id="kexpScheduleBackfillMode">
+            <option value="new-only" selected>New episodes only</option>
+            <option value="backfill">Download latest N episodes now</option>
+          </select>
+          <input id="kexpScheduleBackfillCount" type="number" min="1" max="100" value="5" />
+          <button id="kexpAddScheduleBtn" class="secondary">Add Scheduler</button>
+        </div>
+        <div id="kexpEpisodesResult" class="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>KEXP Discovery</h2>
+        <p class="hint">Discover random active KEXP programs. Click a card to explore or add to the scheduler.</p>
+        <button id="kexpDiscoverBtn" class="secondary">Discover Shows</button>
+        <div id="kexpDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
+      </section>
+
+
+      <section class="panel">
+        <h2>KEXP Schedulers</h2>
+        <p class="hint">Scheduler checks for new KEXP show recordings and auto-downloads unseen ones.</p>
+        <div id="kexpScheduleList" class="list"></div>
       </section>
     </div>
 

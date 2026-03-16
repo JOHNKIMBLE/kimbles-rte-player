@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const http = require("node:http");
 const https = require("node:https");
 const crypto = require("node:crypto");
@@ -57,9 +58,28 @@ const {
   getFipProgramSummary,
   getFipProgramEpisodes,
   getFipEpisodeStream,
+  getFipEpisodeTracklist,
   normalizeFipProgramUrl
 } = require("./lib/fip");
-const { runYtDlpDownload, runYtDlpJson } = require("./lib/downloader");
+const {
+  LIVE_STATIONS: KEXP_LIVE_STATIONS,
+  normalizeKexpProgramUrl,
+  getKexpNowPlaying,
+  searchKexpPrograms,
+  getKexpDiscovery,
+  getKexpProgramSummary,
+  getKexpProgramEpisodes,
+  getKexpEpisodeTracklist,
+  getKexpSchedule,
+  getKexpEpisodeStream,
+  searchKexpExtendedPrograms,
+  getKexpExtendedDiscovery,
+  getKexpExtendedProgramSummary,
+  getKexpExtendedEpisodes,
+  getKexpExtendedEpisodeStream,
+  getKexpExtendedEpisodeTracklist
+} = require("./lib/kexp");
+const { runYtDlpDownload, runYtDlpJson, runYtDlpGetUrl, spawnYtDlpPipe } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
@@ -73,10 +93,13 @@ let bbcScheduler;
 let wwfScheduler;
 let ntsScheduler;
 let fipScheduler;
+let kexpScheduler;
 let appSettings = null;
 const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
 
 const streamProxyTokens = new Map();
+const ytDlpPipeTokens = new Map();
+const wwfTempAudioTokens = new Map();
 const STREAM_PROXY_TTL_MS = 60 * 60 * 1000;
 let streamProxyServer = null;
 let streamProxyBaseUrl = "";
@@ -99,11 +122,54 @@ function createStreamProxyServer() {
   if (streamProxyServer) return Promise.resolve(streamProxyBaseUrl);
   streamProxyServer = http.createServer((req, res) => {
     const u = new URL(req.url || "", `http://127.0.0.1`);
-    if (u.pathname !== "/stream" || req.method !== "GET") {
+    if ((u.pathname !== "/stream" && u.pathname !== "/ytdlp-pipe" && u.pathname !== "/temp-audio") || req.method !== "GET") {
       res.writeHead(404);
       res.end();
       return;
     }
+    // yt-dlp pipe streaming (legacy, kept for other sources)
+    if (u.pathname === "/ytdlp-pipe") {
+      const pipeToken = u.searchParams.get("token") || "";
+      const pipeEntry = ytDlpPipeTokens.get(pipeToken);
+      if (!pipeEntry) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { "Content-Type": "audio/mpeg", "Transfer-Encoding": "chunked" });
+      const child = spawnYtDlpPipe(pipeEntry.url);
+      child.stdout.pipe(res);
+      res.on("close", () => { try { child.kill(); } catch {} });
+      child.on("error", () => { try { res.end(); } catch {} });
+      return;
+    }
+    // Seekable temp-file serving (WWF episodes downloaded to tmpdir)
+    if (u.pathname === "/temp-audio") {
+      const tempToken = u.searchParams.get("token") || "";
+      const tempEntry = wwfTempAudioTokens.get(tempToken);
+      if (!tempEntry || !fs.existsSync(tempEntry.path)) { res.writeHead(404); res.end(); return; }
+      const stat = fs.statSync(tempEntry.path);
+      const fileSize = stat.size;
+      const range = req.headers.range;
+      if (range) {
+        const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(startStr, 10);
+        const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+        const chunkSize = end - start + 1;
+        res.writeHead(206, {
+          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": chunkSize,
+          "Content-Type": "audio/mpeg"
+        });
+        fs.createReadStream(tempEntry.path, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, {
+          "Content-Length": fileSize,
+          "Accept-Ranges": "bytes",
+          "Content-Type": "audio/mpeg"
+        });
+        fs.createReadStream(tempEntry.path).pipe(res);
+      }
+      return;
+    }
+
     const token = u.searchParams.get("token") || "";
     const entry = streamProxyTokens.get(token);
     if (!entry || !isAllowedStreamProxyHost(entry.url)) {
@@ -142,6 +208,15 @@ function createStreamProxyServer() {
       for (const [t, e] of streamProxyTokens.entries()) {
         if (now - (e.createdAt || 0) > STREAM_PROXY_TTL_MS) streamProxyTokens.delete(t);
       }
+      for (const [t, e] of ytDlpPipeTokens.entries()) {
+        if (now - (e.createdAt || 0) > STREAM_PROXY_TTL_MS) ytDlpPipeTokens.delete(t);
+      }
+      for (const [t, e] of wwfTempAudioTokens.entries()) {
+        if (now - (e.createdAt || 0) > STREAM_PROXY_TTL_MS) {
+          wwfTempAudioTokens.delete(t);
+          try { if (e.path) fs.unlinkSync(e.path); } catch {}
+        }
+      }
     }, 60000);
   }
   return new Promise((resolve) => {
@@ -161,17 +236,11 @@ async function registerStreamProxyUrl(directStreamUrl) {
   return `${streamProxyBaseUrl}/stream?token=${token}`;
 }
 
-function getAppRootDir() {
-  if (app.isPackaged) {
-    const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-      ? path.resolve(process.env.PORTABLE_EXECUTABLE_DIR)
-      : "";
-    if (portableDir) {
-      return portableDir;
-    }
-    return path.dirname(app.getPath("exe"));
-  }
-  return process.cwd();
+async function registerYtDlpPipeUrl(sourceUrl) {
+  await createStreamProxyServer();
+  const token = crypto.randomBytes(12).toString("hex");
+  ytDlpPipeTokens.set(token, { url: sourceUrl, createdAt: Date.now() });
+  return `${streamProxyBaseUrl}/ytdlp-pipe?token=${token}`;
 }
 
 function getDefaultDownloadDir() {
@@ -350,7 +419,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
-function ensureOutputDir(sourceType = "rte") {
+function ensureOutputDir(_sourceType = "rte") {
   const settings = readSettings();
   const outputDir = settings.downloadDir;
   fs.mkdirSync(outputDir, { recursive: true });
@@ -597,14 +666,15 @@ async function previewCue({
   durationSeconds = 0,
   outputDir = "",
   fileName = "",
+  fileStartOffset = 0,
   onProgress = null
 }) {
   const settings = readSettings();
   const raw = String(sourceType || "rte").toLowerCase();
-  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : "rte";
+  const safeSourceType = raw === "bbc" ? "bbc" : raw === "wwf" ? "wwf" : raw === "nts" ? "nts" : raw === "fip" ? "fip" : raw === "kexp" ? "kexp" : "rte";
   const safeOutputDir = String(outputDir || "").trim();
   const safeFileName = String(fileName || "").trim();
-  let inputSource = "";
+  let inputSource;
 
   if (safeOutputDir && safeFileName) {
     inputSource = path.join(safeOutputDir, safeFileName);
@@ -616,6 +686,10 @@ async function previewCue({
     inputSource = (await resolveWwfEpisodeStream(episodeUrl)).streamUrl;
   } else if (safeSourceType === "nts") {
     inputSource = (await resolveNtsEpisodeStream(episodeUrl)).streamUrl;
+  } else if (safeSourceType === "kexp") {
+    const kexpStream = await getKexpEpisodeStream(episodeUrl, runYtDlpJson);
+    inputSource = kexpStream.streamUrl;
+    if (!fileStartOffset) fileStartOffset = Number(kexpStream.startOffset) || 0;
   } else {
     inputSource = (await resolveBbcEpisodeStream(episodeUrl)).streamUrl;
   }
@@ -631,6 +705,7 @@ async function previewCue({
       programTitle: String(programTitle || "").trim(),
       tracklistUrl: String(tracklistUrl || "").trim(),
       durationSecondsHint: Number(durationSeconds || 0),
+      fileStartOffset: Number(fileStartOffset) || 0,
       fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
       auddTrackMatching: Boolean(settings.auddTrackMatching),
       auddApiToken: String(settings.auddApiToken || ""),
@@ -1059,45 +1134,21 @@ ipcMain.handle("bbc-episode-stream", async (_event, { episodeUrl }) => {
 
 async function resolveWwfEpisodeStream(episodeUrl) {
   const url = String(episodeUrl || "").trim();
-  if (!url) {
-    throw new Error("episodeUrl is required.");
-  }
-  const tryStream = async (sourceUrl) => {
-    const json = await runYtDlpJson({
-      url: sourceUrl,
-      args: ["-J", "--no-playlist", "--playlist-items", "1"]
-    });
-    const direct = String(
-      json?.url
-      || json?.requested_downloads?.[0]?.url
-      || json?.formats?.find((f) => f && String(f.protocol || "").includes("m3u8"))?.url
-      || ""
-    ).trim();
-    if (!direct) throw new Error("No playable stream URL found.");
-    return {
-      episodeUrl: url,
-      streamUrl: direct,
-      title: String(json?.title || "").trim(),
-      image: String(json?.thumbnail || "").trim()
-    };
-  };
-  let result;
-  try {
-    result = await tryStream(url);
-  } catch {
+  if (!url) throw new Error("episodeUrl is required.");
+
+  // If already a Mixcloud URL, use it directly; otherwise resolve via WWF episode page
+  let sourceUrl;
+  if (/mixcloud\.com\//i.test(url)) {
+    sourceUrl = url;
+  } else {
     const mixcloudUrl = await getWwfEpisodeMixcloudUrl(url).catch(() => "");
-    if (mixcloudUrl) {
-      try {
-        result = await tryStream(mixcloudUrl);
-      } catch (e) {
-        throw new Error(e?.message || "Mixcloud source failed. Try downloading the episode first.");
-      }
-    } else {
-      throw new Error("No playable Worldwide FM stream found. Episodes are mirrored on Mixcloud; the app could not resolve the link. Try downloading the episode first.");
-    }
+    sourceUrl = mixcloudUrl || url;
   }
-  result.streamUrl = await registerStreamProxyUrl(result.streamUrl);
-  return result;
+
+  // Mixcloud uses AES-128 encrypted HLS — pipe yt-dlp decoded output through the
+  // local proxy server for fast playback start (~5-10s). No seek support.
+  const streamUrl = await registerYtDlpPipeUrl(sourceUrl);
+  return { episodeUrl: url, streamUrl, title: "", image: "" };
 }
 
 async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
@@ -1213,7 +1264,7 @@ async function resolveNtsEpisodeStream(episodeUrl) {
     return { episodeUrl: url, streamUrl: direct, title: String(json?.title || "").trim(), image: String(json?.thumbnail || "").trim() };
   } catch (err) {
     await getNtsEpisodeInfo(url).catch(() => ({}));
-    throw new Error(err?.message || "No playable NTS stream found. Try downloading the episode first.");
+    throw new Error(err?.message || "No playable NTS stream found. Try downloading the episode first.", { cause: err });
   }
 }
 
@@ -1301,6 +1352,197 @@ async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTi
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
+
+// ── KEXP IPC handlers ─────────────────────────────────────────────────────────
+
+async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+  const sourceUrl = String(episodeUrl || "").trim();
+  if (!sourceUrl) throw new Error("episodeUrl is required.");
+  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "kexp-episode");
+
+  // Resolve direct StreamGuys archive MP3 URL via KEXP get_streaming_url API
+  const streamInfo = await getKexpEpisodeStream(sourceUrl, null, publishedTime);
+  const sgUrl = streamInfo.streamUrl;
+  const sgOffset = Number(streamInfo.startOffset) || 0;
+
+  const download = await downloadFromManifest({
+    sourceUrl: sgUrl,
+    manifestUrl: sgUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    publishedTime: publishedTime || resolvedTitle,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl,
+    onProgress,
+    sourceType: "kexp",
+    forceDownload
+  });
+  const resolvedArtwork = String(artworkUrl || "").trim();
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "kexp",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "kexp",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    fileStartOffset: sgOffset,
+    onProgress
+  });
+  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
+}
+
+ipcMain.handle("download-kexp-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
+  const onProgress = progressToken
+    ? (payload) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) win.webContents.send("download-progress", { token: progressToken, ...payload });
+      }
+    : undefined;
+  return downloadKexpEpisode({
+    episodeUrl: String(pageUrl || ""),
+    title: String(title || "").trim(),
+    programTitle: String(programTitle || "").trim(),
+    publishedTime: String(publishedTime || "").trim(),
+    artworkUrl: String(image || "").trim(),
+    onProgress,
+    forceDownload: Boolean(forceDownload)
+  });
+});
+
+ipcMain.handle("download-kexp-extended-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
+  const onProgress = progressToken
+    ? (payload) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) win.webContents.send("download-progress", { token: progressToken, ...payload });
+      }
+    : undefined;
+  // Resolve CloudFront stream URL from Splixer mix
+  const streamInfo = await getKexpExtendedEpisodeStream(String(pageUrl || ""));
+  const streamUrl = streamInfo.streamUrl;
+  return downloadKexpEpisode({
+    episodeUrl: streamUrl,
+    title: String(title || streamInfo.title || "").trim(),
+    programTitle: String(programTitle || streamInfo.programTitle || "").trim(),
+    publishedTime: String(publishedTime || streamInfo.broadcastedAt || "").trim(),
+    artworkUrl: String(image || streamInfo.image || "").trim(),
+    onProgress,
+    forceDownload: Boolean(forceDownload)
+  });
+});
+
+ipcMain.handle("kexp-live-stations", () => {
+  return KEXP_LIVE_STATIONS;
+});
+
+ipcMain.handle("kexp-live-now", async () => {
+  return getKexpNowPlaying();
+});
+
+ipcMain.handle("kexp-program-search", async (_event, { query }) => {
+  try {
+    return await searchKexpPrograms(query || "");
+  } catch (e) {
+    return { results: [], error: e?.message || "Search unavailable" };
+  }
+});
+
+ipcMain.handle("kexp-discovery", async (_event, { count }) => {
+  try {
+    return await getKexpDiscovery(count || 12);
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("kexp-program-summary", async (_event, { programUrl }) => {
+  return getKexpProgramSummary(programUrl || "");
+});
+
+ipcMain.handle("kexp-program-episodes", async (_event, { programUrl, page = 1 }) => {
+  return getKexpProgramEpisodes(programUrl, page);
+});
+
+ipcMain.handle("kexp-episode-tracklist", async (_event, { episodeUrl }) => {
+  const tracks = await getKexpEpisodeTracklist(episodeUrl || "");
+  return { tracks };
+});
+
+ipcMain.handle("kexp-episode-stream", async (_event, { episodeUrl, startTime }) => {
+  const info = await getKexpEpisodeStream(episodeUrl, runYtDlpJson, startTime);
+  // Proxy CloudFront URLs through the local stream proxy to avoid CORS in the renderer
+  if (info?.streamUrl && /cloudfront\.net/i.test(info.streamUrl)) {
+    info.streamUrl = await registerStreamProxyUrl(info.streamUrl);
+  }
+  return info;
+});
+
+ipcMain.handle("kexp-schedule", async () => {
+  return getKexpSchedule();
+});
+
+// ── KEXP Extended Archive (Splixer) IPC handlers ───────────────────────────
+
+ipcMain.handle("kexp-extended-program-search", async (_event, { query }) => {
+  const results = await searchKexpExtendedPrograms(query || "");
+  return { results };
+});
+
+ipcMain.handle("kexp-extended-discovery", async () => {
+  const results = await getKexpExtendedDiscovery(12);
+  return { results };
+});
+
+ipcMain.handle("kexp-extended-program-summary", async (_event, { programUrl }) => {
+  return getKexpExtendedProgramSummary(programUrl || "");
+});
+
+ipcMain.handle("kexp-extended-program-episodes", async (_event, { programUrl, page = 1 }) => {
+  return getKexpExtendedEpisodes(programUrl, page);
+});
+
+ipcMain.handle("kexp-extended-episode-stream", async (_event, { episodeUrl }) => {
+  const result = await getKexpExtendedEpisodeStream(episodeUrl || "");
+  result.streamUrl = await registerStreamProxyUrl(result.streamUrl);
+  return result;
+});
+
+ipcMain.handle("kexp-extended-episode-tracklist", async (_event, { episodeUrl }) => {
+  const tracks = await getKexpExtendedEpisodeTracklist(episodeUrl || "");
+  return { tracks };
+});
+
+ipcMain.handle("kexp-scheduler-list", async () => {
+  return kexpScheduler.list();
+});
+
+ipcMain.handle("kexp-scheduler-add", async (_event, { programUrl, options }) => {
+  const normalized = normalizeKexpProgramUrl(programUrl || "");
+  return kexpScheduler.add(normalized, options || {});
+});
+
+ipcMain.handle("kexp-scheduler-remove", async (_event, { scheduleId }) => {
+  kexpScheduler.remove(scheduleId);
+  return kexpScheduler.list();
+});
+
+ipcMain.handle("kexp-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
+  kexpScheduler.setEnabled(scheduleId, enabled);
+  return kexpScheduler.list();
+});
+
+ipcMain.handle("kexp-scheduler-check-one", async (_event, { scheduleId }) => {
+  return kexpScheduler.checkOne(scheduleId);
+});
 
 ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
   const onProgress = progressToken
@@ -1392,6 +1634,11 @@ ipcMain.handle("fip-program-episodes", async (_event, { programUrl, page = 1 }) 
 
 ipcMain.handle("fip-episode-stream", async (_event, { episodeUrl }) => {
   return getFipEpisodeStream(episodeUrl, runYtDlpJson);
+});
+
+ipcMain.handle("fip-episode-tracklist", async (_event, { episodeUrl, startTs, durationSecs }) => {
+  const tracks = await getFipEpisodeTracklist(episodeUrl || "", { startTs: Number(startTs || 0), durationSecs: Number(durationSecs || 0) });
+  return { tracks };
 });
 
 ipcMain.handle("fip-scheduler-list", async () => {
@@ -1585,11 +1832,12 @@ ipcMain.handle("cue-preview", async (event, payload = {}) => {
     durationSeconds: Number(payload.durationSeconds || 0),
     outputDir: String(payload.outputDir || ""),
     fileName: String(payload.fileName || ""),
+    fileStartOffset: Number(payload.fileStartOffset || 0),
     onProgress: (progress) => emitRendererProgress(event.sender, String(payload.progressToken || "").trim(), progress)
   });
 });
 
-ipcMain.handle("settings-pick-download-dir", async (event, payload = {}) => {
+ipcMain.handle("settings-pick-download-dir", async (event, _payload = {}) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const current = readSettings();
   const defaultPath = current.downloadDir;
@@ -1790,6 +2038,25 @@ app.whenReady().then(() => {
       })
   });
 
+  kexpScheduler = createSchedulerStore({
+    app,
+    dataDir: path.join(app.getPath("userData"), "kexp"),
+    getProgramSummary: async (programUrl) => getKexpProgramSummary(programUrl),
+    getProgramEpisodes: async (programUrl, page) => getKexpProgramEpisodes(programUrl, page),
+    onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("kexp", schedule, latest),
+    onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("kexp", schedule, downloaded),
+    onScheduleRunError: (schedule, error) => onScheduleError("kexp", schedule, error),
+    runEpisodeDownload: async (episode) =>
+      downloadKexpEpisode({
+        episodeUrl: episode.episodeUrl,
+        title: episode.title || episode.fullTitle,
+        programTitle: episode.programTitle || "KEXP",
+        publishedTime: episode.publishedTime,
+        artworkUrl: episode.image || "",
+        forceDownload: episode.forceDownload || false
+      })
+  });
+
   scheduler.start();
   scheduler.runAll().catch(() => {});
   bbcScheduler.start();
@@ -1800,6 +2067,8 @@ app.whenReady().then(() => {
   ntsScheduler.runAll().catch(() => {});
   fipScheduler.start();
   fipScheduler.runAll().catch(() => {});
+  kexpScheduler.start();
+  kexpScheduler.runAll().catch(() => {});
 
   createWindow();
 
@@ -1831,5 +2100,8 @@ app.on("before-quit", () => {
   }
   if (fipScheduler) {
     fipScheduler.stop();
+  }
+  if (kexpScheduler) {
+    kexpScheduler.stop();
   }
 });

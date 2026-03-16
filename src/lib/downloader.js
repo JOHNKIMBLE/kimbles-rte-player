@@ -77,20 +77,6 @@ function pickThumbnailFile(tempDir) {
   return files[0]?.filePath || null;
 }
 
-function pickExistingByExt(outputDir, preferredBaseName, ext) {
-  const preferred = path.join(outputDir, `${preferredBaseName}${ext}`);
-  if (fs.existsSync(preferred)) {
-    return preferred;
-  }
-
-  const files = walkFiles(outputDir)
-    .filter((filePath) => path.extname(filePath).toLowerCase() === ext.toLowerCase())
-    .map((filePath) => ({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs }))
-    .sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-  return files[0]?.filePath || null;
-}
-
 function pickExistingExact(outputDir, preferredBaseName, ext) {
   const candidate = path.join(outputDir, `${preferredBaseName}${ext}`);
   if (fs.existsSync(candidate)) {
@@ -742,6 +728,58 @@ function runYtDlpDownload({
   });
 }
 
+/**
+ * Run yt-dlp with --get-url -f bestaudio and return the first URL line.
+ * More reliable than -J for extractors that have changed their format API
+ * (e.g. Mixcloud). Throws if no URL is returned or yt-dlp exits non-zero.
+ */
+function runYtDlpGetUrl({ url, format = "bestaudio", extraArgs = [] }) {
+  const inputUrl = String(url || "").trim();
+  if (!inputUrl) throw new Error("No URL provided.");
+
+  const runner = resolveYtDlpCommand();
+  const cmdArgs = [
+    ...runner.baseArgs,
+    "--ignore-config",
+    "-f", format,
+    "--get-url",
+    "--no-playlist",
+    "--playlist-items", "1",
+    ...extraArgs,
+    inputUrl
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(runner.command, cmdArgs, {
+      cwd: runner.cwd,
+      shell: Boolean(runner.shell)
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start yt-dlp: ${error.message}`));
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`yt-dlp exited with code ${code}\n${stderr || stdout}`));
+        return;
+      }
+      const firstLine = String(stdout || "").trim().split(/\r?\n/)[0].trim();
+      if (!firstLine || !firstLine.startsWith("http")) {
+        reject(new Error("yt-dlp --get-url returned no URL."));
+        return;
+      }
+      resolve(firstLine);
+    });
+  });
+}
+
 function runYtDlpJson({ url, args = [] }) {
   const inputUrl = String(url || "").trim();
   if (!inputUrl) {
@@ -796,8 +834,32 @@ function runYtDlpJson({ url, args = [] }) {
   });
 }
 
+/**
+ * Spawn yt-dlp to extract and decode audio from a URL, piping output to stdout.
+ * Returns the spawned child process — caller should pipe child.stdout to a response.
+ * Use for sources where direct URL extraction won't work (e.g. AES-encrypted HLS).
+ */
+function spawnYtDlpPipe(url, extraArgs = []) {
+  const runner = resolveYtDlpCommand();
+  const args = [
+    ...runner.baseArgs,
+    "--ignore-config",
+    "--no-playlist",
+    "--playlist-items", "1",
+    "-o", "-",
+    "-x",
+    "--audio-format", "mp3",
+    "--audio-quality", "0",
+    ...extraArgs,
+    String(url)
+  ];
+  return spawn(runner.command, args, { cwd: runner.cwd, shell: Boolean(runner.shell) });
+}
+
 module.exports = {
   resolveBundledFfmpegDir,
   runYtDlpDownload,
-  runYtDlpJson
+  runYtDlpGetUrl,
+  runYtDlpJson,
+  spawnYtDlpPipe
 };

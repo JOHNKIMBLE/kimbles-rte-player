@@ -67,7 +67,7 @@ function parseDurationToSeconds(input) {
   return hh * 3600 + mm * 60 + ss;
 }
 
-function runFfmpeg(args = [], audioPath) {
+function runFfmpeg(args = [], _audioPath) {
   const ffmpegDir = resolveBundledFfmpegDir();
   const ffmpegExe = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
   const command = ffmpegDir ? path.join(ffmpegDir, ffmpegExe) : ffmpegExe;
@@ -137,48 +137,6 @@ function detectSilenceBoundariesSeconds(audioPath) {
     .concat(starts, ends)
     .filter((value) => Number.isFinite(value))
     .map((value) => Math.max(0, Math.floor(value)));
-  return uniqSortedIntegers(boundaries, 20);
-}
-
-function detectEnergyBoundariesSeconds(audioPath) {
-  const result = runFfmpeg([
-    "-i", audioPath,
-    "-af", "astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-",
-    "-f", "null",
-    "-"
-  ], audioPath);
-  const text = `${result.stdout || ""}\n${result.stderr || ""}`;
-  const lines = text.split(/\r?\n/);
-  const samples = [];
-  let pendingTime = null;
-  for (const line of lines) {
-    const timeMatch = line.match(/pts_time:([0-9.]+)/i);
-    if (timeMatch) {
-      pendingTime = Number(timeMatch[1]);
-      continue;
-    }
-    const rmsMatch = line.match(/lavfi\.astats\.Overall\.RMS_level=([-0-9.]+)/i);
-    if (rmsMatch && Number.isFinite(pendingTime)) {
-      const db = Number(rmsMatch[1]);
-      if (Number.isFinite(db)) {
-        samples.push({ t: pendingTime, db });
-      }
-    }
-  }
-  if (samples.length < 10) {
-    return [];
-  }
-  const boundaries = [];
-  let lastAccepted = -9999;
-  for (let i = 1; i < samples.length; i += 1) {
-    const prev = samples[i - 1];
-    const curr = samples[i];
-    const delta = curr.db - prev.db;
-    if (delta >= 4.5 && curr.t - lastAccepted >= 25) {
-      boundaries.push(curr.t);
-      lastAccepted = curr.t;
-    }
-  }
   return uniqSortedIntegers(boundaries, 20);
 }
 
@@ -345,8 +303,8 @@ function parseTrackLinesWithTimes(lines) {
     }
     const matchA = line.match(/^(?:#?\d{1,3}\s*[.)-]?\s*)?\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*(?:-|–|—|\||\)|\.)?\s*(.+)$/);
     const matchB = line.match(/^(.+?)\s*(?:-|–|—|\|)\s*\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?$/);
-    let stamp = "";
-    let rest = "";
+    let stamp;
+    let rest;
     if (matchA) {
       stamp = matchA[1];
       rest = matchA[2];
@@ -2024,9 +1982,12 @@ async function buildCueForInput({
   ffmpegCueSilenceDetect = true,
   ffmpegCueLoudnessDetect = true,
   ffmpegCueSpectralDetect = true,
+  fileStartOffset = 0,
   onProgress = null,
   getRteTracks,
-  getBbcTracks
+  getBbcTracks,
+  getKexpTracks,
+  getFipTracks
 }) {
   const resolvedInput = resolveCueInputSource({ audioPath, streamUrl, inputSource });
   const resolvedSource = resolvedInput.inputSource;
@@ -2124,6 +2085,45 @@ async function buildCueForInput({
       tracks = Array.isArray(payload?.tracks) ? payload.tracks : [];
       if (tracks.length) {
         source = "bbc-music-played";
+      }
+    } catch {}
+  }
+
+  if (!tracks.length && sourceType === "kexp" && typeof getKexpTracks === "function" && episodeUrl) {
+    emitProgress(onProgress, {
+      stage: "tracklist",
+      message: "Cue: Loading KEXP episode tracklist..."
+    });
+    try {
+      const payload = await getKexpTracks(episodeUrl);
+      tracks = Array.isArray(payload) ? payload : [];
+      if (tracks.length) {
+        // KEXP tracks have startSeconds relative to show start.
+        // fileStartOffset (sg-offset) shifts them to be relative to the audio file start
+        // so they align with the ffmpeg boundary timestamps.
+        const offset = Number(fileStartOffset) || 0;
+        if (offset > 0) {
+          tracks = tracks.map((t) =>
+            t.startSeconds != null
+              ? { ...t, startSeconds: t.startSeconds + offset }
+              : t
+          );
+        }
+        source = "kexp-episode-tracklist";
+      }
+    } catch {}
+  }
+
+  if (!tracks.length && sourceType === "fip" && typeof getFipTracks === "function" && episodeUrl) {
+    emitProgress(onProgress, {
+      stage: "tracklist",
+      message: "Cue: Loading FIP song history..."
+    });
+    try {
+      const payload = await getFipTracks(episodeUrl);
+      tracks = Array.isArray(payload) ? payload : [];
+      if (tracks.length) {
+        source = "fip-song-history";
       }
     } catch {}
   }

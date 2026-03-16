@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Electron desktop app + Express web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering radio episodes from **RTE**, **BBC**, **Worldwide FM**, **NTS**, and **FIP**.
+Electron desktop app + Express web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering radio episodes from **RTE**, **BBC**, **Worldwide FM**, **NTS**, **FIP**, and **KEXP**.
 
 **Version**: 4.5.2 | **License**: MIT | **Node**: 20+ | **Electron**: 37+
 
@@ -25,7 +25,8 @@ src/
 │   ├── nts.js         NTS: 2 live streams, API + slug-guessing search, tracklists
 │   ├── worldwidefm.js WWF: live embed, RSC payload parsing, host metadata, Mixcloud
 │   ├── fip.js         FIP: 13 live stations, webradio API, livemeta, podcast SvelteKit parser
-│   ├── downloader.js  yt-dlp wrapper, ffmpeg post-process, HLS handling
+│   ├── kexp.js        KEXP: program search, episodes, StreamGuys/CloudFront stream resolution, tracklist API
+│   ├── downloader.js  yt-dlp wrapper, ffmpeg post-process, HLS handling, spawnYtDlpPipe
 │   ├── scheduler.js   Per-source scheduler store, cadence detection, backfill, retry
 │   ├── download-queue.js  Concurrent queue with pause/resume/cancel
 │   ├── path-format.js Token-based output path templating
@@ -36,8 +37,8 @@ src/
 │   ├── cue-reader.js  Parse .cue files back into chapter arrays
 │   └── feeds.js       RSS/JSON feed export per scheduled program
 └── renderer/
-    ├── index.html     Main UI template (tabs: RTE, BBC, WWF, NTS, FIP, Settings)
-    ├── renderer.js    ~4800 lines, all UI logic, state management, event handlers
+    ├── index.html     Main UI template (tabs: RTE, BBC, WWF, NTS, FIP, KEXP, Settings)
+    ├── renderer.js    ~5000 lines, all UI logic, state management, event handlers
     ├── styles.css     ~940 lines
     └── web-api-bridge.js  HTTP bridge for server mode (replaces IPC)
 ```
@@ -52,7 +53,9 @@ src/
 
 **NTS** (`src/lib/nts.js`): Uses NTS API (`/api/v2/`) for shows, episodes, search. Search runs two parallel strategies: paginated show index + direct slug guessing (15+ variations via `generateSlugGuesses()`). `timeslot` field parsed for schedule (e.g. "MONDAY - THURSDAY / 10AM - 1PM / WEEKLY"). Shows cadence, location, broadcast schedule, description, and genre tags in search results.
 
-**Worldwide FM** (`src/lib/worldwidefm.js`): Next.js App Router site using RSC (React Server Components). Data extracted by parsing `self.__next_f.push()` payloads from HTML. Host slugs scraped from both `/shows` and `/shows?type=hosts-series` in parallel. Search runs three parallel strategies: episode matching, known host slug matching, direct host slug guessing. Host metadata (description, cadence, location) extracted by positional scoping in RSC chunks — find `displayName`, then walk forward to `show.metadata.description` within bounded range. Episodes resolved via Mixcloud URLs embedded in RSC data.
+**Worldwide FM** (`src/lib/worldwidefm.js`): Next.js App Router site using RSC (React Server Components). Data extracted by parsing `self.__next_f.push()` payloads from HTML. Host slugs scraped from both `/shows` and `/shows?type=hosts-series` in parallel. Search runs three parallel strategies: episode matching, known host slug matching, direct host slug guessing. Host metadata (description, cadence, location) extracted by positional scoping in RSC chunks — find `displayName`, then walk forward to `show.metadata.description` within bounded range. Episodes resolved via Mixcloud URLs embedded in RSC data. **Episode play** uses yt-dlp pipe streaming (Mixcloud AES-128 HLS is not browser-playable directly): `spawnYtDlpPipe(mixcloudUrl)` pipes decoded MP3 to stdout; the stream proxy server (`/ytdlp-pipe`) forwards it to the audio element. Fast start (~5–10s), no seek support.
+
+**KEXP** (`src/lib/kexp.js`): kexp.org public API. Program search, episode list, tracklist fetch (`startSeconds` per track). Stream resolution: tries StreamGuys URL first, then constructs CloudFront CDN URL (`https://d2tp7idim4nvvu.cloudfront.net/segments/{date}/{date}_{time}.m4a`) from `start_time`; CloudFront is probed with a GET Range request (`bytes=0-0`) — more reliable than HEAD. `sg-offset` field (seconds) marks where the show starts within a large multi-show StreamGuys recording. Play handler passes `episodeUrl` to `playEpisodeWithBackgroundCue` so `ensureEpisodeTracks` can fetch the tracklist; chapter `startSec` values are then shifted by `startOffset` (sg-offset) so clicking a chapter seeks to the correct file position. UI buttons (Play, Download) are always enabled regardless of episode age — the backend returns an error if neither source has the file.
 
 **FIP** (`src/lib/fip.js`): Radio France public APIs. 13 live stations. No API key required.
 - **Live now-playing**: `GET https://www.radiofrance.fr/fip/api/live` (main station) or `GET .../fip/api/live?webradio=fip_X` (sub-stations). Parallel call to `api.radiofrance.fr/livemeta/pull/{id}` for current song detail. Livemeta IDs 7, 64–78 are supported; IDs 95, 96, 709 (Hip-Hop, Sacré Français, Cultes) are not supported by livemeta/pull and rely solely on the webradio API.
@@ -77,6 +80,27 @@ WWF uses Cosmic JS CMS behind Next.js. The RSC payloads contain serialized compo
 3. `ffmpeg` post-processes: format conversion, optional `loudnorm` normalization
 4. `tags.js` applies ID3/MP4 metadata and artwork (`AtomicParsley` for m4a, `ffmpeg` for mp3)
 5. Optional CUE/chapter generation after media file exists
+
+### spawnYtDlpPipe (downloader.js)
+
+`spawnYtDlpPipe(url, extraArgs = [])` — spawns yt-dlp with `-o - -x --audio-format mp3 --audio-quality 0`, returns the child process with stdout piped. Used for WWF/Mixcloud episode play where the browser cannot decrypt AES-128 HLS directly. The stream proxy server (`/ytdlp-pipe` in Electron, `/api/wwf/ytdlp-pipe` in server mode) pipes child.stdout to the HTTP response.
+
+### Stream Proxy Server (Electron — main.js)
+
+`createStreamProxyServer()` creates a local `http.createServer` on a random port. Handles three path types:
+- `/stream?token=TOKEN` — proxy a remote CDN URL (Range request forwarding, used for KEXP CloudFront)
+- `/ytdlp-pipe?token=TOKEN` — pipe yt-dlp decoded audio (used for WWF Mixcloud play)
+- `/temp-audio?token=TOKEN` — serve a local temp file with Range support (infrastructure exists, not currently wired to any play flow)
+
+Path guard: `(pathname !== "/stream" && pathname !== "/ytdlp-pipe" && pathname !== "/temp-audio") || method !== "GET"` — all three paths must be whitelisted or requests are rejected with 404.
+
+### KEXP Chapter Alignment
+
+KEXP StreamGuys files are large multi-show recordings. `sg-offset` (seconds) is where the specific show starts within the file. The audio element seeks to `sg-offset` on `loadedmetadata`. KEXP tracklist `startSeconds` are show-relative (0 = show start). In `playEpisodeWithBackgroundCue`, chapters built from tracks via `estimateChaptersFromTracks` are post-shifted: `ch.startSec += startOffset` when `startOffset > 0 && chaptersFromTracks`. This aligns chapter positions with actual `currentTime` in the audio element.
+
+### Genre Pills (BBC, RTE)
+
+`getBbcProgramSummary` and `getRteProgramSummary` now extract `genres` arrays from JSON-LD (`keywords`, `genre`, DC.subject). Rendered as `<span class="genre-pill">` in search results and episode metadata rows. The `genres` field is optional; cards without genre data render normally.
 
 ### Timezone Handling
 
@@ -134,7 +158,7 @@ Runs in child process via `cue-worker.js`. Multiple detection algorithms merged:
 
 All source tabs display rich metadata pills on program/search result cards:
 - **Cadence pill**: daily / weekly / irregular (when detected)
-- **Genre pills**: from API or scraped taxonomy fields
+- **Genre pills**: from API or scraped taxonomy fields (BBC and RTE: JSON-LD extraction; NTS: API genres array; WWF: RSC taxonomy; FIP: concept taxonomies)
 - **Airtime pill**: broadcast time in user's local timezone
 - **Location pill**: city/country when available (NTS, WWF)
 
@@ -159,6 +183,10 @@ Scheduler CRUD per source:
 
 Queue: `/api/download-queue/*` (stats, snapshot, pause, resume, cancel, clear-pending)
 
+KEXP-specific: `GET /api/kexp/program/search`, `GET /api/kexp/program/episodes`, `GET /api/kexp/program/summary`, `GET /api/kexp/episode/stream`, `GET /api/kexp/episode/playlist`, `POST /api/download/kexp/url`
+
+WWF-specific extras: `GET /api/wwf/ytdlp-pipe?url=` (Mixcloud yt-dlp pipe stream for web mode)
+
 Other: `/api/settings`, `/api/local-playback-url`, `/api/local-audio/:token`, `/api/cue/generate`, `/api/cue/preview`, `/api/progress/stream` (SSE)
 
 ### IPC Handlers (main.js)
@@ -178,8 +206,8 @@ Single `state` object holds all UI state. Key properties:
 - Player state: current track, chapters, artwork, playback position
 - Queue state: active/pending/recent downloads
 
-Tabs: RTE, BBC, Worldwide FM, NTS, FIP, Settings. Each source tab has:
-- Live section (stations, now playing)
+Tabs: RTE, BBC, Worldwide FM, NTS, FIP, KEXP, Settings. Each source tab has:
+- Live section (stations, now playing) — not applicable to KEXP
 - Quick download by URL
 - Program explorer (search → load → episodes with pagination)
 - Scheduler management (add/remove/enable/disable/run/backfill)

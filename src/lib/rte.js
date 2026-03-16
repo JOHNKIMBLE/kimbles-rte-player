@@ -18,18 +18,7 @@ const programCache = {
 };
 const programSummaryCache = new Map();
 
-function decodeHtml(input) {
-  return String(input || "")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function cleanText(input) {
-  return decodeHtml(String(input || "")).replace(/\s+/g, " ").trim();
-}
+const { cleanText, inferCadence } = require("./utils");
 
 function cleanTitle(title) {
   return cleanText(title).replace(/\s+-\s+[^-]+$/, "").trim();
@@ -179,37 +168,6 @@ async function extractRteInfo(pageUrl) {
   };
 }
 
-function inferCadence(episodes) {
-  const times = episodes
-    .map((item) => new Date(item.publishedTime).getTime())
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => b - a);
-
-  if (times.length < 3) {
-    return {
-      cadence: "unknown",
-      averageDaysBetween: null
-    };
-  }
-
-  const dayDiffs = [];
-  for (let i = 0; i < Math.min(times.length - 1, 8); i += 1) {
-    const diffDays = Math.abs(times[i] - times[i + 1]) / (1000 * 60 * 60 * 24);
-    dayDiffs.push(diffDays);
-  }
-
-  const average = dayDiffs.reduce((sum, value) => sum + value, 0) / dayDiffs.length;
-
-  if (average <= 2) {
-    return { cadence: "daily", averageDaysBetween: Number(average.toFixed(2)) };
-  }
-
-  if (average <= 9) {
-    return { cadence: "weekly", averageDaysBetween: Number(average.toFixed(2)) };
-  }
-
-  return { cadence: "irregular", averageDaysBetween: Number(average.toFixed(2)) };
-}
 
 function mapEpisodeItem(item) {
   const clipId = String(item.clip_id || item.item_id || "").trim();
@@ -301,12 +259,43 @@ async function getProgramSummary(programUrl) {
       /<span[^>]+id=["']datetimePlayer["'][^>]*>([^<]+)<\/span>/i
     ]) || "";
 
+  // Extract genres from JSON-LD, Dublin Core subject, or keywords meta
+  let genres = [];
+  for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const data = JSON.parse(m[1]);
+      const items = Array.isArray(data) ? data : [data];
+      for (const item of items) {
+        if (item.genre) {
+          const g = Array.isArray(item.genre) ? item.genre : [item.genre];
+          genres.push(...g.map((x) => cleanText(String(x))).filter(Boolean));
+        }
+      }
+    } catch {}
+  }
+  if (!genres.length) {
+    const dcSubject = findFirstMatch(html, [
+      /<meta\s+name=["']DC\.subject["']\s+content=["']([^"']+)["']/i,
+      /<meta\s+name=["']dc\.subject["']\s+content=["']([^"']+)["']/i
+    ]);
+    if (dcSubject) {
+      genres = dcSubject.split(/[,;]/).map((k) => k.trim()).filter(Boolean).slice(0, 6);
+    }
+  }
+  if (!genres.length) {
+    const kwMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
+    if (kwMatch) {
+      genres = kwMatch[1].split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
+    }
+  }
+
   const summary = {
     programUrl: normalizedProgramUrl,
     title: cleanTitle(title),
     description: cleanText(description),
     image: image ? toAbsoluteRteUrl(image) : "",
-    runSchedule: dublinScheduleToUtc(cleanText(runSchedule))
+    runSchedule: dublinScheduleToUtc(cleanText(runSchedule)),
+    genres: [...new Set(genres)].slice(0, 6)
   };
 
   programSummaryCache.set(normalizedProgramUrl, summary);
@@ -432,14 +421,16 @@ async function searchPrograms(query) {
           title: summary.title || item.title,
           description: summary.description,
           image: summary.image,
-          runSchedule: summary.runSchedule
+          runSchedule: summary.runSchedule,
+          genres: summary.genres || []
         };
       } catch {
         return {
           ...item,
           description: "",
           image: "",
-          runSchedule: ""
+          runSchedule: "",
+          genres: []
         };
       }
     })

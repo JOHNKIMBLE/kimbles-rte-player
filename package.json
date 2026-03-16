@@ -1,6 +1,6 @@
 {
   "name": "rte-ytdlp-electron",
-  "version": "4.5.2",
+  "version": "5.2.7",
   "description": "Electron app to download RTE/BBC radio episodes via yt-dlp",
   "main": "src/main.js",
   "scripts": {
@@ -8,6 +8,8 @@
     "start:server": "node src/server.js",
     "postinstall": "node scripts/bootstrap-yt-dlp.js",
     "bootstrap:all-binaries": "node -e \"process.env.BOOTSTRAP_ALL_VENDOR_BINARIES='1'; require('./scripts/bootstrap-yt-dlp.js')\"",
+    "test": "jest",
+    "lint": "eslint src/",
     "test:extract": "node scripts/test-extract.js",
     "generate:icon": "node scripts/generate-icon.js",
     "prepack:win": "npm run generate:icon",
@@ -21,10 +23,14 @@
     "express": "^4.21.2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "electron": "^37.0.0",
     "electron-builder": "^26.0.12",
+    "eslint": "^10.0.3",
+    "jest": "^30.3.0",
     "png-to-ico": "^2.1.8",
-    "sharp": "^0.34.4"
+    "sharp": "^0.34.4",
+    "supertest": "^7.2.2"
   },
   "build": {
     "appId": "com.conno.rteytdlp",

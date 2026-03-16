@@ -1,13 +1,14 @@
 # Kimble's RTE Player
 
-Electron desktop app plus optional web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering **RTE, BBC, Worldwide FM, NTS, and FIP** radio episodes.
+Electron desktop app plus optional web/server mode for browsing, streaming, downloading, scheduling, tagging, and chaptering **RTE, BBC, Worldwide FM, NTS, FIP, and KEXP** radio episodes.
 
 ## Scope
 
 - **RTE & BBC**: Live stations, program search, episode explorers, remote/local playback, downloads via `yt-dlp`, schedulers with backfill.
-- **Worldwide FM** (worldwidefm.net): Live embed, search shows and hosts, load by name or host URL, episode list from `/shows` and host pages, play, download, schedulers. Host metadata (avatar, cadence, location, bio) via RSC payload parsing.
+- **Worldwide FM** (worldwidefm.net): Live embed, search shows and hosts, load by name or host URL, episode list from `/shows` and host pages, play (via yt-dlp pipe for Mixcloud), download, schedulers. Host metadata (avatar, cadence, location, bio) via RSC payload parsing.
 - **NTS** (nts.live): NTS 1 & 2 live streams with now-playing artwork, search shows, load by URL/slug, episode list (with tracklists), play, download, schedulers.
 - **FIP** (radiofrance.fr/fip): 13 live stations with now-playing song and cover art, podcast show browser, episode search, play, download, schedulers. Show titles and airtimes translated to English.
+- **KEXP** (kexp.org): Program search, episode list, play (StreamGuys archive or CloudFront extended CDN), download, CUE from KEXP tracklist API. Chapter positions aligned to `sg-offset` (show start within the multi-show recording file).
 - Final audio: `ffmpeg` post-process, embedded artwork (`m4a`/`mp3`), optional CUE/chapter generation, queue, optional AudD/AcoustID/Songrec recognition and FFmpeg landmark cue timing.
 
 ## Runtime Modes
@@ -17,7 +18,7 @@ Electron desktop app plus optional web/server mode for browsing, streaming, down
 
 ## Highlights
 
-- **Tabs**: RTE, BBC, Worldwide FM, NTS, FIP, Settings. Each source tab has live (where applicable), quick download by URL, explorer (search + load + episodes), and schedulers.
+- **Tabs**: RTE, BBC, Worldwide FM, NTS, FIP, KEXP, Settings. Each source tab has live (where applicable), quick download by URL, explorer (search + load + episodes), and schedulers.
 - **Program Search**: All platforms show rich metadata in search results — broadcast schedule, cadence, location, genres, description, and artwork. Helps you discover and evaluate shows before loading.
 - **Per-episode**: Play, Play Local, Download, Generate CUE. Global player with artwork, chapter-aware prev/next, inferred track labels.
 - **Queue**: Active, pending, recent; pause, resume, cancel, clear pending.
@@ -29,9 +30,11 @@ Electron desktop app plus optional web/server mode for browsing, streaming, down
 
 **NTS**: Search uses two parallel strategies — a paginated show index plus direct slug guessing (15+ variations). Results show cadence, location, broadcast schedule, description, and genre pills.
 
-**Worldwide FM**: Search runs three parallel strategies — episode matching, known host slug matching (from `/shows` and `/shows?type=hosts-series`), and direct host slug guessing. Host results show rich metadata: display name, avatar, cadence, location, and bio. Clicking a host loads their full episode archive via RSC payload parsing.
+**Worldwide FM**: Search runs three parallel strategies — episode matching, known host slug matching (from `/shows` and `/shows?type=hosts-series`), and direct host slug guessing. Host results show rich metadata: display name, avatar, cadence, location, and bio. Clicking a host loads their full episode archive via RSC payload parsing. Episode play streams Mixcloud audio via yt-dlp pipe (fast start, no seek).
 
 **FIP**: Podcast show browser via SvelteKit `/__data.json`. 13 live sub-stations (Rock, Jazz, Groove, World, Reggae, Electro, Hip-Hop, Pop, Metal, Nouveautés, Sacré Français, Cultes). Live now-playing fetched via Radio France public API with per-station webradio slug. French airtimes auto-translated to English.
+
+**KEXP**: Program search via KEXP API. Episodes sourced from StreamGuys archive (primary, ~2-week rolling window) with CloudFront CDN fallback for extended archives. Tracklist data from KEXP API (`startSeconds` per track). Chapter positions shifted by `sg-offset` to align with the multi-show recording file structure.
 
 ## Download Pipeline
 
@@ -272,6 +275,16 @@ NTS search uses parallel strategies: paginated index + slug guessing (15+ variat
 ### WWF search shows no results
 
 WWF search merges results from `/shows`, `/shows?type=hosts-series`, and host page archives via RSC payload parsing. If a host only appears on their host page, it should still be discoverable through slug guessing.
+
+### WWF episode won't seek
+
+Expected behavior. WWF episodes play via a yt-dlp pipe stream (Mixcloud uses AES-128 HLS encryption; the browser cannot decrypt it directly). The pipe delivers fast start (~5–10s) but no Content-Length, so the browser audio element cannot seek. Download the episode to get a local seekable file.
+
+### KEXP episode won't play or shows no chapters
+
+- Episodes older than ~2 weeks may fall back to the CloudFront CDN. If the CDN also misses, an error is shown on the card.
+- Tracklist chapters require KEXP API data (`startSeconds`). They are loaded automatically when you press Play and passed through `playEpisodeWithBackgroundCue`.
+- Chapter timestamps are show-relative and are shifted by `sg-offset` so they align with the StreamGuys multi-show recording file.
 
 ### FIP live shows no now-playing data
 

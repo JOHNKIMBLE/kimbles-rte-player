@@ -1,6 +1,8 @@
 const { generateCueForAudio, generateCuePreview } = require("./cue");
 const { getEpisodePlaylist } = require("./rte");
 const { getBbcEpisodePlaylist } = require("./bbc");
+const { getKexpEpisodeTracklist } = require("./kexp");
+const { getFipEpisodeTracklist } = require("./fip");
 
 async function runTask(message) {
   const taskId = String(message?.taskId || "");
@@ -12,6 +14,8 @@ async function runTask(message) {
     ...options,
     getRteTracks: getEpisodePlaylist,
     getBbcTracks: getBbcEpisodePlaylist,
+    getKexpTracks: getKexpEpisodeTracklist,
+    getFipTracks: getFipEpisodeTracklist,
     onProgress: (payload) => {
       if (typeof process.send === "function") {
         process.send({

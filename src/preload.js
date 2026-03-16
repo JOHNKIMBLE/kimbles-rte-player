@@ -90,12 +90,45 @@ contextBridge.exposeInMainWorld("rteDownloader", {
     ipcRenderer.invoke("fip-program-episodes", { programUrl, page }),
   getFipProgramSummary: (programUrl) => ipcRenderer.invoke("fip-program-summary", { programUrl }),
   getFipEpisodeStream: (episodeUrl) => ipcRenderer.invoke("fip-episode-stream", { episodeUrl }),
+  getFipEpisodeTracklist: (episodeUrl, startTs, durationSecs) =>
+    ipcRenderer.invoke("fip-episode-tracklist", { episodeUrl, startTs, durationSecs }),
   listFipSchedules: () => ipcRenderer.invoke("fip-scheduler-list"),
   addFipSchedule: (programUrl, options = {}) => ipcRenderer.invoke("fip-scheduler-add", { programUrl, options }),
   removeFipSchedule: (scheduleId) => ipcRenderer.invoke("fip-scheduler-remove", { scheduleId }),
   setFipScheduleEnabled: (scheduleId, enabled) =>
     ipcRenderer.invoke("fip-scheduler-set-enabled", { scheduleId, enabled }),
   runFipScheduleNow: (scheduleId) => ipcRenderer.invoke("fip-scheduler-check-one", { scheduleId }),
+  downloadFromKexpUrl: (pageUrl, progressToken, options = {}) =>
+    ipcRenderer.invoke("download-kexp-url", { pageUrl, progressToken, ...(options || {}) }),
+  downloadFromKexpExtendedUrl: (pageUrl, progressToken, options = {}) =>
+    ipcRenderer.invoke("download-kexp-extended-url", { pageUrl, progressToken, ...(options || {}) }),
+  downloadFromUrl: (source, pageUrl, progressToken, options = {}) => {
+    if (source === "kexp-extended") return ipcRenderer.invoke("download-kexp-extended-url", { pageUrl, progressToken, ...(options || {}) });
+    return ipcRenderer.invoke(`download-${source}-url`, { pageUrl, progressToken, ...(options || {}) });
+  },
+  getKexpLiveStations: () => ipcRenderer.invoke("kexp-live-stations"),
+  getKexpNowPlaying: () => ipcRenderer.invoke("kexp-live-now"),
+  searchKexpPrograms: (query) => ipcRenderer.invoke("kexp-program-search", { query }),
+  getKexpDiscovery: (count) => ipcRenderer.invoke("kexp-discovery", { count }),
+  getKexpProgramEpisodes: (programUrl, page = 1) =>
+    ipcRenderer.invoke("kexp-program-episodes", { programUrl, page }),
+  getKexpProgramSummary: (programUrl) => ipcRenderer.invoke("kexp-program-summary", { programUrl }),
+  getKexpEpisodeTracklist: (episodeUrl) => ipcRenderer.invoke("kexp-episode-tracklist", { episodeUrl }),
+  getKexpEpisodeStream: (episodeUrl, startTime) => ipcRenderer.invoke("kexp-episode-stream", { episodeUrl, startTime }),
+  getKexpSchedule: () => ipcRenderer.invoke("kexp-schedule"),
+  // Extended archive (Splixer)
+  searchKexpExtendedPrograms: (query) => ipcRenderer.invoke("kexp-extended-program-search", { query }),
+  getKexpExtendedDiscovery: () => ipcRenderer.invoke("kexp-extended-discovery"),
+  getKexpExtendedProgramSummary: (programUrl) => ipcRenderer.invoke("kexp-extended-program-summary", { programUrl }),
+  getKexpExtendedProgramEpisodes: (programUrl, page = 1) => ipcRenderer.invoke("kexp-extended-program-episodes", { programUrl, page }),
+  getKexpExtendedEpisodeStream: (episodeUrl) => ipcRenderer.invoke("kexp-extended-episode-stream", { episodeUrl }),
+  getKexpExtendedEpisodeTracklist: (episodeUrl) => ipcRenderer.invoke("kexp-extended-episode-tracklist", { episodeUrl }),
+  listKexpSchedules: () => ipcRenderer.invoke("kexp-scheduler-list"),
+  addKexpSchedule: (programUrl, options = {}) => ipcRenderer.invoke("kexp-scheduler-add", { programUrl, options }),
+  removeKexpSchedule: (scheduleId) => ipcRenderer.invoke("kexp-scheduler-remove", { scheduleId }),
+  setKexpScheduleEnabled: (scheduleId, enabled) =>
+    ipcRenderer.invoke("kexp-scheduler-set-enabled", { scheduleId, enabled }),
+  runKexpScheduleNow: (scheduleId) => ipcRenderer.invoke("kexp-scheduler-check-one", { scheduleId }),
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
   previewCue: (payload) => ipcRenderer.invoke("cue-preview", payload || {}),
   getDownloadQueueStats: () => ipcRenderer.invoke("download-queue-stats"),

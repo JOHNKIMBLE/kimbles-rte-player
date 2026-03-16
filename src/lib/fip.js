@@ -62,6 +62,24 @@ const STATION_LIVE_API_SLUG = {
   fipcultes:        "fip"
 };
 
+// Map station IDs to their current/live song-history slug: /fip/{slug}/api/songs
+// Used for live now-playing context; for episode tracklists use STATION_SONGS_API_ID + /api/songs instead.
+const STATION_SONGS_SLUG = {
+  fip:              "fip",
+  fiprock:          "radio-rock",
+  fipjazz:          "radio-jazz",
+  fipgroove:        "radio-groove",
+  fipworld:         "radio-monde",
+  fipreggae:        "radio-reggae",
+  fipelectro:       "radio-electro",
+  fiphiphop:        "radio-hip-hop",
+  fippop:           "radio-pop",
+  fipmetal:         "radio-metal",
+  fipnouveautes:    "radio-nouveautes",
+  fipsacrefrancais: "radio-sacre-francais",
+  fipcultes:        "radio-cultes"
+};
+
 // Webradio query param for fip/api/live?webradio=X  (null = main FIP, no param needed)
 const STATION_WEBRADIO_SLUG = {
   fip:              null,
@@ -108,14 +126,19 @@ const FETCH_HEADERS = {
   "Accept-Language": "fr,en;q=0.9"
 };
 
-function cleanText(input) {
-  return String(input || "")
-    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
-}
+const { cleanText, stripHtml } = require("./utils");
 
-function stripHtml(input) {
-  return String(input || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+/**
+ * Parse a duration value (ISO 8601 or plain seconds) to an integer seconds count.
+ */
+function parseDurationSeconds(str) {
+  if (!str && str !== 0) return 0;
+  const n = Number(str);
+  if (Number.isFinite(n) && n > 0) return Math.round(n);
+  // ISO 8601: PT1H30M or PT1H30M0S
+  const m = String(str).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?/i);
+  if (m) return (Number(m[1] || 0) * 3600) + (Number(m[2] || 0) * 60) + Math.round(Number(m[3] || 0));
+  return 0;
 }
 
 async function fetchJson(url, extraHeaders = {}) {
@@ -383,11 +406,12 @@ function mapPageItem(item, showSlug) {
   const downloadUrl = String(audioManifest?.url || "").trim();
 
   // Published date from playerInfo.publishedDate (unix seconds)
-  const publishedTs = item.playerInfo?.publishedDate || item.playerInfo?.startDate || 0;
-  const publishedDate = publishedTs ? new Date(Number(publishedTs) * 1000).toISOString().slice(0, 10) : "";
+  const publishedTs = Number(item.playerInfo?.publishedDate || item.playerInfo?.startDate || 0);
+  const publishedDate = publishedTs ? new Date(publishedTs * 1000).toISOString().slice(0, 10) : "";
 
-  // Duration
-  const duration = String(item.duration || "").trim();
+  // Duration (seconds or ISO 8601)
+  const durationRaw = item.playerInfo?.duration || item.duration;
+  const duration = String(durationRaw || "").trim();
 
   // Genres from conceptId + item taxonomies (none usually at item level)
   const genres = extractGenres(item);
@@ -406,6 +430,7 @@ function mapPageItem(item, showSlug) {
     episodeUrl,
     downloadUrl,
     publishedTime: publishedDate,
+    broadcastStartTs: publishedTs || 0,
     image,
     duration,
     genres: genres.length ? genres : undefined,
@@ -632,7 +657,7 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
     const prevCursor = cursors[cursors.length - 1];
     if (prevCursor === undefined) break; // no more pages
     try {
-      const { concept, items, nextCursor } = await fetchPageData(slug, prevCursor);
+      const { concept, nextCursor } = await fetchPageData(slug, prevCursor);
       // Cache the concept from first page fetch
       if (concept && !summaryCache.has(slug)) {
         summaryCache.set(slug, { uuid: concept.id, title: concept.title, description: concept.description, image: concept.image, genres: concept.genres || [] });
@@ -793,6 +818,136 @@ async function getFipEpisodeStream(episodeUrl, runYtDlpJson) {
   throw new Error("Could not resolve FIP stream URL.");
 }
 
+// ── Episode tracklist (song history) ──────────────────────────────────────────
+
+// Map station IDs to the `station` query param used by the historical songs API.
+// Matches STATION_WEBRADIO_SLUG format (underscores), with null → "fip" for main station.
+const STATION_SONGS_API_ID = {
+  fip:              "fip",
+  fiprock:          "fip_rock",
+  fipjazz:          "fip_jazz",
+  fipgroove:        "fip_groove",
+  fipworld:         "fip_world",
+  fipreggae:        "fip_reggae",
+  fipelectro:       "fip_electro",
+  fiphiphop:        "fip_hiphop",
+  fippop:           "fip_pop",
+  fipmetal:         "fip_metal",
+  fipnouveautes:    "fip_nouveautes",
+  fipsacrefrancais: "fip_sacre_francais",
+  fipcultes:        "fip_cultes"
+};
+
+/**
+ * Fetch the song tracklist for a FIP podcast episode.
+ *
+ * Uses the public `GET /api/songs?station=fip&start=X&stop=Y` endpoint (no auth
+ * required). Supports episodes up to ~30 days old — far beyond the 12h live
+ * window of /fip/fip/api/songs. The start/stop parameters filter results to the
+ * exact broadcast window so pagination is bounded by episode length, not history depth.
+ *
+ * @param {string} episodeUrl  Full URL of the episode page
+ * @param {object} [opts]      Optional timing override: { startTs, durationSecs }
+ * @returns {Array}  Track objects { title, artist, album, year, image, links, startSeconds }
+ */
+async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
+  const url = String(episodeUrl || "").trim();
+  if (!url) return [];
+
+  // ── 1. Get episode broadcast timing ───────────────────────────────────────
+  let startTs      = Number(opts.startTs      || 0);
+  let durationSecs = Number(opts.durationSecs || 0);
+
+  if (!startTs) {
+    // Fetch episode /__data.json to extract playerInfo timing
+    try {
+      const cleanUrl = url.replace(/[?#].*$/, "");
+      const dataUrl  = cleanUrl.endsWith("/__data.json") ? cleanUrl : `${cleanUrl}/__data.json`;
+      const json     = await fetchJson(dataUrl);
+      const nodes    = Array.isArray(json?.nodes) ? json.nodes : [];
+
+      outer: for (const node of nodes) {
+        const arr = Array.isArray(node?.data) ? node.data : [];
+        for (const v of arr) {
+          if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+          const piRaw = v.playerInfo;
+          if (piRaw == null) continue;
+          const pi = deref(piRaw, arr);
+          if (!pi || typeof pi !== "object") continue;
+          const ts = Number(pi.publishedDate || pi.startDate || 0);
+          if (ts > 1_000_000) {
+            startTs = ts;
+            if (!durationSecs) {
+              const durRaw = pi.duration || v.duration;
+              if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
+            }
+            break outer;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  if (!startTs) return [];
+  if (!durationSecs) durationSecs = 7200; // 2h default
+
+  const endTs  = startTs + durationSecs;
+  const nowSec = Date.now() / 1000;
+
+  // The Radio France songs API has no documented date limit and works for episodes
+  // many months in the past (confirmed via live network inspection). Skip only if
+  // the episode hasn't aired yet.
+  if (startTs > nowSec + 300) return []; // episode is in the future (>5 min ahead)
+
+  // ── 2. Fetch from historical songs API ────────────────────────────────────
+  // All FIP podcast shows air on the main FIP channel ("fip").
+  // Sub-station IDs (fiprock, fipjazz…) are handled for completeness.
+  const stationId = STATION_SONGS_API_ID.fip; // always "fip" for podcasts
+  const songsBase = `${BASE_URL}/api/songs?station=${stationId}&start=${startTs}&stop=${endTs}`;
+
+  const tracks = [];
+  let cursor   = null;
+  const MAX_PAGES = 50; // 10 songs/page × 50 = 500 songs max (covers multi-hour shows)
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const pageUrl = cursor
+      ? `${songsBase}&pageCursor=${encodeURIComponent(cursor)}`
+      : songsBase;
+
+    let data;
+    try {
+      data = await fetchJson(pageUrl);
+    } catch {
+      break;
+    }
+
+    const songs = Array.isArray(data?.songs) ? data.songs : [];
+
+    for (const song of songs) {
+      const songStart = Number(song?.start || 0);
+      // The API already filters by start/stop, but guard defensively
+      if (songStart >= startTs && songStart < endTs) {
+        tracks.push({
+          title:        String(song?.secondLine || "").trim(),
+          artist:       String(song?.firstLine  || "").trim(),
+          album:        String(song?.release?.title || "").trim(),
+          year:         song?.release?.year || song?.thirdLine || null,
+          image:        String(song?.visual?.src || "").trim(),
+          links:        Array.isArray(song?.links) ? song.links : [],
+          startSeconds: songStart - startTs
+        });
+      }
+    }
+
+    cursor = data?.next || null;
+    if (!cursor || !songs.length) break;
+  }
+
+  // Sort ascending by startSeconds (API may return newest-first)
+  tracks.sort((a, b) => a.startSeconds - b.startSeconds);
+  return tracks;
+}
+
 async function getFipDiscovery(count = 12) {
   const shows = await fetchFipShowList(true).catch(() => []);
   // Sample more than needed to account for failures and dedup
@@ -842,5 +997,7 @@ module.exports = {
   getFipProgramSummary,
   getFipProgramEpisodes,
   getFipEpisodeStream,
-  normalizeFipProgramUrl
+  getFipEpisodeTracklist,
+  normalizeFipProgramUrl,
+  parseFipAirtime
 };
