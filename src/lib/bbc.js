@@ -393,6 +393,53 @@ function formatUtcDateTime(iso) {
   return date.toISOString();
 }
 
+function hhmmToMinutes(hhmm) {
+  const p = String(hhmm || "").split(":");
+  const h = Number(p[0]);
+  const m = Number(p[1]);
+  return (Number.isFinite(h) && Number.isFinite(m)) ? h * 60 + m : null;
+}
+
+/** Identical to buildRunScheduleFromBroadcasts but merges groups whose times differ by
+ *  exactly 60 minutes and cover the same weekdays — caused by DST transitions (UK GMT/BST). */
+function buildRunScheduleFromBroadcastsDst(broadcasts) {
+  const raw = buildRunScheduleFromBroadcasts(broadcasts);
+  if (!raw) return raw;
+
+  // Parse each segment back into { days: Set, startMin, endMin }
+  const segments = raw.split(/\s*,\s*/g).map((seg) => {
+    const m = seg.match(/^(.*?)\s*[•]\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+    if (!m) return null;
+    const dayExpr = m[1].trim();
+    const startMin = hhmmToMinutes(m[2]);
+    const endMin = hhmmToMinutes(m[3]);
+    return { dayExpr, startMin, endMin, original: seg };
+  }).filter(Boolean);
+
+  // Merge pairs where dayExpr matches and times differ by exactly 60 minutes
+  const used = new Set();
+  const merged = [];
+  for (let i = 0; i < segments.length; i++) {
+    if (used.has(i)) continue;
+    let best = segments[i];
+    for (let j = i + 1; j < segments.length; j++) {
+      if (used.has(j)) continue;
+      const a = segments[i];
+      const b = segments[j];
+      if (a.dayExpr !== b.dayExpr) continue;
+      const diff = Math.abs(a.startMin - b.startMin);
+      if (diff === 60) {
+        // Keep the one with more broadcasts (if indeterminate, keep the earlier occurrence)
+        best = a; // keep first seen
+        used.add(j);
+      }
+    }
+    used.add(i);
+    merged.push(best.original);
+  }
+  return merged.join(", ");
+}
+
 function buildRunScheduleFromBroadcasts(broadcasts) {
   const groups = new Map();
 
@@ -472,7 +519,7 @@ async function getBbcUpcomingSchedule(programUrl) {
     };
   }
 
-  const broadcasts = extractUpcomingBroadcastsFromJsonLd(html);
+  let broadcasts = extractUpcomingBroadcastsFromJsonLd(html);
   if (!broadcasts.length) {
     return {
       runSchedule: "",
@@ -481,7 +528,16 @@ async function getBbcUpcomingSchedule(programUrl) {
     };
   }
 
-  const runSchedule = buildRunScheduleFromBroadcasts(broadcasts);
+  // Limit to the next 8 weeks to avoid DST-crossover duplicates and cross-programme contamination
+  const eightWeeksMs = 8 * 7 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() + eightWeeksMs;
+  const nearTerm = broadcasts.filter((b) => {
+    const ts = Date.parse(b.startDate);
+    return Number.isFinite(ts) && ts <= cutoff;
+  });
+  if (nearTerm.length) broadcasts = nearTerm;
+
+  const runSchedule = buildRunScheduleFromBroadcastsDst(broadcasts);
   const now = Date.now();
   const next = broadcasts.find((item) => {
     const ts = Date.parse(item.startDate);

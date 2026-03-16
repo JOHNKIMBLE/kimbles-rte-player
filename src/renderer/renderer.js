@@ -2425,7 +2425,7 @@ function renderSchedulerCard(schedule, sourceType = "rte") {
   const isKexp = sourceType === "kexp";
   const latestImage = schedule?.latestEpisodeImage || schedule?.image || "";
   const latestPublished = formatLocalDate(schedule?.latestEpisodePublishedTime || "");
-  const runLocal = formatRunScheduleLocalOnly(schedule?.runSchedule || "");
+  const runLocal = toLocalSchedule(schedule?.runSchedule || "");
   const checkWindowLocal = formatSchedulerCheckWindowLocal(schedule?.runSchedule || "");
   const nextShowLocal = formatSchedulerNextShowLocal(schedule);
   const retryPending = Array.isArray(schedule?.retryQueue) ? schedule.retryQueue.length : 0;
