@@ -402,6 +402,29 @@ async function getKexpProgramSummary(programUrl) {
 
 // ── Episodes ──────────────────────────────────────────────────────────────────
 
+/** Compute the next upcoming UTC ISO datetime for a set of KEXP timeslots. */
+function computeKexpNextBroadcast(timeslots) {
+  if (!timeslots.length) return "";
+  const now = new Date();
+  const nowDayJs = now.getUTCDay(); // 0=Sun…6=Sat
+  let soonest = null;
+  for (const slot of timeslots) {
+    const parts = String(slot.startTimeUtc || "").split(":");
+    const h = Number(parts[0]);
+    const m = Number(parts[1]);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
+    // timeslot.weekday: 1=Mon…7=Sun → JS day: Mon=1…Sun=0
+    const slotJsDay = slot.weekday === 7 ? 0 : slot.weekday;
+    let daysUntil = (slotJsDay - nowDayJs + 7) % 7;
+    const candidate = new Date(now);
+    candidate.setUTCDate(candidate.getUTCDate() + daysUntil);
+    candidate.setUTCHours(h, m, 0, 0);
+    if (candidate <= now) candidate.setUTCDate(candidate.getUTCDate() + 7);
+    if (!soonest || candidate < soonest) soonest = candidate;
+  }
+  return soonest ? soonest.toISOString() : "";
+}
+
 async function getKexpProgramEpisodes(programUrl, page = 1) {
   const id = extractProgramId(programUrl);
   if (!id) throw new Error("KEXP: invalid program URL");
@@ -418,8 +441,19 @@ async function getKexpProgramEpisodes(programUrl, page = 1) {
     cache = null;
   }
   if (!cache) {
-    cache = { episodes: [], scanOffset: 0, exhausted: false, fetchedAt: now };
+    cache = { episodes: [], scanOffset: 0, exhausted: false, fetchedAt: now, timeslots: null };
     _episodeScanCache.set(id, cache);
+  }
+
+  // Fetch timeslots once per cache lifetime (for cadence + next broadcast)
+  if (!cache.timeslots) {
+    try {
+      const month = new Date().getMonth() + 1;
+      const slotsRes = await fetchJson(`${API_BASE}/timeslots/?program=${id}&ordering=weekday,start_time&limit=50`);
+      cache.timeslots = (slotsRes.results || []).map((t) => mapTimeslot(t, month));
+    } catch {
+      cache.timeslots = [];
+    }
   }
 
   // Scan batches until we have enough episodes for this page (or hit limit)
@@ -440,12 +474,21 @@ async function getKexpProgramEpisodes(programUrl, page = 1) {
     if (!batch.length) break;
   }
 
+  const timeslots = cache.timeslots || [];
+  const uniqueDays = new Set(timeslots.map((t) => t.weekday));
+  const cadence = uniqueDays.size >= 5 ? "daily" : uniqueDays.size > 0 ? "weekly" : "irregular";
+  const runSchedule = timeslots[0]?.runSchedule || "";
+  const nextBroadcastAt = computeKexpNextBroadcast(timeslots);
+
   const start = (pageNum - 1) * perPage;
   return {
     episodes: cache.episodes.slice(start, start + perPage),
     total: cache.exhausted ? cache.episodes.length : 0,
     page: pageNum,
-    hasMore: cache.episodes.length > start + perPage || !cache.exhausted
+    hasMore: cache.episodes.length > start + perPage || !cache.exhausted,
+    cadence,
+    runSchedule,
+    nextBroadcastAt
   };
 }
 
