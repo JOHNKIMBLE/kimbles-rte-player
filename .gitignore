@@ -39,3 +39,5 @@ test-cover.png
 image.png
 CLAUDE.md
 .claude
+.gitignore
+.dockerignore
