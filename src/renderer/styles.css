@@ -973,3 +973,52 @@ button:disabled {
     width: 100%;
   }
 }
+
+/* Health dashboard */
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.5rem;
+}
+@media (max-width: 700px) {
+  .health-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.health-card {
+  background: var(--itembg);
+  border-radius: 6px;
+  padding: 0.6rem 0.4rem;
+  text-align: center;
+  cursor: pointer;
+  font-size: 0.82em;
+  transition: background 0.15s;
+}
+.health-card:hover { background: var(--itemhover); }
+.health-card-name { font-weight: 600; margin-bottom: 0.2rem; }
+.health-card-meta { color: var(--muted); font-size: 0.9em; line-height: 1.4; }
+.health-dot {
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.health-dot-green  { background: #2ecc71; }
+.health-dot-yellow { background: #f1c40f; }
+.health-dot-red    { background: #e74c3c; }
+.health-dot-grey   { background: #888; }
+
+/* History panel */
+.history-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85em;
+}
+.history-entry:last-child { border-bottom: none; }
+.history-entry-meta { flex: 1; min-width: 0; }
+.history-entry-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-entry-program { color: var(--muted); }
+.history-entry-path { color: var(--muted); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-entry-date { color: var(--muted); font-size: 0.85em; white-space: nowrap; }

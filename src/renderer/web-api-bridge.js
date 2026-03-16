@@ -478,6 +478,15 @@
         }
       }
     },
+    listDownloadHistory: () => fetch("/api/download-history").then(r => r.json()),
+    clearDownloadHistory: () => fetch("/api/download-history", { method: "DELETE" }).then(r => r.json()),
+    connectGlobalEvents: (handler) => {
+      const source = new EventSource("/api/events");
+      source.onmessage = (e) => {
+        try { handler(JSON.parse(e.data)); } catch {}
+      };
+      return () => source.close();
+    },
     pickDownloadDirectory: async () => "",
     canPickDownloadDirectory: async () => false
   };

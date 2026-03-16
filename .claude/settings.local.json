@@ -245,7 +245,27 @@
       "Bash(curl -s \"https://player-api.splixer.com/player_api/v3/mixes?station_id=30b07b51-7513-4a42-b6b5-ed783b270d0b&per_page=5\")",
       "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(''''/dev/stdin'''',''''utf8''''\\)\\); d.data.forEach\\(m => console.log\\(m.broadcasted_at, m.name, m.uid.slice\\(0,8\\)\\)\\);\")",
       "Bash(node -e \"fetch\\(''https://player-api.splixer.com/player_api/v3/mixes?station_id=30b07b51-7513-4a42-b6b5-ed783b270d0b&per_page=10''\\).then\\(r=>r.json\\(\\)\\).then\\(d=>{d.data.forEach\\(m=>{const t=new Date\\(m.broadcasted_at\\);const pad=n=>n.toString\\(\\).padStart\\(2,''0''\\);const date=t.getUTCFullYear\\(\\)+''-''+pad\\(t.getUTCMonth\\(\\)+1\\)+''-''+pad\\(t.getUTCDate\\(\\)\\);const time=pad\\(t.getUTCHours\\(\\)\\)+''-''+pad\\(t.getUTCMinutes\\(\\)\\)+''-''+pad\\(t.getUTCSeconds\\(\\)\\);const url=''https://d2tp7idim4nvvu.cloudfront.net/segments/''+date+''/''+date+''_''+time+''.m4a'';console.log\\(m.broadcasted_at,''|'',m.name,''|'',url\\);}\\)}\\)\")",
-      "Bash(ls C:UsersConnoDownloadsrte-ytdlp*.md)"
+      "Bash(ls C:UsersConnoDownloadsrte-ytdlp*.md)",
+      "Bash(node -e \"const { createDiskCache } = require\\(''./src/lib/disk-cache''\\); const c = createDiskCache\\(''./tmp-test-cache''\\); c.set\\(''test'', {hello: ''world''}\\); console.log\\(''disk cache get:'', JSON.stringify\\(c.get\\(''test''\\)\\)\\); c.delete\\(''test''\\); require\\(''fs''\\).rmdirSync\\(''./tmp-test-cache'', {recursive:true}\\); console.log\\(''disk-cache OK''\\);\")",
+      "Bash(node -e \"const { createDownloadHistory } = require\\(''./src/lib/download-history''\\); const h = createDownloadHistory\\(''./tmp-test-hist.json''\\); h.append\\({sourceType:''rte'', programTitle:''Test'', episodeTitle:''Ep1''}\\); const list = h.list\\(\\); console.log\\(''history count:'', list.length, ''first:'', list[0]?.episodeTitle\\); h.clear\\(\\); require\\(''fs''\\).unlinkSync\\(''./tmp-test-hist.json''\\); console.log\\(''download-history OK''\\);\")",
+      "Bash(node -e \"const { configure } = require\\(''./src/lib/rte''\\); console.log\\(''rte configure:'', typeof configure\\); const { configure: cn } = require\\(''./src/lib/nts''\\); console.log\\(''nts configure:'', typeof cn\\); const { configure: cf } = require\\(''./src/lib/fip''\\); console.log\\(''fip configure:'', typeof cf\\);\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\server.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\main.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\preload.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\renderer\\\\renderer.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\lib\\\\disk-cache.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\lib\\\\download-history.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\lib\\\\rte.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\lib\\\\nts.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\Conno\\\\Downloads\\\\rte-ytdlp\\\\src\\\\lib\\\\fip.js\")",
+      "Bash(node -e \"require\\(''./src/lib/disk-cache''\\); require\\(''./src/lib/download-history''\\); console.log\\(''New modules OK''\\)\")",
+      "Bash(node --check src/server.js)",
+      "Bash(node --check src/main.js)",
+      "Bash(node --check src/lib/disk-cache.js)",
+      "Bash(node --check src/lib/download-history.js)",
+      "Bash(node --check src/lib/rte.js)",
+      "Bash(node --check src/lib/nts.js)",
+      "Bash(node --check src/lib/fip.js)"
     ]
   }
 }

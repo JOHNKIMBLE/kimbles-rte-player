@@ -174,11 +174,11 @@ async function applyId3Tags({
 
   const tagTitle = clean(title);
   const tagAlbum = clean(programTitle);
-  const tagArtist = sourceType === "bbc" ? "BBC Radio" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS Radio" : "RTE Radio";
+  const tagArtist = sourceType === "bbc" ? "BBC Radio" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS Radio" : sourceType === "fip" ? "FIP Radio" : sourceType === "kexp" ? "KEXP" : "RTE Radio";
   const tagDate = clean(publishedTime);
   const tagComment = clean(sourceUrl || episodeUrl);
-  const tagGenre = sourceType === "bbc" ? "Radio;BBC" : sourceType === "wwf" ? "Radio;Worldwide FM" : sourceType === "nts" ? "Radio;NTS" : "Radio;RTE";
-  const tagPublisher = sourceType === "bbc" ? "BBC Sounds" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : "RTE Radio";
+  const tagGenre = sourceType === "bbc" ? "Radio;BBC" : sourceType === "wwf" ? "Radio;Worldwide FM" : sourceType === "nts" ? "Radio;NTS" : sourceType === "fip" ? "Radio;FIP" : sourceType === "kexp" ? "Radio;KEXP" : "Radio;RTE";
+  const tagPublisher = sourceType === "bbc" ? "BBC Sounds" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : sourceType === "fip" ? "Radio France / FIP" : sourceType === "kexp" ? "KEXP" : "RTE Radio";
   const tagYearMatch = tagDate.match(/\b(\d{4})\b/);
   const tagYear = tagYearMatch?.[1] || "";
   const tagDescription = clean(description);

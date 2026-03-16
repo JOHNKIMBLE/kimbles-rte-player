@@ -17,6 +17,10 @@ const programCache = {
   programs: []
 };
 const programSummaryCache = new Map();
+let _diskCache = null;
+function configure({ diskCache } = {}) {
+  _diskCache = diskCache || null;
+}
 
 const { cleanText, inferCadence } = require("./utils");
 
@@ -230,6 +234,12 @@ function dublinScheduleToUtc(scheduleText) {
 
 async function getProgramSummary(programUrl) {
   const normalizedProgramUrl = normalizeProgramUrl(programUrl);
+  const SUMMARY_TTL = 24 * 60 * 60 * 1000;
+  const diskKey = "rte:summary:" + normalizedProgramUrl;
+  if (!programSummaryCache.has(normalizedProgramUrl) && _diskCache) {
+    const cached = _diskCache.get(diskKey, SUMMARY_TTL);
+    if (cached) programSummaryCache.set(normalizedProgramUrl, cached);
+  }
   if (programSummaryCache.has(normalizedProgramUrl)) {
     return programSummaryCache.get(normalizedProgramUrl);
   }
@@ -299,6 +309,7 @@ async function getProgramSummary(programUrl) {
   };
 
   programSummaryCache.set(normalizedProgramUrl, summary);
+  if (_diskCache) _diskCache.set(diskKey, summary);
   return summary;
 }
 
@@ -457,5 +468,6 @@ module.exports = {
   getLiveStationNow,
   normalizeProgramUrl,
   getRteDiscovery,
-  searchPrograms
+  searchPrograms,
+  configure
 };

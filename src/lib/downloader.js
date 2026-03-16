@@ -566,7 +566,7 @@ function runYtDlpDownload({
     args.splice(args.indexOf("-o"), 0, "--write-thumbnail", "--convert-thumbnails", "jpg");
   }
   if (/\.m3u8(?:$|[?#])/i.test(inputUrl)) {
-    args.splice(args.indexOf("--no-part"), 0, "--downloader", "ffmpeg", "--hls-use-mpegts");
+    args.splice(args.indexOf("--no-part"), 0, "--hls-use-mpegts");
   }
   if (!forceDownload && skipBySource) {
     args.splice(args.indexOf("--ffmpeg-location"), 0, "--download-archive", normalizedArchivePath);
