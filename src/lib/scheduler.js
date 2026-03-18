@@ -277,10 +277,18 @@ function createSchedulerStore({
     schedule.location = String(schedule?.location || "").trim();
     schedule.genres = normalizeMetadataList(schedule?.genres);
     schedule.hosts = normalizeMetadataList(schedule?.hosts);
+    schedule.hostHistory = normalizeMetadataList(schedule?.hostHistory || schedule?.hosts);
     schedule.latestEpisodeDescription = String(schedule?.latestEpisodeDescription || "").trim();
     schedule.latestEpisodeLocation = String(schedule?.latestEpisodeLocation || "").trim();
     schedule.latestEpisodeGenres = normalizeMetadataList(schedule?.latestEpisodeGenres);
     schedule.latestEpisodeHosts = normalizeMetadataList(schedule?.latestEpisodeHosts);
+  }
+
+  function mergeRecentHosts(latestHosts, existingHosts) {
+    return normalizeMetadataList([
+      ...normalizeMetadataList(latestHosts),
+      ...normalizeMetadataList(existingHosts)
+    ]).slice(0, 24);
   }
 
   function applyProgramMetadata(schedule, metadata) {
@@ -326,6 +334,7 @@ function createSchedulerStore({
     schedule.latestEpisodeLocation = String(top.location || "").trim();
     schedule.latestEpisodeGenres = normalizeMetadataList(top.genres);
     schedule.latestEpisodeHosts = normalizeMetadataList(top.hosts);
+    schedule.hostHistory = mergeRecentHosts(schedule.latestEpisodeHosts, schedule.hostHistory || schedule.hosts);
     if (!schedule.location && schedule.latestEpisodeLocation) {
       schedule.location = schedule.latestEpisodeLocation;
     }
@@ -538,6 +547,7 @@ function createSchedulerStore({
       image: summary.image || "",
       genres: normalizeMetadataList(summary.genres),
       hosts: normalizeMetadataList(summary.hosts),
+      hostHistory: normalizeMetadataList(summary.hosts),
       location: String(summary.location || "").trim(),
       runSchedule: summary.runSchedule || "",
       nextBroadcastAt: summary.nextBroadcastAt || "",

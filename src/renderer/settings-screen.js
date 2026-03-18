@@ -11,6 +11,48 @@
     const refreshTimeBasedUi = deps.refreshTimeBasedUi;
     const defaultEpisodesPerPage = Number(deps.defaultEpisodesPerPage || 5);
     const defaultDiscoveryCount = Number(deps.defaultDiscoveryCount || 5);
+    let editingProgramRuleId = "";
+
+    function buildProgramRuleId() {
+      return `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function normalizeProgramRule(rule = {}) {
+      return {
+        id: String(rule.id || "").trim(),
+        sourceType: String(rule.sourceType || "").trim().toLowerCase(),
+        programTitle: String(rule.programTitle || "").trim(),
+        programUrl: String(rule.programUrl || "").trim(),
+        outputDir: String(rule.outputDir || "").trim(),
+        pathFormat: String(rule.pathFormat || "").trim(),
+        downloadKeepLatest: Math.max(0, Math.min(500, Math.floor(Number(rule.downloadKeepLatest || 0) || 0))),
+        downloadDeleteOlderDays: Math.max(0, Math.min(3650, Math.floor(Number(rule.downloadDeleteOlderDays || 0) || 0))),
+        skipReruns: Boolean(rule.skipReruns),
+        enabled: rule.enabled == null ? true : Boolean(rule.enabled)
+      };
+    }
+
+    function normalizeProgramRules(rules) {
+      return (Array.isArray(rules) ? rules : [])
+        .map((rule) => normalizeProgramRule(rule))
+        .filter((rule) => rule.sourceType || rule.programTitle || rule.programUrl);
+    }
+
+    function getRuleLabel(rule) {
+      const source = String(rule.sourceType || "").trim().toUpperCase();
+      const program = String(rule.programTitle || "").trim();
+      const url = String(rule.programUrl || "").trim();
+      if (source && program) {
+        return `${source}: ${program}`;
+      }
+      if (program) {
+        return program;
+      }
+      if (source && url) {
+        return `${source}: ${url}`;
+      }
+      return source || url || "Program Rule";
+    }
 
     function renderPathFormatPreview() {
       if (!dom.pathFormatPreview) {
@@ -23,15 +65,21 @@
       }
       const sampleProgram = state.currentEpisodes?.title || state.bbcEpisodesPayload?.title || "2FM Greene Room with Jenny Greene";
       const sampleEpisode = "Wednesday 4 March 2026";
+      const sampleHost = "Jenny Greene";
       const sampleDate = parseReleaseDate(state.currentEpisodes?.episodes?.[0]?.publishedTime || state.bbcEpisodesPayload?.episodes?.[0]?.publishedTime || "2026-03-04");
       const [year = "2026", month = "03", day = "04"] = sampleDate.split("-");
       const sample = format
         .replace(/\{radio\}/gi, "RTE")
+        .replace(/\{source_type\}/gi, "rte")
         .replace(/\{program\}/gi, sampleProgram)
         .replace(/\{program_slug\}/gi, "2fm-greene-room-with-jenny-greene")
         .replace(/\{episode_short\}/gi, "Wednesday 4 March 2026")
         .replace(/\{episode\}/gi, sampleEpisode)
         .replace(/\{episode_slug\}/gi, "wednesday-4-march-2026")
+        .replace(/\{host\}/gi, sampleHost)
+        .replace(/\{host_slug\}/gi, "jenny-greene")
+        .replace(/\{hosts\}/gi, sampleHost)
+        .replace(/\{hosts_slug\}/gi, "jenny-greene")
         .replace(/\{release_date\}/gi, sampleDate)
         .replace(/\{year\}/gi, year)
         .replace(/\{month\}/gi, month)
@@ -42,6 +90,116 @@
         .replace(/^\./, "")
         .toLowerCase();
       dom.pathFormatPreview.textContent = `Preview: ${sample}.${ext || "m4a"}`;
+    }
+
+    function renderProgramRulesList() {
+      if (!dom.programRuleList) {
+        return;
+      }
+      const rules = normalizeProgramRules(state.perProgramRules);
+      dom.programRuleList.innerHTML = rules.length
+        ? rules.map((rule) => {
+          const details = [
+            rule.outputDir ? `Dir ${rule.outputDir}` : "",
+            rule.pathFormat ? `Path ${rule.pathFormat}` : "",
+            rule.downloadKeepLatest > 0 ? `Keep ${rule.downloadKeepLatest}` : "",
+            rule.downloadDeleteOlderDays > 0 ? `Age ${rule.downloadDeleteOlderDays}d` : "",
+            rule.skipReruns ? "Skip reruns" : "",
+            rule.enabled ? "Enabled" : "Disabled"
+          ].filter(Boolean);
+          return `
+            <div class="item feed-entry">
+              <div class="feed-entry-main">
+                <div class="item-title">${getRuleLabel(rule)}</div>
+                <div class="item-meta">${rule.programUrl ? rule.programUrl : "Matches by title/source"}</div>
+                ${details.length ? `<div class="item-meta">${details.join(" | ")}</div>` : `<div class="item-meta">No overrides configured.</div>`}
+              </div>
+              <div class="feed-actions">
+                <button class="secondary" type="button" data-program-rule-edit="${rule.id}">Edit</button>
+                <button class="secondary" type="button" data-program-rule-delete="${rule.id}">Delete</button>
+              </div>
+            </div>
+          `;
+        }).join("")
+        : `<div class="item"><div class="item-meta">No per-program overrides yet. Add one below for custom folders, path formats, retention, or rerun handling.</div></div>`;
+    }
+
+    function syncProgramRuleForm(rule = null) {
+      const safeRule = rule ? normalizeProgramRule(rule) : normalizeProgramRule({});
+      editingProgramRuleId = String(safeRule.id || "").trim();
+      if (dom.programRuleSourceTypeInput) {
+        dom.programRuleSourceTypeInput.value = safeRule.sourceType;
+      }
+      if (dom.programRuleProgramTitleInput) {
+        dom.programRuleProgramTitleInput.value = safeRule.programTitle;
+      }
+      if (dom.programRuleProgramUrlInput) {
+        dom.programRuleProgramUrlInput.value = safeRule.programUrl;
+      }
+      if (dom.programRuleOutputDirInput) {
+        dom.programRuleOutputDirInput.value = safeRule.outputDir;
+      }
+      if (dom.programRulePathFormatInput) {
+        dom.programRulePathFormatInput.value = safeRule.pathFormat;
+      }
+      if (dom.programRuleKeepLatestInput) {
+        dom.programRuleKeepLatestInput.value = String(safeRule.downloadKeepLatest || 0);
+      }
+      if (dom.programRuleDeleteOlderDaysInput) {
+        dom.programRuleDeleteOlderDaysInput.value = String(safeRule.downloadDeleteOlderDays || 0);
+      }
+      if (dom.programRuleSkipRerunsCheckbox) {
+        dom.programRuleSkipRerunsCheckbox.checked = safeRule.skipReruns;
+      }
+      if (dom.programRuleEnabledCheckbox) {
+        dom.programRuleEnabledCheckbox.checked = safeRule.enabled;
+      }
+      if (dom.addProgramRuleBtn) {
+        dom.addProgramRuleBtn.textContent = editingProgramRuleId ? "Update Rule" : "Add Rule";
+      }
+    }
+
+    function readProgramRuleForm() {
+      return normalizeProgramRule({
+        id: editingProgramRuleId || buildProgramRuleId(),
+        sourceType: dom.programRuleSourceTypeInput?.value || "",
+        programTitle: dom.programRuleProgramTitleInput?.value || "",
+        programUrl: dom.programRuleProgramUrlInput?.value || "",
+        outputDir: dom.programRuleOutputDirInput?.value || "",
+        pathFormat: dom.programRulePathFormatInput?.value || "",
+        downloadKeepLatest: dom.programRuleKeepLatestInput?.value || 0,
+        downloadDeleteOlderDays: dom.programRuleDeleteOlderDaysInput?.value || 0,
+        skipReruns: Boolean(dom.programRuleSkipRerunsCheckbox?.checked),
+        enabled: Boolean(dom.programRuleEnabledCheckbox?.checked)
+      });
+    }
+
+    function resetProgramRuleForm() {
+      syncProgramRuleForm(null);
+    }
+
+    function upsertProgramRuleFromForm() {
+      const rule = readProgramRuleForm();
+      if (!rule.sourceType && !rule.programTitle && !rule.programUrl) {
+        setSettingsStatus("Add a source, program title, or program URL for the rule.", true);
+        return;
+      }
+      const rules = normalizeProgramRules(state.perProgramRules);
+      const nextRules = rules.filter((entry) => entry.id !== rule.id);
+      nextRules.unshift(rule);
+      state.perProgramRules = nextRules;
+      renderProgramRulesList();
+      resetProgramRuleForm();
+      setSettingsStatus("Per-program rule staged. Click Save Settings to persist it.");
+    }
+
+    function deleteProgramRule(ruleId) {
+      state.perProgramRules = normalizeProgramRules(state.perProgramRules).filter((rule) => rule.id !== String(ruleId || ""));
+      renderProgramRulesList();
+      if (editingProgramRuleId === String(ruleId || "")) {
+        resetProgramRuleForm();
+      }
+      setSettingsStatus("Per-program rule removed. Click Save Settings to persist the change.");
     }
 
     function updateDownloadDirPickerUi() {
@@ -98,6 +256,12 @@
       if (dom.webhookUrlInput) {
         dom.webhookUrlInput.value = state.webhookUrl;
       }
+      if (dom.discordWebhookUrlInput) {
+        dom.discordWebhookUrlInput.value = state.discordWebhookUrl || "";
+      }
+      if (dom.ntfyTopicUrlInput) {
+        dom.ntfyTopicUrlInput.value = state.ntfyTopicUrl || "";
+      }
       if (dom.auddTrackMatchingCheckbox) {
         dom.auddTrackMatchingCheckbox.checked = state.auddTrackMatching;
       }
@@ -138,6 +302,8 @@
         dom.smartTagCleanupCheckbox.checked = state.smartTagCleanup;
       }
       renderPathFormatPreview();
+      renderProgramRulesList();
+      resetProgramRuleForm();
     }
 
     function applySettingsToState(settings) {
@@ -155,6 +321,8 @@
       state.id3Tagging = settings?.id3Tagging == null ? true : Boolean(settings.id3Tagging);
       state.feedExportEnabled = settings?.feedExportEnabled == null ? true : Boolean(settings.feedExportEnabled);
       state.webhookUrl = String(settings?.webhookUrl || "");
+      state.discordWebhookUrl = String(settings?.discordWebhookUrl || "");
+      state.ntfyTopicUrl = String(settings?.ntfyTopicUrl || "");
       state.auddTrackMatching = settings?.auddTrackMatching == null ? false : Boolean(settings.auddTrackMatching);
       state.auddApiToken = String(settings?.auddApiToken || "");
       state.fingerprintTrackMatching = settings?.fingerprintTrackMatching == null ? false : Boolean(settings.fingerprintTrackMatching);
@@ -168,6 +336,7 @@
       state.downloadDeleteOlderDays = Math.max(0, Math.min(3650, Number(settings?.downloadDeleteOlderDays || 0) || 0));
       state.skipReruns = settings?.skipReruns == null ? false : Boolean(settings.skipReruns);
       state.smartTagCleanup = settings?.smartTagCleanup == null ? true : Boolean(settings.smartTagCleanup);
+      state.perProgramRules = normalizeProgramRules(settings?.perProgramRules);
     }
 
     async function loadSettings() {
@@ -190,6 +359,8 @@
       const id3Tagging = Boolean(dom.id3TaggingCheckbox?.checked);
       const feedExportEnabled = Boolean(dom.feedExportCheckbox?.checked);
       const webhookUrl = String(dom.webhookUrlInput?.value || "").trim();
+      const discordWebhookUrl = String(dom.discordWebhookUrlInput?.value || "").trim();
+      const ntfyTopicUrl = String(dom.ntfyTopicUrlInput?.value || "").trim();
       const auddTrackMatching = Boolean(dom.auddTrackMatchingCheckbox?.checked);
       const auddApiToken = String(dom.auddApiTokenInput?.value || "").trim();
       const fingerprintTrackMatching = Boolean(dom.fingerprintTrackMatchingCheckbox?.checked);
@@ -204,6 +375,7 @@
       const skipReruns = Boolean(dom.skipRerunsCheckbox?.checked);
       const smartTagCleanup = Boolean(dom.smartTagCleanupCheckbox?.checked);
       const maxConcurrentDownloads = Math.max(1, Math.min(8, Math.floor(Number(dom.maxConcurrentInput?.value || 2) || 2)));
+      const perProgramRules = normalizeProgramRules(state.perProgramRules);
 
       if (!activeDownloadDir) {
         setSettingsStatus("Choose a download directory first.", true);
@@ -232,6 +404,8 @@
           id3Tagging,
           feedExportEnabled,
           webhookUrl,
+          discordWebhookUrl,
+          ntfyTopicUrl,
           auddTrackMatching,
           auddApiToken,
           fingerprintTrackMatching,
@@ -244,7 +418,8 @@
           downloadKeepLatest,
           downloadDeleteOlderDays,
           skipReruns,
-          smartTagCleanup
+          smartTagCleanup,
+          perProgramRules
         });
         applySettingsToState(saved);
         syncFormFromState();
@@ -283,6 +458,29 @@
           setSettingsStatus("Preset applied. Click Save Settings to apply.");
         });
       }
+      dom.addProgramRuleBtn?.addEventListener("click", () => {
+        upsertProgramRuleFromForm();
+      });
+      dom.resetProgramRuleBtn?.addEventListener("click", () => {
+        resetProgramRuleForm();
+        setSettingsStatus("Rule form cleared.");
+      });
+      dom.programRuleList?.addEventListener("click", (event) => {
+        const editBtn = event.target.closest("[data-program-rule-edit]");
+        if (editBtn) {
+          const ruleId = String(editBtn.getAttribute("data-program-rule-edit") || "");
+          const rule = normalizeProgramRules(state.perProgramRules).find((entry) => entry.id === ruleId);
+          if (rule) {
+            syncProgramRuleForm(rule);
+            setSettingsStatus(`Editing ${getRuleLabel(rule)}.`);
+          }
+          return;
+        }
+        const deleteBtn = event.target.closest("[data-program-rule-delete]");
+        if (deleteBtn) {
+          deleteProgramRule(deleteBtn.getAttribute("data-program-rule-delete") || "");
+        }
+      });
       if (dom.chooseDownloadDirBtn) {
         dom.chooseDownloadDirBtn.addEventListener("click", async () => {
           if (!state.canPickDownloadDirectory) {

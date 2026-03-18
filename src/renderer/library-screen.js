@@ -28,6 +28,8 @@
     let entityProfileState = { entity: null, metrics: { entityCount: 0, relationCount: 0, sourceCount: 0 } };
     let collectionsState = [];
     let collectionRecommendationsState = { totalCandidates: 0, results: [], terms: [], facets: { hosts: [], genres: [], locations: [] } };
+    let metadataRepairRules = [];
+    let diagnosticsThinDocDetailsState = [];
     let heavyLibraryViewsLoaded = false;
     let heavyLibraryViewsLoadingPromise = null;
     let heavyLibraryViewsTimer = null;
@@ -336,15 +338,13 @@
       const programCount = new Set(list.map((entry) => getHistoryProgramName(entry)).filter(Boolean)).size;
       const sourceCount = new Set(list.map((entry) => String(entry.sourceType || "").trim().toLowerCase()).filter(Boolean)).size;
       const redownloadableCount = list.filter((entry) => Boolean(entry.episodeUrl)).length;
-      const issueCount = list.filter((entry) => {
-        const status = normalizeStatus(entry.status, "downloaded");
-        return status !== "downloaded" && status !== "done";
-      }).length;
+      const playedCount = list.filter((entry) => Number(entry.playCount || 0) > 0 || String(entry.playState || "").trim()).length;
+      const completedCount = list.filter((entry) => String(entry.playState || "").trim().toLowerCase() === "completed").length;
       return [
         { label: "Programs", value: programCount, detail: "Visible set", tone: "neutral" },
         { label: "Sources", value: sourceCount, detail: "Visible set", tone: "neutral" },
         { label: "Re-download", value: redownloadableCount, detail: "Source URL saved", tone: redownloadableCount > 0 ? "ok" : "neutral" },
-        { label: "Status Issues", value: issueCount, detail: "Non-downloaded", tone: issueCount > 0 ? "danger" : "neutral" }
+        { label: "Played", value: playedCount, detail: `${completedCount} completed`, tone: playedCount > 0 ? "ok" : "neutral" }
       ];
     }
 
@@ -514,6 +514,138 @@
       dom.diagnosticsStatus.style.color = isError ? "#e74c3c" : "var(--muted)";
     }
 
+    function getMetadataSearchFilters() {
+      return {
+        query: String(dom.metadataIndexSearchInput?.value || "").trim(),
+        sourceType: String(dom.metadataIndexSourceFilter?.value || "").trim(),
+        kind: String(dom.metadataIndexKindFilter?.value || "").trim(),
+        host: String(dom.metadataIndexHostFilter?.value || "").trim(),
+        genre: String(dom.metadataIndexGenreFilter?.value || "").trim(),
+        location: String(dom.metadataIndexLocationFilter?.value || "").trim()
+      };
+    }
+
+    function getCollectionCreatePayload() {
+      const mode = String(dom.collectionModeInput?.value || "manual").trim().toLowerCase() === "smart" ? "smart" : "manual";
+      return {
+        name: String(dom.collectionNameInput?.value || "").trim(),
+        mode,
+        autoUpdate: Boolean(dom.collectionAutoUpdateCheckbox?.checked),
+        smartCriteria: {
+          query: String(dom.collectionSmartQueryInput?.value || "").trim(),
+          sourceType: String(dom.collectionSmartSourceFilter?.value || "").trim().toLowerCase(),
+          kind: String(dom.collectionSmartKindFilter?.value || "").trim().toLowerCase(),
+          host: String(dom.collectionSmartHostInput?.value || "").trim(),
+          genre: String(dom.collectionSmartGenreInput?.value || "").trim(),
+          location: String(dom.collectionSmartLocationInput?.value || "").trim(),
+          limit: Math.max(1, Math.min(100, Math.floor(Number(dom.collectionSmartLimitInput?.value || 24) || 24)))
+        }
+      };
+    }
+
+    function syncCollectionEditor(collection = null) {
+      const selected = collection || getSelectedCollection();
+      const mode = String(selected?.mode || "manual").trim().toLowerCase() === "smart" ? "smart" : "manual";
+      const criteria = selected?.smartCriteria || {};
+      if (dom.collectionModeInput) {
+        dom.collectionModeInput.value = mode;
+      }
+      if (dom.collectionAutoUpdateCheckbox) {
+        dom.collectionAutoUpdateCheckbox.checked = selected?.autoUpdate == null ? true : Boolean(selected.autoUpdate);
+      }
+      if (dom.collectionSmartQueryInput) {
+        dom.collectionSmartQueryInput.value = String(criteria.query || "");
+      }
+      if (dom.collectionSmartSourceFilter) {
+        dom.collectionSmartSourceFilter.value = String(criteria.sourceType || "").trim().toLowerCase();
+      }
+      if (dom.collectionSmartKindFilter) {
+        dom.collectionSmartKindFilter.value = String(criteria.kind || "").trim().toLowerCase();
+      }
+      if (dom.collectionSmartHostInput) {
+        dom.collectionSmartHostInput.value = String(criteria.host || "");
+      }
+      if (dom.collectionSmartGenreInput) {
+        dom.collectionSmartGenreInput.value = String(criteria.genre || "");
+      }
+      if (dom.collectionSmartLocationInput) {
+        dom.collectionSmartLocationInput.value = String(criteria.location || "");
+      }
+      if (dom.collectionSmartLimitInput) {
+        dom.collectionSmartLimitInput.value = String(Math.max(1, Math.min(100, Number(criteria.limit || 24) || 24)));
+      }
+    }
+
+    function renderMetadataRepairs() {
+      if (dom.metadataRepairSummary) {
+        dom.metadataRepairSummary.textContent = metadataRepairRules.length
+          ? `${metadataRepairRules.length} repair rule${metadataRepairRules.length === 1 ? "" : "s"} active.`
+          : "No repair rules yet.";
+      }
+      if (!dom.metadataRepairList) {
+        return;
+      }
+      dom.metadataRepairList.innerHTML = metadataRepairRules.length
+        ? metadataRepairRules.map((rule) => `
+          <div class="item feed-entry">
+            <div class="feed-entry-main">
+              <div class="item-title">${escapeHtml(String(rule.field || "field"))}: ${escapeHtml(String(rule.from || ""))} -> ${escapeHtml(String(rule.to || ""))}</div>
+              <div class="item-meta">${rule.sourceType ? `Source ${escapeHtml(String(rule.sourceType).toUpperCase())}` : "All sources"}${rule.createdAt ? ` | Added ${escapeHtml(formatLocalDateTime(rule.createdAt) || String(rule.createdAt))}` : ""}</div>
+            </div>
+            <div class="feed-actions">
+              <button class="secondary" data-metadata-repair-delete="${escapeHtml(String(rule.id || ""))}">Delete</button>
+            </div>
+          </div>
+        `).join("")
+        : `<div class="item"><div class="item-meta">Add a repair to merge duplicate metadata values.</div></div>`;
+    }
+
+    async function loadMetadataRepairs() {
+      if (typeof window.rteDownloader?.listMetadataRepairs !== "function") {
+        metadataRepairRules = [];
+        renderMetadataRepairs();
+        return;
+      }
+      metadataRepairRules = await window.rteDownloader.listMetadataRepairs();
+      renderMetadataRepairs();
+    }
+
+    function renderThinDocDetails() {
+      if (!dom.diagnosticsThinDocDetails) {
+        return;
+      }
+      const rows = Array.isArray(diagnosticsThinDocDetailsState) ? diagnosticsThinDocDetailsState : [];
+      dom.diagnosticsThinDocDetails.innerHTML = rows.length
+        ? rows.map((row) => `
+          <div class="item">
+            <div class="item-title">${escapeHtml(String(row.title || row.programTitle || "Harvested doc"))}</div>
+            <div class="item-meta">${escapeHtml(String(row.sourceType || "").toUpperCase())} | ${escapeHtml(String(row.harvestKind || "doc"))}</div>
+            ${row.programUrl ? `<div class="item-meta">${escapeHtml(String(row.programUrl || ""))}</div>` : ""}
+            ${row.episodeUrl ? `<div class="item-meta">${escapeHtml(String(row.episodeUrl || ""))}</div>` : ""}
+            ${row.description ? `<div class="item-meta muted">${escapeHtml(String(row.description).slice(0, 240))}${String(row.description).length > 240 ? "..." : ""}</div>` : ""}
+            <div class="item-meta">Hosts: ${escapeHtml(normalizeMetadataList(row.hosts).join(", ") || "None")}</div>
+            <div class="item-meta">Genres: ${escapeHtml(normalizeMetadataList(row.genres).join(", ") || "None")}</div>
+            <div class="item-meta">Location: ${escapeHtml(String(row.location || "None"))}</div>
+          </div>
+        `).join("")
+        : `<div class="item"><div class="item-meta">Select Inspect on a slim doc to see the harvested fields behind it.</div></div>`;
+    }
+
+    async function loadThinDocDetails(row = {}) {
+      if (typeof window.rteDownloader?.listHarvestDocs !== "function") {
+        diagnosticsThinDocDetailsState = [];
+        renderThinDocDetails();
+        return;
+      }
+      diagnosticsThinDocDetailsState = await window.rteDownloader.listHarvestDocs({
+        sourceType: row?.sourceType || "",
+        title: row?.title || "",
+        programUrl: row?.programUrl || "",
+        episodeUrl: row?.episodeUrl || ""
+      });
+      renderThinDocDetails();
+    }
+
     async function loadCollections() {
       if (typeof window.rteDownloader?.listCollections !== "function") {
         collectionsState = [];
@@ -559,18 +691,20 @@
       }
 
       const selected = getSelectedCollection();
+      syncCollectionEditor(selected);
       if (dom.collectionsSummary) {
         const entryCount = Array.isArray(selected?.entries) ? selected.entries.length : 0;
         dom.collectionsSummary.textContent = selected
-          ? `${entryCount} saved entr${entryCount === 1 ? "y" : "ies"} in ${selected.name}.`
+          ? `${entryCount} saved entr${entryCount === 1 ? "y" : "ies"} in ${selected.name}.${selected?.mode === "smart" ? " Smart collection rules are active." : ""}`
           : ((collectionsState || []).length ? "Select a collection to view entries and recommendations." : "No collections yet. Create one from the Library.");
       }
       renderMetricCards(dom.collectionsMetrics, buildCollectionsMetrics());
 
       if (dom.collectionsList) {
         const entries = Array.isArray(selected?.entries) ? selected.entries : [];
+        const smartCriteria = selected?.mode === "smart" ? selected?.smartCriteria || {} : null;
         if (!entries.length) {
-          dom.collectionsList.innerHTML = `<div class="item"><div class="item-meta">${selected ? "No saved entries in this collection yet." : "Create or select a collection first."}</div></div>`;
+          dom.collectionsList.innerHTML = `<div class="item"><div class="item-meta">${selected ? "No saved entries in this collection yet." : "Create or select a collection first."}</div>${smartCriteria ? `<div class="item-meta">Smart criteria: ${escapeHtml([smartCriteria.query, smartCriteria.host, smartCriteria.genre, smartCriteria.location].filter(Boolean).join(" | ") || "Configured")}</div>` : ""}</div>`;
         } else {
           const groups = new Map();
           for (const entry of entries) {
@@ -586,7 +720,7 @@
             genre: "Genres",
             location: "Locations"
           };
-          dom.collectionsList.innerHTML = Array.from(groups.entries()).map(([type, rows]) => `
+          dom.collectionsList.innerHTML = `${smartCriteria ? `<div class="item"><div class="item-title">Smart Criteria</div><div class="item-meta">${escapeHtml([smartCriteria.query && `Query ${smartCriteria.query}`, smartCriteria.sourceType && `Source ${String(smartCriteria.sourceType).toUpperCase()}`, smartCriteria.kind && `Type ${smartCriteria.kind}`, smartCriteria.host && `Host ${smartCriteria.host}`, smartCriteria.genre && `Genre ${smartCriteria.genre}`, smartCriteria.location && `Location ${smartCriteria.location}`, smartCriteria.limit && `Limit ${smartCriteria.limit}`].filter(Boolean).join(" | "))}</div></div>` : ""}${Array.from(groups.entries()).map(([type, rows]) => `
             <div class="library-group">
               <div class="library-group-title">${escapeHtml(groupLabels[type] || "Items")} (${rows.length})</div>
               ${rows.map((entry) => `
@@ -606,7 +740,7 @@
                 </div>
               `).join("")}
             </div>
-          `).join("");
+          `).join("")}`;
         }
       }
 
@@ -627,7 +761,7 @@
             <div class="item feed-entry">
               <div class="feed-entry-main">
                 <div class="item-title"><span class="source-badge source-badge-${escapeHtml(String(entry.sourceType || ""))}">${escapeHtml(getSourceLabel(entry.sourceType || ""))}</span> ${escapeHtml(String(entry.title || "Recommendation"))}</div>
-                <div class="item-meta">${escapeHtml(String(entry.kindLabel || "Discovery"))}${entry.runSchedule ? ` â€¢ ${escapeHtml(String(entry.runSchedule || ""))}` : ""}</div>
+                <div class="item-meta">${escapeHtml(String(entry.kindLabel || "Discovery"))}${entry.runSchedule ? ` &middot; ${escapeHtml(String(entry.runSchedule || ""))}` : ""}</div>
                 ${renderMetadataDetails(entry)}
               </div>
               <div class="feed-actions">
@@ -856,9 +990,7 @@
         return;
       }
       metadataSearchState = await window.rteDownloader.searchMetadataIndex({
-        query: String(dom.metadataIndexSearchInput?.value || "").trim(),
-        sourceType: String(dom.metadataIndexSourceFilter?.value || "").trim(),
-        kind: String(dom.metadataIndexKindFilter?.value || "").trim(),
+        ...getMetadataSearchFilters(),
         limit: 50
       });
       renderMetadataIndex();
@@ -870,10 +1002,11 @@
         renderMetadataDiscovery();
         return;
       }
+      const filters = getMetadataSearchFilters();
       metadataDiscoveryState = await window.rteDownloader.discoverMetadataIndex({
-        query: String(dom.metadataIndexSearchInput?.value || "").trim(),
-        sourceType: String(dom.metadataIndexSourceFilter?.value || "").trim(),
-        kind: String(dom.metadataIndexKindFilter?.value || "").trim(),
+        query: filters.query,
+        sourceType: filters.sourceType,
+        kind: filters.kind,
         limit: 12,
         forceRefresh: Boolean(options.forceRefresh)
       });
@@ -1554,11 +1687,11 @@
                   <div class="item-meta">
                     <span class="status-chip status-chip-${escapeHtml(tone)}">${row.recentFailureCount > 0 ? "Attention" : row.retryPending > 0 ? "Retrying" : "Healthy"}</span>
                     ${escapeHtml(String(row.scheduleCount || 0))} schedule(s)
-                    â€¢ ${escapeHtml(String(row.enabledScheduleCount || 0))} enabled
-                    â€¢ ${escapeHtml(String(row.retryPending || 0))} retry pending
+                    &middot; ${escapeHtml(String(row.enabledScheduleCount || 0))} enabled
+                    &middot; ${escapeHtml(String(row.retryPending || 0))} retry pending
                   </div>
                   <div class="item-meta">Last schedule run: ${escapeHtml(lastRun)}</div>
-                  ${row.lastFailureMessage ? `<div class="item-meta queue-entry-issue">Latest failure${lastFailureAt ? ` (${escapeHtml(lastFailureAt)})` : ""}: ${escapeHtml(String(row.lastFailureTitle || row.lastFailureMessage || ""))}${row.lastFailureTitle && row.lastFailureMessage ? ` â€¢ ${escapeHtml(String(row.lastFailureMessage || ""))}` : ""}</div>` : ""}
+                  ${row.lastFailureMessage ? `<div class="item-meta queue-entry-issue">Latest failure${lastFailureAt ? ` (${escapeHtml(lastFailureAt)})` : ""}: ${escapeHtml(String(row.lastFailureTitle || row.lastFailureMessage || ""))}${row.lastFailureTitle && row.lastFailureMessage ? ` &middot; ${escapeHtml(String(row.lastFailureMessage || ""))}` : ""}</div>` : ""}
                   ${Array.isArray(row.thinReasons) && row.thinReasons.length ? `<div class="item-meta">Metadata watch: ${escapeHtml(row.thinReasons.join(" | "))}</div>` : ""}
                 </div>
               </div>
@@ -1577,7 +1710,7 @@
                   <span class="source-badge source-badge-${escapeHtml(String(row.sourceType || ""))}">${escapeHtml(getSourceLabel(row.sourceType || ""))}</span>
                   ${escapeHtml(String(row.scheduleTitle || row.title || "Retry"))}
                 </div>
-                <div class="item-meta">${escapeHtml(String(row.title || row.clipId || "Episode"))} â€¢ attempt ${escapeHtml(String(row.attempts || 1))}</div>
+                <div class="item-meta">${escapeHtml(String(row.title || row.clipId || "Episode"))} &middot; attempt ${escapeHtml(String(row.attempts || 1))}</div>
                 <div class="item-meta">Next retry: ${escapeHtml(formatLocalDateTime(row.nextRetryAt || "") || String(row.nextRetryAt || "Pending"))}</div>
                 ${row.lastError ? `<div class="item-meta queue-entry-issue">${escapeHtml(String(row.lastError || ""))}</div>` : ""}
               </div>
@@ -1596,10 +1729,11 @@
                   <span class="source-badge source-badge-${escapeHtml(String(row.sourceType || ""))}">${escapeHtml(getSourceLabel(row.sourceType || ""))}</span>
                   ${escapeHtml(String(row.title || "Harvested doc"))}
                 </div>
-                <div class="item-meta">${escapeHtml(String(row.harvestKind || "program"))} â€¢ missing ${escapeHtml((Array.isArray(row.missingFields) ? row.missingFields : []).join(", "))}</div>
+                <div class="item-meta">${escapeHtml(String(row.harvestKind || "program"))} &middot; missing ${escapeHtml((Array.isArray(row.missingFields) ? row.missingFields : []).join(", "))}</div>
                 ${row.programTitle && row.programTitle !== row.title ? `<div class="item-meta">${escapeHtml(row.programTitle)}</div>` : ""}
               </div>
               <div class="item-actions feed-actions">
+                <button class="secondary" data-diagnostics-thin-doc="${encodeDataPayload(row)}">Inspect</button>
                 <button class="secondary" data-diagnostics-reharvest-source="${escapeHtml(String(row.sourceType || ""))}">Reharvest Source</button>
                 <button class="secondary" data-diagnostics-reharvest-source="${escapeHtml(String(row.sourceType || ""))}" data-diagnostics-reharvest-deeper="1">Reharvest Deep</button>
                 ${row.programUrl ? `<button class="secondary" data-open-explorer="${encodeDataPayload(buildExplorerPayload(row, { sourceType: row.sourceType, programUrl: row.programUrl, programTitle: row.programTitle || row.title, title: row.programTitle || row.title }))}">Open Explorer</button>` : ""}
@@ -1608,6 +1742,8 @@
           `).join("")
           : `<div class="item"><div class="item-meta">No slim harvested docs are flagged right now.</div></div>`;
       }
+
+      renderThinDocDetails();
 
       const writableHtml = writableRows.length ? `
         <div class="item">
@@ -1811,6 +1947,16 @@
         const canRedownload = Boolean(entry.episodeUrl && typeof window.rteDownloader?.downloadFromUrl === "function");
         const canPostprocess = Boolean(entry.outputDir && entry.fileName && typeof window.rteDownloader?.postprocessHistoryEntry === "function");
         const status = normalizeStatus(entry.status, "downloaded");
+        const playState = normalizeStatus(entry.playState, "");
+        const playCount = Math.max(0, Number(entry.playCount || 0) || 0);
+        const listenSeconds = Math.max(0, Number(entry.listenSeconds || 0) || 0);
+        const durationSeconds = Math.max(0, Number(entry.durationSeconds || 0) || 0);
+        const progressPercent = durationSeconds > 0 ? Math.min(100, Math.max(0, Math.round((listenSeconds / durationSeconds) * 100))) : 0;
+        const playSummary = [
+          playCount ? `${playCount} play${playCount === 1 ? "" : "s"}` : "",
+          playState ? playState.replace(/-/g, " ") : "",
+          entry.lastPlayedAt ? `Last played ${formatLocalDateTime(entry.lastPlayedAt) || entry.lastPlayedAt}` : ""
+        ].filter(Boolean).join(" | ");
         return `<div class="history-entry">
           <div class="history-entry-date">${escapeHtml(savedAt)}</div>
           <div class="history-entry-meta">
@@ -1821,6 +1967,8 @@
               ${escapeHtml(entry.programTitle || "")}
             </div>
             ${renderMetadataDetails(entry)}
+            ${playSummary ? `<div class="item-meta">${escapeHtml(playSummary)}</div>` : ""}
+            ${progressPercent > 0 ? `<div class="item-meta">Progress: ${escapeHtml(String(progressPercent))}%${durationSeconds ? ` (${escapeHtml(String(listenSeconds))}s / ${escapeHtml(String(durationSeconds))}s)` : ""}</div>` : ""}
             ${pathShort ? `<div class="history-entry-path">${escapeHtml(pathShort)}</div>` : ""}
             ${entry.message && status !== "downloaded" ? `<div class="item-meta queue-entry-issue">${escapeHtml(String(entry.message || ""))}</div>` : ""}
             <div class="history-actions">
@@ -1841,6 +1989,7 @@
     async function refreshLibraryData() {
       await Promise.all([
         loadCollections().catch(() => {}),
+        loadMetadataRepairs().catch(() => {}),
         loadFeeds().catch(() => {}),
         loadHistory().catch(() => {}),
         refreshDownloadQueueSnapshot().catch(() => {})
@@ -1958,20 +2107,26 @@
     function bindEvents() {
       dom.createCollectionBtn?.addEventListener("click", async () => {
         try {
-          const name = String(dom.collectionNameInput?.value || "").trim();
-          if (!name) {
+          const payload = getCollectionCreatePayload();
+          if (!payload.name) {
             throw new Error("Collection name is required.");
           }
-          collectionsState = await window.rteDownloader.createCollection(name);
+          collectionsState = await window.rteDownloader.createCollection(payload);
           if (dom.collectionNameInput) {
             dom.collectionNameInput.value = "";
           }
-          if (dom.collectionsSelect && collectionsState[0]?.id) {
-            dom.collectionsSelect.value = collectionsState[0].id;
+          const created = collectionsState.find((collection) => String(collection?.name || "").trim() === payload.name);
+          if (dom.collectionsSelect && created?.id) {
+            dom.collectionsSelect.value = created.id;
           }
           renderCollections();
-          await loadCollectionRecommendations();
-          setSettingsStatus("Collection created.");
+          if (payload.mode === "smart" && created?.id && typeof window.rteDownloader?.refreshCollection === "function") {
+            const refreshed = await window.rteDownloader.refreshCollection(created.id, { forceRefresh: true });
+            collectionsState = Array.isArray(refreshed?.collections) ? refreshed.collections : collectionsState;
+            renderCollections();
+          }
+          await loadCollectionRecommendations({ forceRefresh: payload.mode === "smart" });
+          setSettingsStatus(payload.mode === "smart" ? "Smart collection created." : "Collection created.");
         } catch (error) {
           setSettingsStatus(error.message, true);
         }
@@ -1980,6 +2135,50 @@
       dom.collectionsSelect?.addEventListener("change", () => {
         renderCollections();
         loadCollectionRecommendations().catch((error) => setSettingsStatus(error.message, true));
+      });
+
+      dom.saveCollectionConfigBtn?.addEventListener("click", async () => {
+        const selected = getSelectedCollection();
+        if (!selected || typeof window.rteDownloader?.updateCollection !== "function") {
+          setSettingsStatus("Select a collection first.", true);
+          return;
+        }
+        try {
+          const payload = getCollectionCreatePayload();
+          collectionsState = await window.rteDownloader.updateCollection(selected.id, {
+            name: payload.name || selected.name,
+            mode: payload.mode,
+            autoUpdate: payload.autoUpdate,
+            smartCriteria: payload.smartCriteria
+          });
+          renderCollections();
+          if (payload.mode === "smart" && typeof window.rteDownloader?.refreshCollection === "function") {
+            const refreshed = await window.rteDownloader.refreshCollection(selected.id, { forceRefresh: true });
+            collectionsState = Array.isArray(refreshed?.collections) ? refreshed.collections : collectionsState;
+            renderCollections();
+          }
+          await loadCollectionRecommendations({ forceRefresh: true });
+          setSettingsStatus("Collection settings saved.");
+        } catch (error) {
+          setSettingsStatus(error.message, true);
+        }
+      });
+
+      dom.refreshCollectionBtn?.addEventListener("click", async () => {
+        const collectionId = getSelectedCollectionId();
+        if (!collectionId || typeof window.rteDownloader?.refreshCollection !== "function") {
+          setSettingsStatus("Select a smart collection first.", true);
+          return;
+        }
+        try {
+          const result = await window.rteDownloader.refreshCollection(collectionId, { forceRefresh: true });
+          collectionsState = Array.isArray(result?.collections) ? result.collections : collectionsState;
+          renderCollections();
+          await loadCollectionRecommendations({ forceRefresh: true });
+          setSettingsStatus("Smart collection refreshed.");
+        } catch (error) {
+          setSettingsStatus(error.message, true);
+        }
       });
 
       dom.deleteCollectionBtn?.addEventListener("click", async () => {
@@ -2121,6 +2320,20 @@
       dom.metadataIndexKindFilter?.addEventListener("change", () => {
         Promise.all([loadMetadataIndex(), loadMetadataDiscovery()]).catch((error) => setSettingsStatus(error.message, true));
       });
+      for (const input of [dom.metadataIndexHostFilter, dom.metadataIndexGenreFilter, dom.metadataIndexLocationFilter]) {
+        input?.addEventListener("input", () => {
+          if (metadataSearchTimer) {
+            clearTimeout(metadataSearchTimer);
+          }
+          metadataSearchTimer = setTimeout(() => {
+            metadataSearchTimer = null;
+            Promise.all([
+              loadMetadataIndex(),
+              loadMetadataDiscovery()
+            ]).catch((error) => setSettingsStatus(error.message, true));
+          }, 120);
+        });
+      }
       dom.metadataIndexSearchInput?.addEventListener("input", () => {
         if (metadataSearchTimer) {
           clearTimeout(metadataSearchTimer);
@@ -2168,6 +2381,33 @@
       });
       dom.metadataDiscoveryRefreshBtn?.addEventListener("click", () => {
         loadMetadataDiscovery({ forceRefresh: true }).catch((error) => setSettingsStatus(error.message, true));
+      });
+      dom.metadataRepairAddBtn?.addEventListener("click", async () => {
+        try {
+          const from = String(dom.metadataRepairFromInput?.value || "").trim();
+          const to = String(dom.metadataRepairToInput?.value || "").trim();
+          if (!from || !to) {
+            throw new Error("Both From and To values are required.");
+          }
+          metadataRepairRules = await window.rteDownloader.addMetadataRepair({
+            field: String(dom.metadataRepairFieldInput?.value || "host").trim().toLowerCase(),
+            sourceType: String(dom.metadataRepairSourceTypeInput?.value || "").trim().toLowerCase(),
+            from,
+            to
+          });
+          if (dom.metadataRepairFromInput) {
+            dom.metadataRepairFromInput.value = "";
+          }
+          if (dom.metadataRepairToInput) {
+            dom.metadataRepairToInput.value = "";
+          }
+          renderMetadataRepairs();
+          await loadHeavyLibraryViews({ forceRefresh: true });
+          await loadCollectionRecommendations({ forceRefresh: true }).catch(() => {});
+          setSettingsStatus("Metadata repair added.");
+        } catch (error) {
+          setSettingsStatus(error.message, true);
+        }
       });
       dom.metadataIndexSaveAllBtn?.addEventListener("click", async () => {
         try {
@@ -2429,10 +2669,20 @@
       for (const facetContainer of [dom.metadataDiscoveryHosts, dom.metadataDiscoveryGenres, dom.metadataDiscoveryLocations]) {
         facetContainer?.addEventListener("click", async (event) => {
           const button = event.target.closest("[data-metadata-facet]");
-          if (!button || !dom.metadataIndexSearchInput) {
+          if (!button) {
             return;
           }
-          dom.metadataIndexSearchInput.value = button.getAttribute("data-metadata-facet") || "";
+          const value = button.getAttribute("data-metadata-facet") || "";
+          const type = String(button.getAttribute("data-metadata-facet-type") || "").trim().toLowerCase();
+          if (type === "host" && dom.metadataIndexHostFilter) {
+            dom.metadataIndexHostFilter.value = value;
+          } else if (type === "genre" && dom.metadataIndexGenreFilter) {
+            dom.metadataIndexGenreFilter.value = value;
+          } else if (type === "location" && dom.metadataIndexLocationFilter) {
+            dom.metadataIndexLocationFilter.value = value;
+          } else if (dom.metadataIndexSearchInput) {
+            dom.metadataIndexSearchInput.value = value;
+          }
           await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
         });
       }
@@ -2693,6 +2943,17 @@
             }
             return;
           }
+          const inspectButton = event.target.closest("[data-diagnostics-thin-doc]");
+          if (inspectButton) {
+            try {
+              const payload = decodeDataPayload(inspectButton.getAttribute("data-diagnostics-thin-doc"));
+              await loadThinDocDetails(payload || {});
+              setDiagnosticsStatus("Slim doc details loaded.");
+            } catch (error) {
+              setDiagnosticsStatus(error.message, true);
+            }
+            return;
+          }
           const reharvestButton = event.target.closest("[data-diagnostics-reharvest-source]");
           if (!reharvestButton) {
             return;
@@ -2713,6 +2974,22 @@
           }
         });
       }
+
+      dom.metadataRepairList?.addEventListener("click", async (event) => {
+        const deleteButton = event.target.closest("[data-metadata-repair-delete]");
+        if (!deleteButton) {
+          return;
+        }
+        try {
+          metadataRepairRules = await window.rteDownloader.deleteMetadataRepair(deleteButton.getAttribute("data-metadata-repair-delete") || "");
+          renderMetadataRepairs();
+          await loadHeavyLibraryViews({ forceRefresh: true });
+          await loadCollectionRecommendations({ forceRefresh: true }).catch(() => {});
+          setSettingsStatus("Metadata repair deleted.");
+        } catch (error) {
+          setSettingsStatus(error.message, true);
+        }
+      });
     }
 
     bindEvents();
