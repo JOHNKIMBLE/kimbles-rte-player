@@ -54,11 +54,36 @@ function createMetadataHarvestStore(filePath) {
     return cache;
   }
 
+  function patchItems(patcher) {
+    const current = load();
+    if (typeof patcher !== "function") {
+      return 0;
+    }
+    let updatedCount = 0;
+    current.items = (Array.isArray(current.items) ? current.items : []).map((item) => {
+      const next = patcher(item);
+      if (!next || typeof next !== "object") {
+        return item;
+      }
+      updatedCount += 1;
+      return {
+        ...item,
+        ...next
+      };
+    });
+    if (updatedCount > 0) {
+      current.updatedAt = new Date().toISOString();
+      save();
+    }
+    return updatedCount;
+  }
+
   return {
     list,
     getUpdatedAt,
     getState,
-    replace
+    replace,
+    patchItems
   };
 }
 

@@ -37,6 +37,97 @@ function uniqueStrings(values) {
   return normalizeMetadataList(values);
 }
 
+function matchesOptionalFilter(value, expected) {
+  const actual = normalizeText(value).toLowerCase();
+  const wanted = normalizeText(expected).toLowerCase();
+  if (!wanted) {
+    return true;
+  }
+  return actual === wanted;
+}
+
+function matchesListFilter(values, expected) {
+  const wanted = normalizeText(expected).toLowerCase();
+  if (!wanted) {
+    return true;
+  }
+  return normalizeMetadataList(values).some((value) => normalizeText(value).toLowerCase() === wanted);
+}
+
+function applyMetadataRepairRules(index, repairRules = []) {
+  const docs = Array.isArray(index) ? index : [];
+  const rules = (Array.isArray(repairRules) ? repairRules : [])
+    .map((rule) => ({
+      field: normalizeText(rule?.field).toLowerCase(),
+      sourceType: normalizeText(rule?.sourceType).toLowerCase(),
+      from: normalizeText(rule?.from),
+      to: normalizeText(rule?.to)
+    }))
+    .filter((rule) => rule.field && rule.from && rule.to);
+
+  if (!rules.length) {
+    return docs.slice();
+  }
+
+  function replaceText(value, rule) {
+    const text = normalizeText(value);
+    return text && text.toLowerCase() === rule.from.toLowerCase() ? rule.to : text;
+  }
+
+  function applyList(values, rule) {
+    return uniqueStrings((Array.isArray(values) ? values : []).map((value) => replaceText(value, rule)));
+  }
+
+  return docs.map((doc) => {
+    const sourceType = normalizeText(doc?.sourceType).toLowerCase();
+    const matchingRules = rules.filter((rule) => !rule.sourceType || rule.sourceType === sourceType);
+    if (!matchingRules.length) {
+      return { ...doc };
+    }
+    const next = { ...doc };
+    for (const rule of matchingRules) {
+      if (rule.field === "program") {
+        next.title = replaceText(next.title, rule);
+        next.programTitle = replaceText(next.programTitle, rule);
+        next.subtitle = replaceText(next.subtitle, rule);
+      } else if (rule.field === "episode") {
+        next.title = replaceText(next.title, rule);
+        next.episodeTitle = replaceText(next.episodeTitle, rule);
+        next.latestEpisodeTitle = replaceText(next.latestEpisodeTitle, rule);
+      } else if (rule.field === "location") {
+        next.location = replaceText(next.location, rule);
+        next.latestEpisodeLocation = replaceText(next.latestEpisodeLocation, rule);
+      } else if (rule.field === "host") {
+        next.hosts = applyList(next.hosts, rule);
+        next.latestEpisodeHosts = applyList(next.latestEpisodeHosts, rule);
+      } else if (rule.field === "genre") {
+        next.genres = applyList(next.genres, rule);
+        next.latestEpisodeGenres = applyList(next.latestEpisodeGenres, rule);
+      }
+    }
+    next.searchText = buildSearchText([
+      next.title,
+      next.subtitle,
+      next.programTitle,
+      next.episodeTitle,
+      next.description,
+      next.location,
+      next.cadence,
+      next.runSchedule,
+      next.nextBroadcastAt,
+      next.nextBroadcastTitle,
+      next.latestEpisodeTitle,
+      next.latestEpisodeDescription,
+      next.latestEpisodeLocation,
+      ...uniqueStrings(next.hosts),
+      ...uniqueStrings(next.genres),
+      ...uniqueStrings(next.latestEpisodeHosts),
+      ...uniqueStrings(next.latestEpisodeGenres)
+    ]);
+    return next;
+  });
+}
+
 function toKindLabel(kind) {
   const safe = normalizeText(kind).toLowerCase();
   if (safe === "subscription") return "Subscription";
@@ -607,6 +698,9 @@ function searchMetadataIndex(index, options = {}) {
   const query = normalizeText(options.query).toLowerCase();
   const sourceType = normalizeText(options.sourceType).toLowerCase();
   const kind = normalizeText(options.kind).toLowerCase();
+  const host = normalizeText(options.host);
+  const genre = normalizeText(options.genre);
+  const location = normalizeText(options.location);
   const limit = Math.max(1, Math.min(200, Number(options.limit || 50) || 50));
   const tokens = query.split(/\s+/g).map((token) => token.trim()).filter(Boolean);
 
@@ -616,6 +710,15 @@ function searchMetadataIndex(index, options = {}) {
   }
   if (kind) {
     rows = rows.filter((doc) => doc.kind === kind);
+  }
+  if (host) {
+    rows = rows.filter((doc) => matchesListFilter([...uniqueStrings(doc.hosts), ...uniqueStrings(doc.latestEpisodeHosts)], host));
+  }
+  if (genre) {
+    rows = rows.filter((doc) => matchesListFilter([...uniqueStrings(doc.genres), ...uniqueStrings(doc.latestEpisodeGenres)], genre));
+  }
+  if (location) {
+    rows = rows.filter((doc) => matchesOptionalFilter(doc.location, location) || matchesOptionalFilter(doc.latestEpisodeLocation, location));
   }
 
   if (tokens.length) {
@@ -642,6 +745,9 @@ function searchMetadataIndex(index, options = {}) {
     query,
     sourceType,
     kind,
+    host,
+    genre,
+    location,
     total,
     results,
     metrics,
@@ -656,6 +762,7 @@ module.exports = {
   buildHistoryMetadataDocs,
   buildHarvestMetadataDocs,
   sortMetadataDocs,
+  applyMetadataRepairRules,
   searchMetadataIndex,
   discoverMetadataIndex,
   buildCollectionRecommendations

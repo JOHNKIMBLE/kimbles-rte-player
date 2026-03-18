@@ -2,6 +2,60 @@ const path = require("node:path");
 
 const DEFAULT_PATH_FORMAT = "{radio}/{program}/{episode_short} {release_date}";
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function clampBoolean(value, fallback = false) {
+  return value == null ? Boolean(fallback) : Boolean(value);
+}
+
+function normalizeRuleText(value) {
+  return normalizeText(value).slice(0, 300);
+}
+
+function normalizePerProgramRules(input) {
+  const rows = Array.isArray(input) ? input : [];
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const rule = {
+      id: normalizeRuleText(row.id) || "",
+      sourceType: normalizeRuleText(row.sourceType).toLowerCase(),
+      programTitle: normalizeRuleText(row.programTitle),
+      programUrl: normalizeRuleText(row.programUrl),
+      outputDir: normalizeText(row.outputDir),
+      pathFormat: normalizeText(row.pathFormat),
+      downloadKeepLatest: clampInteger(row.downloadKeepLatest, 0, 500, 0),
+      downloadDeleteOlderDays: clampInteger(row.downloadDeleteOlderDays, 0, 3650, 0),
+      skipReruns: clampBoolean(row.skipReruns, false),
+      enabled: clampBoolean(row.enabled, true)
+    };
+    if (!rule.sourceType && !rule.programTitle && !rule.programUrl) {
+      continue;
+    }
+    const key = [
+      rule.sourceType,
+      rule.programUrl.toLowerCase(),
+      rule.programTitle.toLowerCase(),
+      rule.outputDir.toLowerCase(),
+      rule.pathFormat.toLowerCase()
+    ].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    if (!rule.id) {
+      rule.id = `${Date.now().toString(36)}-${out.length.toString(36)}`;
+    }
+    out.push(rule);
+  }
+  return out.slice(0, 250);
+}
+
 function clampInteger(value, min, max, fallback) {
   const normalized = Math.floor(Number(value));
   if (!Number.isFinite(normalized)) {
@@ -24,6 +78,8 @@ function createDefaultSettings(defaultDownloadDir) {
     id3Tagging: true,
     feedExportEnabled: true,
     webhookUrl: "",
+    discordWebhookUrl: "",
+    ntfyTopicUrl: "",
     auddTrackMatching: false,
     auddApiToken: "",
     fingerprintTrackMatching: false,
@@ -37,6 +93,7 @@ function createDefaultSettings(defaultDownloadDir) {
     downloadDeleteOlderDays: 0,
     skipReruns: false,
     smartTagCleanup: true,
+    perProgramRules: [],
     episodesPerPage: 5,
     discoveryCount: 5
   };
@@ -94,6 +151,8 @@ function normalizeSettings(input, options = {}) {
     id3Tagging: raw.id3Tagging == null ? defaults.id3Tagging : Boolean(raw.id3Tagging),
     feedExportEnabled: raw.feedExportEnabled == null ? defaults.feedExportEnabled : Boolean(raw.feedExportEnabled),
     webhookUrl: typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "",
+    discordWebhookUrl: typeof raw.discordWebhookUrl === "string" ? raw.discordWebhookUrl.trim() : "",
+    ntfyTopicUrl: typeof raw.ntfyTopicUrl === "string" ? raw.ntfyTopicUrl.trim() : "",
     auddTrackMatching: raw.auddTrackMatching == null ? defaults.auddTrackMatching : Boolean(raw.auddTrackMatching),
     auddApiToken: typeof raw.auddApiToken === "string" ? raw.auddApiToken.trim() : "",
     fingerprintTrackMatching: raw.fingerprintTrackMatching == null
@@ -109,6 +168,7 @@ function normalizeSettings(input, options = {}) {
     downloadDeleteOlderDays: clampInteger(raw.downloadDeleteOlderDays, 0, 3650, defaults.downloadDeleteOlderDays),
     skipReruns: raw.skipReruns == null ? defaults.skipReruns : Boolean(raw.skipReruns),
     smartTagCleanup: raw.smartTagCleanup == null ? defaults.smartTagCleanup : Boolean(raw.smartTagCleanup),
+    perProgramRules: normalizePerProgramRules(raw.perProgramRules),
     episodesPerPage: clampInteger(raw.episodesPerPage, 1, 50, defaults.episodesPerPage),
     discoveryCount: clampInteger(raw.discoveryCount, 1, 24, defaults.discoveryCount)
   };

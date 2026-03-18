@@ -177,6 +177,8 @@ const dedupeModeSelect = document.getElementById("dedupeModeSelect");
 const id3TaggingCheckbox = document.getElementById("id3TaggingCheckbox");
 const feedExportCheckbox = document.getElementById("feedExportCheckbox");
 const webhookUrlInput = document.getElementById("webhookUrlInput");
+const discordWebhookUrlInput = document.getElementById("discordWebhookUrlInput");
+const ntfyTopicUrlInput = document.getElementById("ntfyTopicUrlInput");
 const auddTrackMatchingCheckbox = document.getElementById("auddTrackMatchingCheckbox");
 const auddApiTokenInput = document.getElementById("auddApiTokenInput");
 const fingerprintTrackMatchingCheckbox = document.getElementById("fingerprintTrackMatchingCheckbox");
@@ -190,6 +192,18 @@ const downloadKeepLatestInput = document.getElementById("downloadKeepLatestInput
 const downloadDeleteOlderDaysInput = document.getElementById("downloadDeleteOlderDaysInput");
 const skipRerunsCheckbox = document.getElementById("skipRerunsCheckbox");
 const smartTagCleanupCheckbox = document.getElementById("smartTagCleanupCheckbox");
+const programRuleSourceTypeInput = document.getElementById("programRuleSourceTypeInput");
+const programRuleProgramTitleInput = document.getElementById("programRuleProgramTitleInput");
+const programRuleProgramUrlInput = document.getElementById("programRuleProgramUrlInput");
+const programRuleOutputDirInput = document.getElementById("programRuleOutputDirInput");
+const programRulePathFormatInput = document.getElementById("programRulePathFormatInput");
+const programRuleKeepLatestInput = document.getElementById("programRuleKeepLatestInput");
+const programRuleDeleteOlderDaysInput = document.getElementById("programRuleDeleteOlderDaysInput");
+const programRuleSkipRerunsCheckbox = document.getElementById("programRuleSkipRerunsCheckbox");
+const programRuleEnabledCheckbox = document.getElementById("programRuleEnabledCheckbox");
+const addProgramRuleBtn = document.getElementById("addProgramRuleBtn");
+const resetProgramRuleBtn = document.getElementById("resetProgramRuleBtn");
+const programRuleList = document.getElementById("programRuleList");
 const downloadQueueStatus = document.getElementById("downloadQueueStatus");
 const downloadQueueActive = document.getElementById("downloadQueueActive");
 const downloadQueuePending = document.getElementById("downloadQueuePending");
@@ -237,8 +251,19 @@ const refreshAllSchedulesBtn = document.getElementById("refreshAllSchedulesBtn")
 const collectionsSummary = document.getElementById("collectionsSummary");
 const collectionsMetrics = document.getElementById("collectionsMetrics");
 const collectionsSelect = document.getElementById("collectionsSelect");
+const collectionModeInput = document.getElementById("collectionModeInput");
 const collectionNameInput = document.getElementById("collectionNameInput");
+const collectionSmartQueryInput = document.getElementById("collectionSmartQueryInput");
+const collectionSmartSourceFilter = document.getElementById("collectionSmartSourceFilter");
+const collectionSmartKindFilter = document.getElementById("collectionSmartKindFilter");
+const collectionSmartHostInput = document.getElementById("collectionSmartHostInput");
+const collectionSmartGenreInput = document.getElementById("collectionSmartGenreInput");
+const collectionSmartLocationInput = document.getElementById("collectionSmartLocationInput");
+const collectionSmartLimitInput = document.getElementById("collectionSmartLimitInput");
+const collectionAutoUpdateCheckbox = document.getElementById("collectionAutoUpdateCheckbox");
 const createCollectionBtn = document.getElementById("createCollectionBtn");
+const saveCollectionConfigBtn = document.getElementById("saveCollectionConfigBtn");
+const refreshCollectionBtn = document.getElementById("refreshCollectionBtn");
 const deleteCollectionBtn = document.getElementById("deleteCollectionBtn");
 const collectionsList = document.getElementById("collectionsList");
 const collectionsRecommendationsSummary = document.getElementById("collectionsRecommendationsSummary");
@@ -251,6 +276,13 @@ const metadataIndexSaveEpisodesBtn = document.getElementById("metadataIndexSaveE
 const metadataDiscoverySaveAllBtn = document.getElementById("metadataDiscoverySaveAllBtn");
 const metadataDiscoverySaveHostsBtn = document.getElementById("metadataDiscoverySaveHostsBtn");
 const metadataDiscoverySaveEpisodesBtn = document.getElementById("metadataDiscoverySaveEpisodesBtn");
+const metadataRepairSummary = document.getElementById("metadataRepairSummary");
+const metadataRepairFieldInput = document.getElementById("metadataRepairFieldInput");
+const metadataRepairSourceTypeInput = document.getElementById("metadataRepairSourceTypeInput");
+const metadataRepairFromInput = document.getElementById("metadataRepairFromInput");
+const metadataRepairToInput = document.getElementById("metadataRepairToInput");
+const metadataRepairAddBtn = document.getElementById("metadataRepairAddBtn");
+const metadataRepairList = document.getElementById("metadataRepairList");
 const entityGraphSummary = document.getElementById("entityGraphSummary");
 const entityGraphMetrics = document.getElementById("entityGraphMetrics");
 const entityGraphSourceFilter = document.getElementById("entityGraphSourceFilter");
@@ -279,6 +311,9 @@ const historyMetrics = document.getElementById("historyMetrics");
 const historyPageSizeSelect = document.getElementById("historyPageSizeSelect");
 const historyShowMoreBtn = document.getElementById("historyShowMoreBtn");
 const historyClearBtn = document.getElementById("historyClearBtn");
+const metadataIndexHostFilter = document.getElementById("metadataIndexHostFilter");
+const metadataIndexGenreFilter = document.getElementById("metadataIndexGenreFilter");
+const metadataIndexLocationFilter = document.getElementById("metadataIndexLocationFilter");
 const diagnosticsRefreshBtn = document.getElementById("diagnosticsRefreshBtn");
 const diagnosticsRepairBtn = document.getElementById("diagnosticsRepairBtn");
 const diagnosticsOpenDownloadDirBtn = document.getElementById("diagnosticsOpenDownloadDirBtn");
@@ -290,6 +325,7 @@ const diagnosticsHarvestSources = document.getElementById("diagnosticsHarvestSou
 const diagnosticsSourceHealth = document.getElementById("diagnosticsSourceHealth");
 const diagnosticsRetryHistory = document.getElementById("diagnosticsRetryHistory");
 const diagnosticsThinDocs = document.getElementById("diagnosticsThinDocs");
+const diagnosticsThinDocDetails = document.getElementById("diagnosticsThinDocDetails");
 const diagnosticsRuntime = document.getElementById("diagnosticsRuntime");
 const diagnosticsBinaries = document.getElementById("diagnosticsBinaries");
 const nowPlayingBar = document.getElementById("nowPlayingBar");
@@ -334,6 +370,8 @@ const state = {
   id3Tagging: true,
   feedExportEnabled: true,
   webhookUrl: "",
+  discordWebhookUrl: "",
+  ntfyTopicUrl: "",
   auddTrackMatching: false,
   auddApiToken: "",
   fingerprintTrackMatching: false,
@@ -347,6 +385,7 @@ const state = {
   downloadDeleteOlderDays: 0,
   skipReruns: false,
   smartTagCleanup: true,
+  perProgramRules: [],
   activeTab: "rte",
   lastSourceTab: "rte",
   canPickDownloadDirectory: true,
@@ -717,8 +756,19 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     collectionsSummary,
     collectionsMetrics,
     collectionsSelect,
+    collectionModeInput,
     collectionNameInput,
+    collectionSmartQueryInput,
+    collectionSmartSourceFilter,
+    collectionSmartKindFilter,
+    collectionSmartHostInput,
+    collectionSmartGenreInput,
+    collectionSmartLocationInput,
+    collectionSmartLimitInput,
+    collectionAutoUpdateCheckbox,
     createCollectionBtn,
+    saveCollectionConfigBtn,
+    refreshCollectionBtn,
     deleteCollectionBtn,
     collectionsList,
     collectionsRecommendationsSummary,
@@ -738,6 +788,9 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     metadataIndexSourceFilter: document.getElementById("metadataIndexSourceFilter"),
     metadataIndexKindFilter: document.getElementById("metadataIndexKindFilter"),
     metadataIndexSearchInput: document.getElementById("metadataIndexSearchInput"),
+    metadataIndexHostFilter,
+    metadataIndexGenreFilter,
+    metadataIndexLocationFilter,
     metadataIndexSaveAllBtn,
     metadataIndexSaveHostsBtn,
     metadataIndexSaveEpisodesBtn,
@@ -752,6 +805,13 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     metadataDiscoveryGenres: document.getElementById("metadataDiscoveryGenres"),
     metadataDiscoveryLocations: document.getElementById("metadataDiscoveryLocations"),
     metadataDiscoveryList: document.getElementById("metadataDiscoveryList"),
+    metadataRepairSummary,
+    metadataRepairFieldInput,
+    metadataRepairSourceTypeInput,
+    metadataRepairFromInput,
+    metadataRepairToInput,
+    metadataRepairAddBtn,
+    metadataRepairList,
     entityGraphSummary,
     entityGraphMetrics,
     entityGraphSourceFilter,
@@ -784,6 +844,7 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     diagnosticsSourceHealth,
     diagnosticsRetryHistory,
     diagnosticsThinDocs,
+    diagnosticsThinDocDetails,
     diagnosticsRuntime,
     diagnosticsBinaries
   },
@@ -840,6 +901,8 @@ const settingsScreen = window.KimbleSettingsScreen.create({
     id3TaggingCheckbox,
     feedExportCheckbox,
     webhookUrlInput,
+    discordWebhookUrlInput,
+    ntfyTopicUrlInput,
     auddTrackMatchingCheckbox,
     auddApiTokenInput,
     fingerprintTrackMatchingCheckbox,
@@ -853,6 +916,18 @@ const settingsScreen = window.KimbleSettingsScreen.create({
     downloadDeleteOlderDaysInput,
     skipRerunsCheckbox,
     smartTagCleanupCheckbox,
+    programRuleSourceTypeInput,
+    programRuleProgramTitleInput,
+    programRuleProgramUrlInput,
+    programRuleOutputDirInput,
+    programRulePathFormatInput,
+    programRuleKeepLatestInput,
+    programRuleDeleteOlderDaysInput,
+    programRuleSkipRerunsCheckbox,
+    programRuleEnabledCheckbox,
+    addProgramRuleBtn,
+    resetProgramRuleBtn,
+    programRuleList,
     chooseDownloadDirBtn,
     saveSettingsBtn,
     episodesPerPageInput,
@@ -1194,16 +1269,33 @@ playbackController = window.KimblePlaybackController.create({
   estimateChaptersFromTracks,
   formatDurationFromSeconds,
   setSettingsStatus,
-  playQueuedItem: async (item) => playFromDownloadedFile({
-    outputDir: item.outputDir,
-    fileName: item.fileName,
-    title: item.title || item.fileName || "",
-    source: item.source || "Queue",
-    subtitle: item.subtitle || "",
-    image: item.image || "",
-    episodeUrl: item.episodeUrl || "",
-    sourceType: item.sourceType || ""
-  }),
+  playQueuedItem: async (item) => {
+    if (String(item?.mode || "local").trim().toLowerCase() === "episode") {
+      return playEpisodeWithBackgroundCue({
+        sourceType: item.sourceType || "",
+        cacheKey: item.cacheKey || item.episodeUrl || item.streamUrl || "",
+        sourceLabel: item.sourceLabel || item.source || "Queue",
+        title: item.title || "Episode",
+        programTitle: item.programTitle || "",
+        subtitle: item.subtitle || "",
+        image: item.image || "",
+        episodeUrl: item.episodeUrl || "",
+        durationSeconds: Number(item.durationSeconds || 0) || 0,
+        streamUrl: item.streamUrl || "",
+        playbackKey: item.playbackKey || `${item.sourceType || "episode"}:queued:${item.episodeUrl || item.streamUrl || ""}`
+      });
+    }
+    return playFromDownloadedFile({
+      outputDir: item.outputDir,
+      fileName: item.fileName,
+      title: item.title || item.fileName || "",
+      source: item.source || "Queue",
+      subtitle: item.subtitle || "",
+      image: item.image || "",
+      episodeUrl: item.episodeUrl || "",
+      sourceType: item.sourceType || ""
+    });
+  },
   onPlaybackStarted: (playbackKey) => {
     const key = String(playbackKey || "");
     if (key.startsWith("wwf:remote:")) {
@@ -1212,6 +1304,12 @@ playbackController = window.KimblePlaybackController.create({
         setWwfEpisodeStatus(episodeUrl, "");
       }
     }
+  },
+  onListenProgress: (payload) => {
+    if (typeof window.rteDownloader?.reportListenProgress !== "function") {
+      return;
+    }
+    return window.rteDownloader.reportListenProgress(payload);
   }
 });
 cueManager = window.KimbleCueManager.create({
@@ -1230,6 +1328,7 @@ cueManager = window.KimbleCueManager.create({
   appendCueDebugLog,
   formatCueSource,
   formatCueAlignment,
+  setSettingsStatus,
   setRteEpisodeChapters: setEpisodeChapters,
   setFipEpisodeChapters: (episodeUrl, chapters) => fipScreen.setEpisodeChapters(episodeUrl, chapters)
 });

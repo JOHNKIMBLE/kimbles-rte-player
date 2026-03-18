@@ -84,7 +84,12 @@ const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
-const { enforceDownloadRules, isLikelyRerun } = require("./lib/download-rules");
+const {
+  enforceDownloadRules,
+  isLikelyRerun,
+  resolveProgramRule,
+  mergeRuleSettings
+} = require("./lib/download-rules");
 const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
@@ -94,10 +99,12 @@ const {
   buildFeedMetadataDocs,
   buildHistoryMetadataDocs,
   sortMetadataDocs,
+  applyMetadataRepairRules,
   searchMetadataIndex,
   discoverMetadataIndex,
   buildCollectionRecommendations
 } = require("./lib/metadata-index");
+const { createMetadataRepairStore } = require("./lib/metadata-repair-store");
 const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
 const { createCollectionsStore } = require("./lib/collections-store");
 const { createMetadataHarvestStore } = require("./lib/metadata-harvest-store");
@@ -148,6 +155,7 @@ const { createDiskCache } = require("./lib/disk-cache");
 const { createDownloadHistory } = require("./lib/download-history");
 const { createRecentErrorsLog } = require("./lib/recent-errors-log");
 const collectionsStore = createCollectionsStore(path.join(DATA_DIR, "collections.json"));
+const metadataRepairStore = createMetadataRepairStore(path.join(DATA_DIR, "metadata-repairs.json"));
 
 const CACHE_DIR = path.join(DATA_DIR, "cache");
 const diskCache = createDiskCache(CACHE_DIR);
@@ -272,6 +280,38 @@ function writeSettings(next) {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(normalized, null, 2), "utf8");
   cachedSettings = normalized;
   return normalized;
+}
+
+function resolveEffectiveProgramSettings(context = {}) {
+  const baseSettings = readSettings();
+  const rule = resolveProgramRule(baseSettings, context);
+  return {
+    rule,
+    settings: mergeRuleSettings(baseSettings, rule)
+  };
+}
+
+function buildRuleAwareDownloadTarget(options = {}) {
+  const resolved = resolveEffectiveProgramSettings({
+    sourceType: options.sourceType,
+    programUrl: options.programUrl,
+    programTitle: options.programTitle
+  });
+  return {
+    rule: resolved.rule,
+    settings: resolved.settings,
+    target: buildDownloadTarget({
+      baseDownloadDir: resolved.settings.downloadDir || DOWNLOAD_DIR,
+      pathFormat: resolved.settings.pathFormat,
+      sourceType: options.sourceType,
+      programTitle: sanitizePathSegment(options.programTitle) || inferProgramNameFromUrl(options.sourceUrl || options.episodeUrl || options.programUrl || ""),
+      episodeTitle: options.episodeTitle,
+      publishedTime: options.publishedTime,
+      clipId: options.clipId,
+      episodeUrl: options.episodeUrl || options.sourceUrl || options.programUrl || "",
+      hosts: options.hosts
+    })
+  };
 }
 
 function inferProgramNameFromUrl(inputUrl) {
@@ -446,6 +486,7 @@ function createPersistentDownloadPayload({ job, postProcess = {} }) {
       sourceType: String(postProcess.sourceType || job.sourceType || ""),
       episodeTitle: String(postProcess.episodeTitle || ""),
       programTitle: String(postProcess.programTitle || ""),
+      programUrl: String(postProcess.programUrl || ""),
       publishedTime: String(postProcess.publishedTime || ""),
       sourceUrl: String(postProcess.sourceUrl || job.sourceUrl || ""),
       artworkUrl: String(postProcess.artworkUrl || ""),
@@ -463,10 +504,15 @@ function createPersistentDownloadPayload({ job, postProcess = {} }) {
 
 function appendDownloadHistoryEntry(entry) {
   try {
+    const resolved = resolveEffectiveProgramSettings({
+      sourceType: entry?.sourceType,
+      programTitle: entry?.programTitle,
+      programUrl: entry?.programUrl
+    });
     downloadHistory.append(entry);
     enforceDownloadRules({
       downloadHistory,
-      settings: readSettings(),
+      settings: resolved.settings,
       sourceType: entry?.sourceType,
       programTitle: entry?.programTitle
     });
@@ -476,6 +522,15 @@ function appendDownloadHistoryEntry(entry) {
       source: entry.sourceType,
       programTitle: entry.programTitle,
       episodeTitle: entry.episodeTitle
+    });
+    void sendNotificationsIfConfigured({
+      event: "download.saved",
+      source: entry?.sourceType || "",
+      title: entry?.programTitle || "",
+      episodeTitle: entry?.episodeTitle || "",
+      outputDir: entry?.outputDir || "",
+      fileName: entry?.fileName || "",
+      ruleId: resolved.rule?.id || ""
     });
   } catch {}
 }
@@ -488,6 +543,7 @@ function appendDownloadHistoryFromPayload(payload, result) {
   appendDownloadHistoryEntry({
     sourceType: String(job.sourceType || "rte"),
     programTitle: String(payload.postProcess?.programTitle || ""),
+    programUrl: String(payload.postProcess?.programUrl || ""),
     episodeTitle: String(payload.postProcess?.episodeTitle || job.title || ""),
     filePath: result?.fileName ? path.join(result.outputDir || job.outputDir || "", result.fileName) : "",
     outputDir: result?.outputDir || job.outputDir || "",
@@ -522,6 +578,64 @@ function buildLibraryMetadataDataset() {
   };
 }
 
+function buildCollectionEntryFromMetadataRow(row = {}) {
+  return {
+    type: String(row.kind === "episode" ? "episode" : row.kind === "host" ? "host" : "program"),
+    sourceType: String(row.sourceType || "").trim().toLowerCase(),
+    title: String(row.title || row.programTitle || row.episodeTitle || "").trim(),
+    value: String(row.value || row.title || row.programTitle || row.episodeTitle || "").trim(),
+    subtitle: String(row.subtitle || row.kindLabel || "").trim(),
+    programTitle: String(row.programTitle || row.title || "").trim(),
+    episodeTitle: String(row.episodeTitle || "").trim(),
+    programUrl: String(row.programUrl || "").trim(),
+    episodeUrl: String(row.episodeUrl || "").trim(),
+    description: String(row.description || row.latestEpisodeDescription || "").trim(),
+    location: String(row.location || row.latestEpisodeLocation || "").trim(),
+    hosts: normalizeMetadataList(row.hosts || row.latestEpisodeHosts),
+    genres: normalizeMetadataList(row.genres || row.latestEpisodeGenres)
+  };
+}
+
+function buildSmartCollectionEntries(snapshot, collection) {
+  const criteria = collection?.smartCriteria && typeof collection.smartCriteria === "object" ? collection.smartCriteria : {};
+  const result = searchMetadataIndex(snapshot?.index || [], {
+    query: String(criteria.query || ""),
+    sourceType: String(criteria.sourceType || ""),
+    kind: String(criteria.kind || ""),
+    host: String(criteria.host || ""),
+    genre: String(criteria.genre || ""),
+    location: String(criteria.location || ""),
+    limit: Number(criteria.limit || 50)
+  });
+  return (Array.isArray(result?.results) ? result.results : []).map((row) => buildCollectionEntryFromMetadataRow(row));
+}
+
+async function refreshSmartCollectionById(collectionId, snapshot = null) {
+  const collection = collectionsStore.list().find((item) => item.id === String(collectionId || ""));
+  if (!collection) {
+    throw new Error("Collection not found.");
+  }
+  if (collection.mode !== "smart" || !collection.smartCriteria) {
+    return collection;
+  }
+  const safeSnapshot = snapshot || await ensureMaterializedMetadata();
+  const entries = buildSmartCollectionEntries(safeSnapshot, collection);
+  return collectionsStore.replaceEntries(collection.id, entries);
+}
+
+async function refreshAutoCollections(snapshot = null) {
+  const collections = collectionsStore.list();
+  const autoCollections = collections.filter((collection) => collection.mode === "smart" && collection.autoUpdate && collection.smartCriteria);
+  if (!autoCollections.length) {
+    return collections;
+  }
+  const safeSnapshot = snapshot || await ensureMaterializedMetadata();
+  for (const collection of autoCollections) {
+    collectionsStore.replaceEntries(collection.id, buildSmartCollectionEntries(safeSnapshot, collection));
+  }
+  return collectionsStore.list();
+}
+
 function createEmptyMaterializedMetadataSnapshot() {
   return {
     schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
@@ -554,7 +668,8 @@ function getMaterializedMetadataSnapshot() {
 }
 
 function buildMaterializedMetadataSnapshot() {
-  const index = buildMetadataIndex(buildLibraryMetadataDataset());
+  const rawIndex = buildMetadataIndex(buildLibraryMetadataDataset());
+  const index = applyMetadataRepairRules(rawIndex, metadataRepairStore.list());
   const graph = buildEntityGraph(index);
   return {
     schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
@@ -568,10 +683,11 @@ function replaceMaterializedMetadataSections(sectionKinds, nextDocs) {
   const snapshot = getMaterializedMetadataSnapshot();
   const removeKinds = new Set((Array.isArray(sectionKinds) ? sectionKinds : [sectionKinds]).map((kind) => String(kind || "").trim().toLowerCase()).filter(Boolean));
   const filtered = (Array.isArray(snapshot?.index) ? snapshot.index : []).filter((doc) => !removeKinds.has(String(doc?.kind || "").trim().toLowerCase()));
-  const index = sortMetadataDocs([
+  const rawIndex = sortMetadataDocs([
     ...filtered,
     ...(Array.isArray(nextDocs) ? nextDocs : [])
   ]);
+  const index = applyMetadataRepairRules(rawIndex, metadataRepairStore.list());
   const graph = buildEntityGraph(index);
   const updated = {
     schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
@@ -962,17 +1078,20 @@ async function downloadFromManifest({
   forceDownload = false,
   postProcess = null
 }) {
-  const settings = readSettings();
-  const target = buildDownloadTarget({
-    baseDownloadDir: settings.downloadDir,
-    pathFormat: settings.pathFormat,
+  const resolvedTarget = buildRuleAwareDownloadTarget({
     sourceType,
-    programTitle: sanitizePathSegment(programTitle) || inferProgramNameFromUrl(sourceUrl || manifestUrl || ""),
+    programTitle,
+    programUrl: postProcess?.programUrl || "",
     episodeTitle: title,
     publishedTime,
     clipId,
-    episodeUrl: episodeUrl || sourceUrl || manifestUrl
+    episodeUrl: episodeUrl || sourceUrl || manifestUrl,
+    sourceUrl: sourceUrl || manifestUrl,
+    hosts: postProcess?.hosts
   });
+  const settings = resolvedTarget.settings;
+  const rule = resolvedTarget.rule;
+  const target = resolvedTarget.target;
   const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
   const persistedPayload = createPersistentDownloadPayload({
@@ -997,6 +1116,7 @@ async function downloadFromManifest({
       episodeTitle: postProcess?.episodeTitle || title,
       programTitle: postProcess?.programTitle || programTitle,
       publishedTime: postProcess?.publishedTime || publishedTime,
+      programUrl: postProcess?.programUrl || "",
       sourceUrl: postProcess?.sourceUrl || sourceUrl || manifestUrl,
       episodeUrl: postProcess?.episodeUrl || episodeUrl || sourceUrl || manifestUrl,
       clipId: postProcess?.clipId || clipId
@@ -1027,6 +1147,7 @@ async function downloadFromManifest({
       label: target.fileStem,
       sourceType,
       programTitle: postProcess?.programTitle || programTitle || "",
+      programUrl: postProcess?.programUrl || "",
       episodeUrl: episodeUrl || sourceUrl || manifestUrl || "",
       description: postProcess?.description || "",
       location: postProcess?.location || "",
@@ -1770,18 +1891,62 @@ async function downloadKexpEpisode({
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
-async function sendWebhookIfConfigured(payload) {
-  const webhookUrl = String(readSettings().webhookUrl || "").trim();
-  if (!webhookUrl) {
-    return;
-  }
-  try {
-    await fetch(webhookUrl, {
+function formatNotificationText(payload = {}) {
+  const bits = [
+    String(payload.event || "event").trim(),
+    String(payload.source || "").trim(),
+    String(payload.title || payload.programTitle || "").trim(),
+    String(payload.episodeTitle || "").trim(),
+    String(payload.error || "").trim()
+  ].filter(Boolean);
+  return bits.join(" | ");
+}
+
+async function sendNotificationsIfConfigured(payload) {
+  const settings = readSettings();
+  const webhookUrl = String(settings.webhookUrl || "").trim();
+  const discordWebhookUrl = String(settings.discordWebhookUrl || "").trim();
+  const ntfyTopicUrl = String(settings.ntfyTopicUrl || "").trim();
+  const body = payload && typeof payload === "object" ? payload : {};
+  const text = formatNotificationText(body);
+  const jobs = [];
+  if (webhookUrl) {
+    jobs.push(fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload || {})
-    });
-  } catch {}
+      body: JSON.stringify(body)
+    }).catch(() => null));
+  }
+  if (discordWebhookUrl) {
+    jobs.push(fetch(discordWebhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: text || "Kimble notification",
+        embeds: [{
+          title: String(body.title || body.programTitle || body.event || "Kimble"),
+          description: String(body.episodeTitle || body.error || ""),
+          fields: [
+            body.source ? { name: "Source", value: String(body.source), inline: true } : null,
+            body.count != null ? { name: "Count", value: String(body.count), inline: true } : null,
+            body.event ? { name: "Event", value: String(body.event), inline: true } : null
+          ].filter(Boolean),
+          timestamp: new Date().toISOString()
+        }]
+      })
+    }).catch(() => null));
+  }
+  if (ntfyTopicUrl) {
+    jobs.push(fetch(ntfyTopicUrl, {
+      method: "POST",
+      headers: {
+        Title: String(body.title || body.programTitle || body.event || "Kimble"),
+        Tags: String(body.error ? "warning" : "radio,music")
+      },
+      body: text || JSON.stringify(body)
+    }).catch(() => null));
+  }
+  await Promise.all(jobs);
 }
 
 async function onScheduleRefreshed(sourceType, schedule, latest) {
@@ -1806,7 +1971,7 @@ async function onScheduleComplete(sourceType, schedule, downloaded) {
   if (!Array.isArray(downloaded) || !downloaded.length) {
     return;
   }
-  await sendWebhookIfConfigured({
+  await sendNotificationsIfConfigured({
     event: "download.complete",
     source: sourceType,
     scheduleId: schedule.id,
@@ -1828,7 +1993,7 @@ async function onScheduleError(sourceType, schedule, error) {
     title: schedule?.title || "",
     error: String(error?.message || error || "Unknown error")
   });
-  await sendWebhookIfConfigured({
+  await sendNotificationsIfConfigured({
     event: "download.error",
     source: sourceType,
     scheduleId: schedule?.id || "",
@@ -1843,8 +2008,13 @@ async function onScheduleError(sourceType, schedule, error) {
   });
 }
 
-function shouldSkipSchedulerEpisode({ episode } = {}) {
-  return Boolean(readSettings()?.skipReruns) && isLikelyRerun(episode);
+function shouldSkipSchedulerEpisode({ episode, schedule } = {}) {
+  const resolved = resolveEffectiveProgramSettings({
+    sourceType: episode?.sourceType || schedule?.sourceType || "",
+    programTitle: episode?.programTitle || schedule?.title || "",
+    programUrl: episode?.programUrl || schedule?.programUrl || ""
+  });
+  return Boolean(resolved.settings?.skipReruns) && isLikelyRerun(episode);
 }
 
 const scheduler = createSchedulerStore({
@@ -2882,6 +3052,50 @@ app.delete("/api/download-history", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/history/listen", (req, res) => {
+  try {
+    const outputDir = String(req.body?.outputDir || "").trim();
+    const fileName = String(req.body?.fileName || "").trim();
+    const sourceType = String(req.body?.sourceType || "").trim().toLowerCase();
+    const episodeUrl = String(req.body?.episodeUrl || "").trim();
+    const listenSeconds = Math.max(0, Number(req.body?.listenSeconds || 0) || 0);
+    const durationSeconds = Math.max(0, Number(req.body?.durationSeconds || 0) || 0);
+    const completed = Boolean(req.body?.completed);
+    const playedAt = new Date().toISOString();
+    const updated = downloadHistory.patchAll((entry) => {
+      const entryOutputDir = String(entry?.outputDir || "").trim();
+      const entryFileName = String(entry?.fileName || "").trim();
+      if (outputDir && fileName && entryOutputDir === outputDir && entryFileName === fileName) {
+        return true;
+      }
+      return Boolean(sourceType && episodeUrl
+        && String(entry?.sourceType || "").trim().toLowerCase() === sourceType
+        && String(entry?.episodeUrl || "").trim() === episodeUrl);
+    }, (entry) => {
+      const nextPlayCount = completed ? Math.max(1, Number(entry?.playCount || 0) + 1) : Math.max(1, Number(entry?.playCount || 0) || 1);
+      return {
+        playCount: nextPlayCount,
+        lastPlayedAt: playedAt,
+        listenSeconds,
+        durationSeconds: durationSeconds || Number(entry?.durationSeconds || 0) || 0,
+        playState: completed ? "completed" : (listenSeconds > 5 ? "in-progress" : String(entry?.playState || "")),
+        completedAt: completed ? playedAt : String(entry?.completedAt || "")
+      };
+    });
+    if (updated > 0) {
+      patchMaterializedHistory();
+      broadcastGlobalEvent({
+        type: "download.history.updated",
+        source: sourceType,
+        episodeTitle: String(req.body?.episodeTitle || "")
+      });
+    }
+    res.json({ ok: true, updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.get("/api/feeds", (_req, res) => {
   res.json({ feeds: listAllProgramFeeds() });
 });
@@ -2895,6 +3109,9 @@ app.get("/api/metadata/search", async (req, res) => {
         query: String(req.query.q || ""),
         sourceType: String(req.query.sourceType || ""),
         kind: String(req.query.kind || ""),
+        host: String(req.query.host || ""),
+        genre: String(req.query.genre || ""),
+        location: String(req.query.location || ""),
         limit: Number(req.query.limit || 50)
       }
     );
@@ -2973,6 +3190,12 @@ app.get("/api/metadata/discover", async (req, res) => {
 app.post("/api/metadata/harvest-refresh", async (_req, res) => {
   try {
     const items = await refreshMetadataHarvestCache(true);
+    void sendNotificationsIfConfigured({
+      event: "harvest.complete",
+      source: "all",
+      count: items.length,
+      title: "Metadata Harvest"
+    });
     res.json({ ok: true, count: items.length, updatedAt: metadataHarvestStore.getUpdatedAt() });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2984,19 +3207,39 @@ app.post("/api/metadata/harvest-refresh/source", async (req, res) => {
     const result = await refreshMetadataHarvestSource(String(req.body?.sourceType || ""), {
       deeper: Boolean(req.body?.deeper)
     });
+    void sendNotificationsIfConfigured({
+      event: "harvest.source.complete",
+      source: String(req.body?.sourceType || ""),
+      count: Number(result?.count || 0),
+      title: `${String(req.body?.sourceType || "").toUpperCase()} Harvest`
+    });
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-app.get("/api/collections", (_req, res) => {
-  res.json({ collections: collectionsStore.list() });
+app.get("/api/collections", async (_req, res) => {
+  try {
+    const collections = await refreshAutoCollections();
+    res.json({ collections });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.post("/api/collections", (req, res) => {
   try {
-    collectionsStore.create(String(req.body.name || ""));
+    collectionsStore.create(req.body || { name: String(req.body?.name || "") });
+    res.json({ collections: collectionsStore.list() });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/collections/:id", (req, res) => {
+  try {
+    collectionsStore.update(String(req.params.id || ""), req.body || {});
     res.json({ collections: collectionsStore.list() });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -3060,6 +3303,55 @@ app.get("/api/collections/:id/recommendations", async (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
+});
+
+app.post("/api/collections/:id/refresh", async (req, res) => {
+  try {
+    const snapshot = await ensureMaterializedMetadata({
+      forceRebuild: Boolean(req.body?.forceRefresh)
+    });
+    const collection = await refreshSmartCollectionById(String(req.params.id || ""), snapshot);
+    res.json({
+      collection,
+      collections: collectionsStore.list()
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/metadata/harvest-docs", (_req, res) => {
+  const sourceType = String(_req.query.sourceType || "").trim().toLowerCase();
+  const title = String(_req.query.title || "").trim().toLowerCase();
+  const programUrl = String(_req.query.programUrl || "").trim();
+  const episodeUrl = String(_req.query.episodeUrl || "").trim();
+  const rows = metadataHarvestStore.list()
+    .filter((row) => !sourceType || String(row?.sourceType || "").trim().toLowerCase() === sourceType)
+    .filter((row) => !programUrl || String(row?.programUrl || "").trim() === programUrl)
+    .filter((row) => !episodeUrl || String(row?.episodeUrl || "").trim() === episodeUrl)
+    .filter((row) => !title || String(row?.title || row?.programTitle || "").trim().toLowerCase() === title)
+    .slice(0, 24);
+  res.json({ items: rows });
+});
+
+app.get("/api/metadata/repairs", (_req, res) => {
+  res.json({ rules: metadataRepairStore.list() });
+});
+
+app.post("/api/metadata/repairs", async (req, res) => {
+  try {
+    metadataRepairStore.add(req.body || {});
+    await refreshMaterializedMetadataSnapshot({ forceRebuild: true });
+    res.json({ rules: metadataRepairStore.list() });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/metadata/repairs/:id", async (req, res) => {
+  metadataRepairStore.remove(String(req.params.id || ""));
+  await refreshMaterializedMetadataSnapshot({ forceRebuild: true }).catch(() => {});
+  res.json({ rules: metadataRepairStore.list() });
 });
 
 app.post("/api/history/postprocess", async (req, res) => {

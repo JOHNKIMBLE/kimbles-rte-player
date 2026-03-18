@@ -78,7 +78,7 @@
         }
       } catch {}
 
-      const stationName = String(liveInfo?.stationName || station.name || "RTÃ‰ Radio").trim();
+      const stationName = String(liveInfo?.stationName || station.name || "RTE Radio").trim();
       const programmeName = String(liveInfo?.programmeName || "Live").trim();
       const description = String(liveInfo?.description || "").trim();
       if (dom.liveNow) {

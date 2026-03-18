@@ -82,6 +82,8 @@
     id3Tagging: true,
     feedExportEnabled: true,
     webhookUrl: "",
+    discordWebhookUrl: "",
+    ntfyTopicUrl: "",
     auddTrackMatching: false,
     auddApiToken: "",
     fingerprintTrackMatching: false,
@@ -95,12 +97,30 @@
     downloadDeleteOlderDays: 0,
     skipReruns: false,
     smartTagCleanup: true,
+    perProgramRules: [],
     episodesPerPage: 5,
     discoveryCount: 5
   };
 
   function normalizeOutputFormat(value) {
     return String(value || defaultSettings.outputFormat).trim().toLowerCase() === "mp3" ? "mp3" : "m4a";
+  }
+
+  function normalizeProgramRules(value) {
+    return (Array.isArray(value) ? value : [])
+      .map((row) => ({
+        id: String(row?.id || "").trim(),
+        sourceType: String(row?.sourceType || "").trim().toLowerCase(),
+        programTitle: String(row?.programTitle || "").trim(),
+        programUrl: String(row?.programUrl || "").trim(),
+        outputDir: String(row?.outputDir || "").trim(),
+        pathFormat: String(row?.pathFormat || "").trim(),
+        downloadKeepLatest: Math.max(0, Math.min(500, Math.floor(Number(row?.downloadKeepLatest || 0) || 0))),
+        downloadDeleteOlderDays: Math.max(0, Math.min(3650, Math.floor(Number(row?.downloadDeleteOlderDays || 0) || 0))),
+        skipReruns: Boolean(row?.skipReruns),
+        enabled: row?.enabled == null ? true : Boolean(row.enabled)
+      }))
+      .filter((row) => row.sourceType || row.programTitle || row.programUrl);
   }
 
   function loadWebSettings() {
@@ -133,6 +153,8 @@
         id3Tagging: parsed.id3Tagging == null ? defaultSettings.id3Tagging : Boolean(parsed.id3Tagging),
         feedExportEnabled: parsed.feedExportEnabled == null ? defaultSettings.feedExportEnabled : Boolean(parsed.feedExportEnabled),
         webhookUrl: typeof parsed.webhookUrl === "string" ? parsed.webhookUrl.trim() : defaultSettings.webhookUrl,
+        discordWebhookUrl: typeof parsed.discordWebhookUrl === "string" ? parsed.discordWebhookUrl.trim() : defaultSettings.discordWebhookUrl,
+        ntfyTopicUrl: typeof parsed.ntfyTopicUrl === "string" ? parsed.ntfyTopicUrl.trim() : defaultSettings.ntfyTopicUrl,
         auddTrackMatching: parsed.auddTrackMatching == null ? defaultSettings.auddTrackMatching : Boolean(parsed.auddTrackMatching),
         auddApiToken: typeof parsed.auddApiToken === "string" ? parsed.auddApiToken.trim() : defaultSettings.auddApiToken,
         fingerprintTrackMatching: parsed.fingerprintTrackMatching == null ? defaultSettings.fingerprintTrackMatching : Boolean(parsed.fingerprintTrackMatching),
@@ -146,6 +168,7 @@
         downloadDeleteOlderDays: Math.max(0, Math.min(3650, Math.floor(Number(parsed.downloadDeleteOlderDays || defaultSettings.downloadDeleteOlderDays)))),
         skipReruns: parsed.skipReruns == null ? defaultSettings.skipReruns : Boolean(parsed.skipReruns),
         smartTagCleanup: parsed.smartTagCleanup == null ? defaultSettings.smartTagCleanup : Boolean(parsed.smartTagCleanup),
+        perProgramRules: normalizeProgramRules(parsed.perProgramRules),
         episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(parsed.episodesPerPage || defaultSettings.episodesPerPage)))),
         discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(parsed.discoveryCount || defaultSettings.discoveryCount))))
       };
@@ -181,6 +204,8 @@
       id3Tagging: next.id3Tagging == null ? defaultSettings.id3Tagging : Boolean(next.id3Tagging),
       feedExportEnabled: next.feedExportEnabled == null ? defaultSettings.feedExportEnabled : Boolean(next.feedExportEnabled),
       webhookUrl: typeof next.webhookUrl === "string" ? next.webhookUrl.trim() : defaultSettings.webhookUrl,
+      discordWebhookUrl: typeof next.discordWebhookUrl === "string" ? next.discordWebhookUrl.trim() : defaultSettings.discordWebhookUrl,
+      ntfyTopicUrl: typeof next.ntfyTopicUrl === "string" ? next.ntfyTopicUrl.trim() : defaultSettings.ntfyTopicUrl,
       auddTrackMatching: next.auddTrackMatching == null ? defaultSettings.auddTrackMatching : Boolean(next.auddTrackMatching),
       auddApiToken: typeof next.auddApiToken === "string" ? next.auddApiToken.trim() : defaultSettings.auddApiToken,
       fingerprintTrackMatching: next.fingerprintTrackMatching == null ? defaultSettings.fingerprintTrackMatching : Boolean(next.fingerprintTrackMatching),
@@ -194,6 +219,7 @@
       downloadDeleteOlderDays: Math.max(0, Math.min(3650, Math.floor(Number(next.downloadDeleteOlderDays || defaultSettings.downloadDeleteOlderDays)))),
       skipReruns: next.skipReruns == null ? defaultSettings.skipReruns : Boolean(next.skipReruns),
       smartTagCleanup: next.smartTagCleanup == null ? defaultSettings.smartTagCleanup : Boolean(next.smartTagCleanup),
+      perProgramRules: normalizeProgramRules(next.perProgramRules),
       episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(next.episodesPerPage || defaultSettings.episodesPerPage)))),
       discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(next.discoveryCount || defaultSettings.discoveryCount))))
     };
@@ -506,7 +532,7 @@
     listDownloadHistory: () => fetch("/api/download-history").then(r => r.json()),
     clearDownloadHistory: () => fetch("/api/download-history", { method: "DELETE" }).then(r => r.json()),
     listProgramFeeds: () => API.getJson("/api/feeds"),
-    searchMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 50)}`),
+    searchMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&host=${encodeURIComponent(payload.host || "")}&genre=${encodeURIComponent(payload.genre || "")}&location=${encodeURIComponent(payload.location || "")}&limit=${encodeURIComponent(payload.limit || 50)}`),
     searchEntityGraph: (payload = {}) => API.getJson(`/api/entity-graph/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&type=${encodeURIComponent(payload.type || "")}&limit=${encodeURIComponent(payload.limit || 24)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     getEntityGraphEntity: (payload = {}) => API.getJson(`/api/entity-graph/entity?entityId=${encodeURIComponent(payload.entityId || "")}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     discoverMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/discover?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
@@ -516,7 +542,12 @@
       deeper: Boolean(options?.deeper)
     }),
     listCollections: () => API.getJson("/api/collections").then((body) => body?.collections || []),
-    createCollection: (name) => API.sendJson("/api/collections", "POST", { name }).then((body) => body?.collections || []),
+    createCollection: (input) => {
+      const payload = typeof input === "string" ? { name: input } : (input || {});
+      return API.sendJson("/api/collections", "POST", payload).then((body) => body?.collections || []);
+    },
+    updateCollection: (collectionId, patch = {}) =>
+      API.sendJson(`/api/collections/${encodeURIComponent(collectionId || "")}`, "PATCH", patch || {}).then((body) => body?.collections || []),
     deleteCollection: async (collectionId) => {
       const response = await fetch(`/api/collections/${encodeURIComponent(collectionId || "")}`, { method: "DELETE", headers: { Accept: "application/json" } });
       const body = await response.json().catch(() => ({}));
@@ -530,6 +561,8 @@
       collections: body?.collections || [],
       addedCount: Number(body?.addedCount || 0)
     })),
+    refreshCollection: (collectionId, options = {}) =>
+      API.sendJson(`/api/collections/${encodeURIComponent(collectionId || "")}/refresh`, "POST", options || {}),
     removeCollectionEntry: async (collectionId, entryId) => {
       const response = await fetch(`/api/collections/${encodeURIComponent(collectionId || "")}/entries/${encodeURIComponent(entryId || "")}`, { method: "DELETE", headers: { Accept: "application/json" } });
       const body = await response.json().catch(() => ({}));
@@ -539,7 +572,19 @@
       return body?.collections || [];
     },
     getCollectionRecommendations: (payload = {}) => API.getJson(`/api/collections/${encodeURIComponent(payload.collectionId || "")}/recommendations?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
+    listHarvestDocs: (payload = {}) => API.getJson(`/api/metadata/harvest-docs?sourceType=${encodeURIComponent(payload.sourceType || "")}&title=${encodeURIComponent(payload.title || "")}&programUrl=${encodeURIComponent(payload.programUrl || "")}&episodeUrl=${encodeURIComponent(payload.episodeUrl || "")}`).then((body) => body?.items || []),
+    listMetadataRepairs: () => API.getJson("/api/metadata/repairs").then((body) => body?.rules || []),
+    addMetadataRepair: (payload = {}) => API.sendJson("/api/metadata/repairs", "POST", payload || {}).then((body) => body?.rules || []),
+    deleteMetadataRepair: async (ruleId) => {
+      const response = await fetch(`/api/metadata/repairs/${encodeURIComponent(ruleId || "")}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || `Request failed: ${response.status}`);
+      }
+      return body?.rules || [];
+    },
     postprocessHistoryEntry: (payload = {}) => API.sendJson("/api/history/postprocess", "POST", payload || {}),
+    reportListenProgress: (payload = {}) => API.sendJson("/api/history/listen", "POST", payload || {}),
     getDiagnostics: () => API.getJson("/api/diagnostics"),
     repairBinaries: () => API.sendJson("/api/diagnostics/repair", "POST"),
     connectGlobalEvents: (handler) => {
