@@ -186,6 +186,10 @@ const songrecSampleSecondsInput = document.getElementById("songrecSampleSecondsI
 const ffmpegCueSilenceCheckbox = document.getElementById("ffmpegCueSilenceCheckbox");
 const ffmpegCueLoudnessCheckbox = document.getElementById("ffmpegCueLoudnessCheckbox");
 const ffmpegCueSpectralCheckbox = document.getElementById("ffmpegCueSpectralCheckbox");
+const downloadKeepLatestInput = document.getElementById("downloadKeepLatestInput");
+const downloadDeleteOlderDaysInput = document.getElementById("downloadDeleteOlderDaysInput");
+const skipRerunsCheckbox = document.getElementById("skipRerunsCheckbox");
+const smartTagCleanupCheckbox = document.getElementById("smartTagCleanupCheckbox");
 const downloadQueueStatus = document.getElementById("downloadQueueStatus");
 const downloadQueueActive = document.getElementById("downloadQueueActive");
 const downloadQueuePending = document.getElementById("downloadQueuePending");
@@ -283,6 +287,9 @@ const diagnosticsStatus = document.getElementById("diagnosticsStatus");
 const diagnosticsHarvestSummary = document.getElementById("diagnosticsHarvestSummary");
 const diagnosticsHarvestMetrics = document.getElementById("diagnosticsHarvestMetrics");
 const diagnosticsHarvestSources = document.getElementById("diagnosticsHarvestSources");
+const diagnosticsSourceHealth = document.getElementById("diagnosticsSourceHealth");
+const diagnosticsRetryHistory = document.getElementById("diagnosticsRetryHistory");
+const diagnosticsThinDocs = document.getElementById("diagnosticsThinDocs");
 const diagnosticsRuntime = document.getElementById("diagnosticsRuntime");
 const diagnosticsBinaries = document.getElementById("diagnosticsBinaries");
 const nowPlayingBar = document.getElementById("nowPlayingBar");
@@ -296,6 +303,10 @@ const nowPlayingChapterControls = document.getElementById("nowPlayingChapterCont
 const nowPlayingPrevChapterBtn = document.getElementById("nowPlayingPrevChapterBtn");
 const nowPlayingNextChapterBtn = document.getElementById("nowPlayingNextChapterBtn");
 const nowPlayingResumeBtn = document.getElementById("nowPlayingResumeBtn");
+const nowPlayingQueueSummary = document.getElementById("nowPlayingQueueSummary");
+const nowPlayingAutoplayCheckbox = document.getElementById("nowPlayingAutoplayCheckbox");
+const nowPlayingQueueClearBtn = document.getElementById("nowPlayingQueueClearBtn");
+const nowPlayingQueueList = document.getElementById("nowPlayingQueueList");
 
 const state = {
   liveStations: [],
@@ -332,6 +343,10 @@ const state = {
   ffmpegCueSilenceDetect: true,
   ffmpegCueLoudnessDetect: true,
   ffmpegCueSpectralDetect: true,
+  downloadKeepLatest: 0,
+  downloadDeleteOlderDays: 0,
+  skipReruns: false,
+  smartTagCleanup: true,
   activeTab: "rte",
   lastSourceTab: "rte",
   canPickDownloadDirectory: true,
@@ -766,6 +781,9 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     diagnosticsHarvestSummary,
     diagnosticsHarvestMetrics,
     diagnosticsHarvestSources,
+    diagnosticsSourceHealth,
+    diagnosticsRetryHistory,
+    diagnosticsThinDocs,
     diagnosticsRuntime,
     diagnosticsBinaries
   },
@@ -774,6 +792,7 @@ const libraryScreen = window.KimbleLibraryScreen.create({
   createProgressToken,
   setSettingsStatus,
   playFromDownloadedFile,
+  queueDownloadedFile: (item) => playbackController?.enqueueQueueItem?.(item),
   sourceLabels: SOURCE_LABELS,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target),
   activateLibraryView: (sectionId = "") => {
@@ -830,6 +849,10 @@ const settingsScreen = window.KimbleSettingsScreen.create({
     ffmpegCueSilenceCheckbox,
     ffmpegCueLoudnessCheckbox,
     ffmpegCueSpectralCheckbox,
+    downloadKeepLatestInput,
+    downloadDeleteOlderDaysInput,
+    skipRerunsCheckbox,
+    smartTagCleanupCheckbox,
     chooseDownloadDirBtn,
     saveSettingsBtn,
     episodesPerPageInput,
@@ -1160,13 +1183,27 @@ playbackController = window.KimblePlaybackController.create({
     chapterControls: nowPlayingChapterControls,
     prevChapterBtn: nowPlayingPrevChapterBtn,
     nextChapterBtn: nowPlayingNextChapterBtn,
-    resumeBtn: nowPlayingResumeBtn
+    resumeBtn: nowPlayingResumeBtn,
+    queueSummary: nowPlayingQueueSummary,
+    autoplayCheckbox: nowPlayingAutoplayCheckbox,
+    queueClearBtn: nowPlayingQueueClearBtn,
+    queueList: nowPlayingQueueList
   },
   normalizeChapters,
   normalizeTracks,
   estimateChaptersFromTracks,
   formatDurationFromSeconds,
   setSettingsStatus,
+  playQueuedItem: async (item) => playFromDownloadedFile({
+    outputDir: item.outputDir,
+    fileName: item.fileName,
+    title: item.title || item.fileName || "",
+    source: item.source || "Queue",
+    subtitle: item.subtitle || "",
+    image: item.image || "",
+    episodeUrl: item.episodeUrl || "",
+    sourceType: item.sourceType || ""
+  }),
   onPlaybackStarted: (playbackKey) => {
     const key = String(playbackKey || "");
     if (key.startsWith("wwf:remote:")) {

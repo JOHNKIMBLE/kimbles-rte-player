@@ -200,6 +200,7 @@ function createSchedulerStore({
   getProgramSummary,
   getProgramEpisodes,
   runEpisodeDownload,
+  shouldSkipEpisodeDownload,
   onScheduleRefreshed,
   onScheduleRunComplete,
   onScheduleRunError
@@ -429,6 +430,7 @@ function createSchedulerStore({
     const known = new Set((schedule.downloadedClipIds || []).map((id) => String(id)));
     let completed = 0;
     let failed = 0;
+    let skipped = 0;
     const downloaded = [];
     schedule.backfillInProgress = true;
     schedule.backfillTotal = rows.length;
@@ -442,6 +444,14 @@ function createSchedulerStore({
       const current = index + 1;
       schedule.lastStatus = `Backfill ${current}/${rows.length}: Downloading ${episode.title || episode.clipId}`;
       writeStore();
+      if (typeof shouldSkipEpisodeDownload === "function" && shouldSkipEpisodeDownload({ episode, schedule, phase: "backfill" })) {
+        skipped += 1;
+        known.add(String(episode.clipId));
+        removeRetry(schedule, episode.clipId);
+        schedule.lastStatus = `Backfill ${current}/${rows.length}: Skipped by rules - ${episode.title || episode.clipId}`;
+        writeStore();
+        continue;
+      }
       try {
         const result = await runEpisodeDownloadWithRecovery({
           ...episode,
@@ -493,6 +503,9 @@ function createSchedulerStore({
     }
     if (failed > 0) {
       schedule.lastStatus += ` • ${failed} failed`;
+    }
+    if (skipped > 0) {
+      schedule.lastStatus += ` • ${skipped} skipped by rules`;
     }
     if (retryPending > 0) {
       schedule.lastStatus += ` • ${retryPending} retry pending`;
@@ -661,6 +674,7 @@ function createSchedulerStore({
     const unseen = [];
     let failedRetries = 0;
     let droppedRetries = 0;
+    let skippedEpisodes = 0;
 
     for (const retry of dueRetries) {
       try {
@@ -709,6 +723,12 @@ function createSchedulerStore({
     const toDownload = unseen.reverse();
 
     for (const episode of toDownload) {
+      if (typeof shouldSkipEpisodeDownload === "function" && shouldSkipEpisodeDownload({ episode, schedule, phase: "scheduled" })) {
+        known.add(String(episode.clipId));
+        removeRetry(schedule, episode.clipId);
+        skippedEpisodes += 1;
+        continue;
+      }
       try {
         const result = await runEpisodeDownloadWithRecovery({
           ...episode,
@@ -748,10 +768,13 @@ function createSchedulerStore({
     const retryPending = Array.isArray(schedule.retryQueue) ? schedule.retryQueue.length : 0;
     if (downloaded.length > 0) {
       schedule.lastStatus = `Downloaded ${downloaded.length} episode(s)`;
-    } else if (unseen.length === 0 && dueRetries.length === 0) {
+    } else if (unseen.length === 0 && dueRetries.length === 0 && skippedEpisodes === 0) {
       schedule.lastStatus = "No new episodes";
     } else {
       schedule.lastStatus = "No completed downloads";
+    }
+    if (skippedEpisodes > 0) {
+      schedule.lastStatus += ` • ${skippedEpisodes} skipped by rules`;
     }
     if (failedRetries > 0) {
       schedule.lastStatus += ` • ${failedRetries} failed (queued retry)`;

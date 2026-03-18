@@ -7,6 +7,7 @@
     const createProgressToken = deps.createProgressToken;
     const setSettingsStatus = deps.setSettingsStatus;
     const playFromDownloadedFile = deps.playFromDownloadedFile;
+    const queueDownloadedFile = deps.queueDownloadedFile;
     const sourceLabels = deps.sourceLabels || {};
     const openProgramExplorer = deps.openProgramExplorer;
     const activateLibraryView = deps.activateLibraryView;
@@ -435,7 +436,7 @@
         { label: "Programs", value: Number(harvest?.harvestedProgramCount || 0), detail: "Harvested", tone: "neutral" },
         { label: "Hosts", value: Number(harvest?.harvestedHostCount || 0), detail: "Harvested", tone: "neutral" },
         { label: "Episodes", value: Number(harvest?.harvestedEpisodeCount || 0), detail: "Harvested", tone: "neutral" },
-        { label: "Thin Sources", value: Number(harvest?.thinSourceCount || 0), detail: "Need better metadata", tone: Number(harvest?.thinSourceCount || 0) > 0 ? "warn" : "ok" }
+        { label: "Slim Sources", value: Number(harvest?.thinSourceCount || 0), detail: "Need better metadata", tone: Number(harvest?.thinSourceCount || 0) > 0 ? "warn" : "ok" }
       ];
     }
 
@@ -1275,6 +1276,7 @@
             <button class="secondary" data-open-explorer="${encodeDataPayload(buildExplorerPayload(row, { programTitle: row.programTitle || row.label }))}">Open Explorer</button>
             <button class="secondary" data-save-collection="${encodeDataPayload(buildCollectionEntryPayload(row, { title: row.label || row.episodeTitle || row.programTitle, type: row.episodeUrl ? "episode" : "program" }))}">Save</button>
             ${row.outputDir && row.fileName ? `<button class="secondary" data-queue-play="${escapeHtml(String(row.outputDir || ""))}" data-queue-file="${escapeHtml(String(row.fileName || ""))}" data-queue-title="${escapeHtml(String(row.label || row.fileName || "Download"))}" data-queue-source="${escapeHtml(String(row.sourceType || "local").toUpperCase())}" data-queue-image="${escapeHtml(String(row.image || ""))}">Play</button>` : ""}
+            ${row.outputDir && row.fileName && typeof queueDownloadedFile === "function" ? `<button class="secondary" data-queue-enqueue="${escapeHtml(String(row.outputDir || ""))}" data-queue-enqueue-file="${escapeHtml(String(row.fileName || ""))}" data-queue-enqueue-title="${escapeHtml(String(row.label || row.fileName || "Download"))}" data-queue-enqueue-source="${escapeHtml(getSourceLabel(row.sourceType || "local"))}" data-queue-enqueue-subtitle="${escapeHtml(String(row.programTitle || ""))}" data-queue-enqueue-image="${escapeHtml(String(row.image || ""))}" data-queue-enqueue-url="${escapeHtml(String(row.episodeUrl || ""))}" data-queue-enqueue-source-type="${escapeHtml(String(row.sourceType || ""))}">Queue</button>` : ""}
             ${!allowCancel && row.rerunnable ? `<button class="secondary" data-queue-rerun="${escapeHtml(String(row.id || ""))}" data-queue-rerun-mode="exact">Retry Exact</button>` : ""}
             ${!allowCancel && row.rerunnable ? `<button class="secondary" data-queue-rerun="${escapeHtml(String(row.id || ""))}" data-queue-rerun-mode="current-settings">Use Current Settings</button>` : ""}
           </div>
@@ -1502,9 +1504,10 @@
         const rows = Array.isArray(harvest.sourceStats) ? harvest.sourceStats : [];
         dom.diagnosticsHarvestSources.innerHTML = rows.length
           ? rows.map((row) => {
-            const tone = row.due ? "warn" : (row.thinCount > 0 || row.hostCoverage < 40 || row.genreCoverage < 40 ? "danger" : "ok");
+            const tone = row.due ? "warn" : (row.isThinSource ? "danger" : "ok");
             const lastRun = formatLocalDateTime(row.lastRunAt || "") || "Never";
             const nextDue = formatLocalDateTime(row.nextDueAt || "") || "Pending";
+            const thinReasons = Array.isArray(row.thinReasons) ? row.thinReasons.filter(Boolean) : [];
             return `
               <div class="item feed-entry diagnostics-entry">
                 <div class="feed-entry-main">
@@ -1522,12 +1525,88 @@
                   <div class="item-meta">Last Run: ${escapeHtml(lastRun)} • Next Due: ${escapeHtml(nextDue)}</div>
                   <div class="item-meta">Depth: last ${escapeHtml(String(row.lastEpisodePages || 0))} page(s) • next ${escapeHtml(String(row.nextEpisodePages || 0))} page(s)</div>
                   <div class="item-meta">Coverage: hosts ${escapeHtml(String(row.hostCoverage || 0))}% • genres ${escapeHtml(String(row.genreCoverage || 0))}% • descriptions ${escapeHtml(String(row.descriptionCoverage || 0))}% • locations ${escapeHtml(String(row.locationCoverage || 0))}%</div>
-                  ${row.thinCount ? `<div class="item-meta queue-entry-issue">${escapeHtml(String(row.thinCount || 0))} harvested doc(s) are still metadata-thin for this source.</div>` : ""}
+                  ${thinReasons.length ? `<div class="item-meta queue-entry-issue">Thin source: ${escapeHtml(thinReasons.join(" | "))}</div>` : ""}
+                </div>
+                <div class="item-actions feed-actions">
+                  <button class="secondary" data-diagnostics-reharvest-source="${escapeHtml(String(row.sourceType || ""))}">Reharvest</button>
+                  <button class="secondary" data-diagnostics-reharvest-source="${escapeHtml(String(row.sourceType || ""))}" data-diagnostics-reharvest-deeper="1">Deep Reharvest</button>
                 </div>
               </div>
             `;
           }).join("")
           : `<div class="item"><div class="item-meta">No per-source harvest cadence data yet.</div></div>`;
+      }
+
+      if (dom.diagnosticsSourceHealth) {
+        const rows = Array.isArray(diagnostics.sourceHealth) ? diagnostics.sourceHealth : [];
+        dom.diagnosticsSourceHealth.innerHTML = rows.length
+          ? rows.map((row) => {
+            const tone = row.recentFailureCount > 0 ? "danger" : (row.retryPending > 0 || row.thinReasons?.length ? "warn" : "ok");
+            const lastRun = formatLocalDateTime(row.lastScheduleRunAt || "") || "No schedule run yet";
+            const lastFailureAt = formatLocalDateTime(row.lastFailureAt || "");
+            return `
+              <div class="item feed-entry diagnostics-entry">
+                <div class="feed-entry-main">
+                  <div class="item-title">
+                    <span class="source-badge source-badge-${escapeHtml(String(row.sourceType || ""))}">${escapeHtml(getSourceLabel(row.sourceType || ""))}</span>
+                    Source Health
+                  </div>
+                  <div class="item-meta">
+                    <span class="status-chip status-chip-${escapeHtml(tone)}">${row.recentFailureCount > 0 ? "Attention" : row.retryPending > 0 ? "Retrying" : "Healthy"}</span>
+                    ${escapeHtml(String(row.scheduleCount || 0))} schedule(s)
+                    â€¢ ${escapeHtml(String(row.enabledScheduleCount || 0))} enabled
+                    â€¢ ${escapeHtml(String(row.retryPending || 0))} retry pending
+                  </div>
+                  <div class="item-meta">Last schedule run: ${escapeHtml(lastRun)}</div>
+                  ${row.lastFailureMessage ? `<div class="item-meta queue-entry-issue">Latest failure${lastFailureAt ? ` (${escapeHtml(lastFailureAt)})` : ""}: ${escapeHtml(String(row.lastFailureTitle || row.lastFailureMessage || ""))}${row.lastFailureTitle && row.lastFailureMessage ? ` â€¢ ${escapeHtml(String(row.lastFailureMessage || ""))}` : ""}</div>` : ""}
+                  ${Array.isArray(row.thinReasons) && row.thinReasons.length ? `<div class="item-meta">Metadata watch: ${escapeHtml(row.thinReasons.join(" | "))}</div>` : ""}
+                </div>
+              </div>
+            `;
+          }).join("")
+          : `<div class="item"><div class="item-meta">No source health data yet.</div></div>`;
+      }
+
+      if (dom.diagnosticsRetryHistory) {
+        const rows = Array.isArray(diagnostics.retryHistory) ? diagnostics.retryHistory : [];
+        dom.diagnosticsRetryHistory.innerHTML = rows.length
+          ? rows.map((row) => `
+            <div class="item feed-entry diagnostics-entry">
+              <div class="feed-entry-main">
+                <div class="item-title">
+                  <span class="source-badge source-badge-${escapeHtml(String(row.sourceType || ""))}">${escapeHtml(getSourceLabel(row.sourceType || ""))}</span>
+                  ${escapeHtml(String(row.scheduleTitle || row.title || "Retry"))}
+                </div>
+                <div class="item-meta">${escapeHtml(String(row.title || row.clipId || "Episode"))} â€¢ attempt ${escapeHtml(String(row.attempts || 1))}</div>
+                <div class="item-meta">Next retry: ${escapeHtml(formatLocalDateTime(row.nextRetryAt || "") || String(row.nextRetryAt || "Pending"))}</div>
+                ${row.lastError ? `<div class="item-meta queue-entry-issue">${escapeHtml(String(row.lastError || ""))}</div>` : ""}
+              </div>
+            </div>
+          `).join("")
+          : `<div class="item"><div class="item-meta">No retry queue entries are waiting right now.</div></div>`;
+      }
+
+      if (dom.diagnosticsThinDocs) {
+        const rows = Array.isArray(harvest.thinDocs) ? harvest.thinDocs : [];
+        dom.diagnosticsThinDocs.innerHTML = rows.length
+          ? rows.map((row) => `
+            <div class="item feed-entry diagnostics-entry">
+              <div class="feed-entry-main">
+                <div class="item-title">
+                  <span class="source-badge source-badge-${escapeHtml(String(row.sourceType || ""))}">${escapeHtml(getSourceLabel(row.sourceType || ""))}</span>
+                  ${escapeHtml(String(row.title || "Harvested doc"))}
+                </div>
+                <div class="item-meta">${escapeHtml(String(row.harvestKind || "program"))} â€¢ missing ${escapeHtml((Array.isArray(row.missingFields) ? row.missingFields : []).join(", "))}</div>
+                ${row.programTitle && row.programTitle !== row.title ? `<div class="item-meta">${escapeHtml(row.programTitle)}</div>` : ""}
+              </div>
+              <div class="item-actions feed-actions">
+                <button class="secondary" data-diagnostics-reharvest-source="${escapeHtml(String(row.sourceType || ""))}">Reharvest Source</button>
+                <button class="secondary" data-diagnostics-reharvest-source="${escapeHtml(String(row.sourceType || ""))}" data-diagnostics-reharvest-deeper="1">Reharvest Deep</button>
+                ${row.programUrl ? `<button class="secondary" data-open-explorer="${encodeDataPayload(buildExplorerPayload(row, { sourceType: row.sourceType, programUrl: row.programUrl, programTitle: row.programTitle || row.title, title: row.programTitle || row.title }))}">Open Explorer</button>` : ""}
+              </div>
+            </div>
+          `).join("")
+          : `<div class="item"><div class="item-meta">No slim harvested docs are flagged right now.</div></div>`;
       }
 
       const writableHtml = writableRows.length ? `
@@ -1748,6 +1827,7 @@
               <button class="secondary" data-open-explorer="${encodeDataPayload(buildExplorerPayload(entry, { programTitle: entry.programTitle, title: entry.programTitle || entry.episodeTitle }))}">Open Explorer</button>
               <button class="secondary" data-save-collection="${encodeDataPayload(buildCollectionEntryPayload(entry, { type: entry.episodeUrl ? "episode" : "program", title: entry.episodeTitle || entry.programTitle }))}">Save</button>
               ${canPlay ? `<button class="secondary" data-history-action="play" data-history-id="${escapeHtml(entryId)}">Play</button>` : ""}
+              ${canPlay && typeof queueDownloadedFile === "function" ? `<button class="secondary" data-history-action="queue" data-history-id="${escapeHtml(entryId)}">Queue</button>` : ""}
               ${canOpenFolder ? `<button class="secondary" data-history-action="open-folder" data-history-id="${escapeHtml(entryId)}">Open Folder</button>` : ""}
               ${canOpenFile ? `<button class="secondary" data-history-action="open-file" data-history-id="${escapeHtml(entryId)}">Open File</button>` : ""}
               ${canPostprocess ? `<button class="secondary" data-history-action="postprocess" data-history-id="${escapeHtml(entryId)}">Rebuild Tags/Chapters</button>` : ""}
@@ -1812,6 +1892,30 @@
             });
           } catch (error) {
             setSettingsStatus(`Queue play failed: ${error.message}`, true);
+          }
+          return;
+        }
+
+        const enqueueBtn = event.target.closest("button[data-queue-enqueue]");
+        if (enqueueBtn) {
+          if (typeof queueDownloadedFile !== "function") {
+            setSettingsStatus("Playback queue is not available here.", true);
+            return;
+          }
+          try {
+            queueDownloadedFile({
+              outputDir: enqueueBtn.getAttribute("data-queue-enqueue") || "",
+              fileName: enqueueBtn.getAttribute("data-queue-enqueue-file") || "",
+              title: enqueueBtn.getAttribute("data-queue-enqueue-title") || "",
+              source: enqueueBtn.getAttribute("data-queue-enqueue-source") || "Local",
+              subtitle: enqueueBtn.getAttribute("data-queue-enqueue-subtitle") || "",
+              image: enqueueBtn.getAttribute("data-queue-enqueue-image") || "",
+              episodeUrl: enqueueBtn.getAttribute("data-queue-enqueue-url") || "",
+              sourceType: enqueueBtn.getAttribute("data-queue-enqueue-source-type") || ""
+            });
+            setSettingsStatus("Added to playback queue.");
+          } catch (error) {
+            setSettingsStatus(`Queue add failed: ${error.message}`, true);
           }
           return;
         }
@@ -2414,6 +2518,23 @@
             });
             return;
           }
+          if (action === "queue") {
+            if (typeof queueDownloadedFile !== "function") {
+              throw new Error("Playback queue is not available here.");
+            }
+            queueDownloadedFile({
+              outputDir: entry.outputDir,
+              fileName: entry.fileName,
+              title: entry.episodeTitle || "",
+              source: getSourceLabel(entry.sourceType || ""),
+              subtitle: entry.programTitle || "",
+              image: entry.artworkUrl || "",
+              episodeUrl: entry.episodeUrl || "",
+              sourceType: entry.sourceType || ""
+            });
+            setSettingsStatus(`Queued ${entry.episodeTitle || "history entry"} for playback.`);
+            return;
+          }
           if (action === "open-folder") {
             await openTargetPath(entry.outputDir, "No download folder is available.");
             return;
@@ -2560,6 +2681,38 @@
           setDiagnosticsStatus(error.message, true);
         }
       });
+
+      for (const container of [dom.diagnosticsHarvestSources, dom.diagnosticsThinDocs]) {
+        container?.addEventListener("click", async (event) => {
+          const explorerButton = event.target.closest("[data-open-explorer]");
+          if (explorerButton) {
+            try {
+              await handleOpenExplorerButton(explorerButton);
+            } catch (error) {
+              setDiagnosticsStatus(error.message, true);
+            }
+            return;
+          }
+          const reharvestButton = event.target.closest("[data-diagnostics-reharvest-source]");
+          if (!reharvestButton) {
+            return;
+          }
+          if (typeof window.rteDownloader?.refreshMetadataHarvestSource !== "function") {
+            setDiagnosticsStatus("Source reharvest is not available in this mode.", true);
+            return;
+          }
+          const sourceType = reharvestButton.getAttribute("data-diagnostics-reharvest-source") || "";
+          const deeper = reharvestButton.getAttribute("data-diagnostics-reharvest-deeper") === "1";
+          try {
+            setDiagnosticsStatus(`${deeper ? "Deep" : "Standard"} reharvest running for ${getSourceLabel(sourceType)}...`);
+            await window.rteDownloader.refreshMetadataHarvestSource(sourceType, { deeper });
+            await loadDiagnostics();
+            setDiagnosticsStatus(`${getSourceLabel(sourceType)} ${deeper ? "deep " : ""}reharvest completed.`);
+          } catch (error) {
+            setDiagnosticsStatus(error.message, true);
+          }
+        });
+      }
     }
 
     bindEvents();

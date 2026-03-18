@@ -10,11 +10,16 @@
 
     const DEFAULT_NOW_PLAYING_ART = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='8' fill='%231f2a3a'/%3E%3Ccircle cx='28' cy='28' r='17' fill='%2335445a'/%3E%3Cpath d='M21 20h4v16h-4zM31 20l10 8-10 8z' fill='%23c9d6e8'/%3E%3C/svg%3E";
     const RESUME_KEY_PREFIX = "resume:";
+    const PLAYBACK_QUEUE_KEY = "kimble-playback-queue";
+    const AUTOPLAY_QUEUE_KEY = "kimble-playback-autoplay";
 
     let activeNowPlaying = null;
     let activeHls = null;
     let pendingNowPlayingVisible = false;
     let resumeSaveTimer = null;
+    let playbackQueue = [];
+    let autoplayNext = true;
+    const queueListeners = new Set();
 
     function saveResumePosition(key, pos) {
       if (!key || pos < 5) {
@@ -44,6 +49,187 @@
       try {
         localStorage.removeItem(RESUME_KEY_PREFIX + key);
       } catch {}
+    }
+
+    function normalizeQueueItem(item = {}) {
+      const outputDir = String(item.outputDir || "").trim();
+      const fileName = String(item.fileName || "").trim();
+      if (!outputDir || !fileName) {
+        return null;
+      }
+      return {
+        id: String(item.id || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`).trim(),
+        outputDir,
+        fileName,
+        title: String(item.title || fileName).trim() || fileName,
+        source: String(item.source || "Queue").trim() || "Queue",
+        subtitle: String(item.subtitle || "").trim(),
+        image: String(item.image || "").trim(),
+        episodeUrl: String(item.episodeUrl || "").trim(),
+        sourceType: String(item.sourceType || "").trim().toLowerCase()
+      };
+    }
+
+    function savePlaybackQueue() {
+      try {
+        localStorage.setItem(PLAYBACK_QUEUE_KEY, JSON.stringify(playbackQueue));
+      } catch {}
+    }
+
+    function loadPlaybackQueue() {
+      try {
+        const raw = localStorage.getItem(PLAYBACK_QUEUE_KEY);
+        if (!raw) {
+          return [];
+        }
+        const parsed = JSON.parse(raw);
+        return (Array.isArray(parsed) ? parsed : []).map(normalizeQueueItem).filter(Boolean);
+      } catch {
+        return [];
+      }
+    }
+
+    function saveAutoplayPreference() {
+      try {
+        localStorage.setItem(AUTOPLAY_QUEUE_KEY, autoplayNext ? "1" : "0");
+      } catch {}
+    }
+
+    function loadAutoplayPreference() {
+      try {
+        const raw = localStorage.getItem(AUTOPLAY_QUEUE_KEY);
+        return raw == null ? true : raw === "1";
+      } catch {
+        return true;
+      }
+    }
+
+    function renderQueue() {
+      if (dom.autoplayCheckbox) {
+        dom.autoplayCheckbox.checked = autoplayNext;
+      }
+      if (dom.queueSummary) {
+        dom.queueSummary.textContent = playbackQueue.length
+          ? `${playbackQueue.length} queued â€¢ next ${playbackQueue[0].title}`
+          : "Queue empty";
+      }
+      if (dom.queueClearBtn) {
+        dom.queueClearBtn.disabled = playbackQueue.length === 0;
+      }
+      if (!dom.queueList) {
+        return;
+      }
+      dom.queueList.innerHTML = playbackQueue.length
+        ? playbackQueue.map((item, index) => `
+          <div class="now-playing-queue-item">
+            <div class="now-playing-queue-main">
+              <div class="now-playing-queue-title">${index === 0 ? "Up Next: " : ""}${item.title}</div>
+              <div class="now-playing-queue-meta">${item.source}${item.subtitle ? ` â€¢ ${item.subtitle}` : ""}</div>
+            </div>
+            <div class="now-playing-queue-actions">
+              <button class="secondary" type="button" data-queue-play-now="${item.id}">Play</button>
+              <button class="secondary" type="button" data-queue-remove="${item.id}">Remove</button>
+            </div>
+          </div>
+        `).join("")
+        : `<div class="now-playing-queue-empty">Queue the next local episode from History or Queue.</div>`;
+    }
+
+    function notifyQueueChange() {
+      savePlaybackQueue();
+      renderQueue();
+      const snapshot = {
+        items: playbackQueue.slice(),
+        autoplayNext
+      };
+      for (const listener of queueListeners) {
+        try {
+          listener(snapshot);
+        } catch {}
+      }
+    }
+
+    function setAutoplayEnabled(enabled) {
+      autoplayNext = Boolean(enabled);
+      saveAutoplayPreference();
+      renderQueue();
+    }
+
+    async function playQueueItem(item) {
+      const safeItem = normalizeQueueItem(item);
+      if (!safeItem) {
+        throw new Error("Queued item is missing a local file.");
+      }
+      if (typeof deps.playQueuedItem !== "function") {
+        throw new Error("Queued playback is not available.");
+      }
+      await deps.playQueuedItem(safeItem);
+    }
+
+    async function playQueuedItemNow(itemId) {
+      const id = String(itemId || "").trim();
+      if (!id) {
+        return;
+      }
+      const index = playbackQueue.findIndex((item) => item.id === id);
+      if (index < 0) {
+        return;
+      }
+      const [nextItem] = playbackQueue.splice(index, 1);
+      notifyQueueChange();
+      await playQueueItem(nextItem);
+    }
+
+    async function playNextQueueItem() {
+      if (!autoplayNext || !playbackQueue.length) {
+        return false;
+      }
+      const nextItem = playbackQueue.shift();
+      notifyQueueChange();
+      try {
+        await playQueueItem(nextItem);
+        return true;
+      } catch (error) {
+        setSettingsStatus?.(`Queue playback failed: ${error.message}`, true);
+        return false;
+      }
+    }
+
+    function enqueueQueueItem(item, options = {}) {
+      const normalized = normalizeQueueItem(item);
+      if (!normalized) {
+        throw new Error("A downloaded file is required to queue playback.");
+      }
+      if (!playbackQueue.some((entry) => entry.outputDir === normalized.outputDir && entry.fileName === normalized.fileName)) {
+        if (options.prepend) {
+          playbackQueue.unshift(normalized);
+        } else {
+          playbackQueue.push(normalized);
+        }
+        notifyQueueChange();
+      } else {
+        renderQueue();
+      }
+      if (options.playNow) {
+        playQueuedItemNow(normalized.id).catch((error) => {
+          setSettingsStatus?.(`Queue playback failed: ${error.message}`, true);
+        });
+      }
+      return normalized;
+    }
+
+    function removeQueueItem(itemId) {
+      const id = String(itemId || "").trim();
+      if (!id) {
+        return;
+      }
+      playbackQueue = playbackQueue.filter((item) => item.id !== id);
+      notifyQueueChange();
+    }
+
+    function clearQueue() {
+      playbackQueue = [];
+      notifyQueueChange();
     }
 
     function updateResumeBadge() {
@@ -372,6 +558,28 @@
         jumpToAdjacentChapter(1);
       });
 
+      dom.autoplayCheckbox?.addEventListener("change", () => {
+        setAutoplayEnabled(Boolean(dom.autoplayCheckbox.checked));
+      });
+
+      dom.queueClearBtn?.addEventListener("click", () => {
+        clearQueue();
+      });
+
+      dom.queueList?.addEventListener("click", (event) => {
+        const playBtn = event.target.closest("[data-queue-play-now]");
+        if (playBtn) {
+          playQueuedItemNow(playBtn.getAttribute("data-queue-play-now") || "").catch((error) => {
+            setSettingsStatus?.(`Queue playback failed: ${error.message}`, true);
+          });
+          return;
+        }
+        const removeBtn = event.target.closest("[data-queue-remove]");
+        if (removeBtn) {
+          removeQueueItem(removeBtn.getAttribute("data-queue-remove") || "");
+        }
+      });
+
       dom.image?.addEventListener("error", () => {
         if (String(dom.image.src || "").startsWith("data:image/svg+xml")) {
           return;
@@ -431,17 +639,40 @@
 
       dom.audio?.addEventListener("ended", () => {
         clearResumePosition(activeNowPlaying?.playbackKey);
-        clearGlobalNowPlaying();
+        playNextQueueItem().then((playedNext) => {
+          if (!playedNext) {
+            clearGlobalNowPlaying();
+          }
+        }).catch(() => {
+          clearGlobalNowPlaying();
+        });
       });
     }
 
+    autoplayNext = loadAutoplayPreference();
+    playbackQueue = loadPlaybackQueue();
     bindEvents();
+    renderQueue();
 
     return {
       clearGlobalNowPlaying,
       startGlobalNowPlaying,
       updateActiveNowPlayingChapters,
-      updateActiveNowPlayingTracks
+      updateActiveNowPlayingTracks,
+      enqueueQueueItem,
+      removeQueueItem,
+      clearQueue,
+      setAutoplayEnabled,
+      onQueueChange(listener) {
+        if (typeof listener !== "function") {
+          return () => {};
+        }
+        queueListeners.add(listener);
+        try {
+          listener({ items: playbackQueue.slice(), autoplayNext });
+        } catch {}
+        return () => queueListeners.delete(listener);
+      }
     };
   }
 

@@ -24,6 +24,54 @@ function clean(input) {
     .trim();
 }
 
+function normalizeDecoratedTitle(title, programTitle) {
+  const safeTitle = clean(title);
+  const safeProgramTitle = clean(programTitle);
+  if (!safeTitle) {
+    return "";
+  }
+  if (!safeProgramTitle) {
+    return safeTitle;
+  }
+
+  const escapedProgram = safeProgramTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const duplicatePrefixPattern = new RegExp(`^(?:${escapedProgram}\\s*[-:|]\\s*)+`, "i");
+  const stripped = safeTitle.replace(duplicatePrefixPattern, "").trim();
+  if (!stripped) {
+    return safeTitle;
+  }
+
+  if (stripped.toLowerCase() === safeProgramTitle.toLowerCase()) {
+    return safeProgramTitle;
+  }
+  return stripped;
+}
+
+function normalizeTagField(input, options = {}) {
+  const cleaned = clean(input);
+  if (!cleaned) {
+    return "";
+  }
+  if (options.smartCleanup === false) {
+    return cleaned;
+  }
+  return normalizeDecoratedTitle(cleaned, options.programTitle || "");
+}
+
+function cleanTagList(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of cleanList(values)) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
 function cleanList(values) {
   if (Array.isArray(values)) {
     return values.map((value) => clean(value)).filter(Boolean);
@@ -466,7 +514,8 @@ async function applyId3Tags({
   hosts = [],
   genres = [],
   chapters = [],
-  durationSeconds = 0
+  durationSeconds = 0,
+  cleanupOptions = {}
 }) {
   const inputPath = String(audioPath || "").trim();
   if (!inputPath || !fs.existsSync(inputPath)) {
@@ -483,15 +532,27 @@ async function applyId3Tags({
   const isMp3 = ext === ".mp3";
   const isMp4Family = new Set([".m4a", ".mp4", ".m4b", ".m4p", ".m4r"]).has(ext);
 
-  const tagTitle = clean(title);
-  const tagAlbum = clean(programTitle);
+  const smartCleanupEnabled = cleanupOptions?.smartCleanup !== false;
+  const tagAlbum = normalizeTagField(programTitle, {
+    smartCleanup: smartCleanupEnabled
+  });
+  const tagTitle = normalizeTagField(title, {
+    smartCleanup: smartCleanupEnabled,
+    programTitle: tagAlbum
+  });
   const defaultArtist = sourceType === "bbc" ? "BBC Radio" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS Radio" : sourceType === "fip" ? "FIP Radio" : sourceType === "kexp" ? "KEXP" : "RTE Radio";
-  const tagHosts = cleanList(hosts);
-  const tagGenres = cleanList(genres);
-  const tagLocation = clean(location);
+  const tagHosts = cleanTagList(hosts);
+  const tagGenres = cleanTagList(genres);
+  const tagLocation = normalizeTagField(location, {
+    smartCleanup: smartCleanupEnabled
+  });
   const tagArtist = clean(tagHosts.join(", ")) || defaultArtist;
-  const tagDate = clean(publishedTime);
-  const tagComment = clean(sourceUrl || episodeUrl);
+  const tagDate = normalizeTagField(publishedTime, {
+    smartCleanup: false
+  });
+  const tagComment = normalizeTagField(sourceUrl || episodeUrl, {
+    smartCleanup: false
+  });
   const tagGenre = clean([
     sourceType === "bbc" ? "Radio;BBC" : sourceType === "wwf" ? "Radio;Worldwide FM" : sourceType === "nts" ? "Radio;NTS" : sourceType === "fip" ? "Radio;FIP" : sourceType === "kexp" ? "Radio;KEXP" : "Radio;RTE",
     ...tagGenres
@@ -499,8 +560,12 @@ async function applyId3Tags({
   const tagPublisher = sourceType === "bbc" ? "BBC Sounds" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : sourceType === "fip" ? "Radio France / FIP" : sourceType === "kexp" ? "KEXP" : "RTE Radio";
   const tagYearMatch = tagDate.match(/\b(\d{4})\b/);
   const tagYear = tagYearMatch?.[1] || "";
-  const tagDescription = clean(description);
-  const sourceId = clean(clipId);
+  const tagDescription = normalizeTagField(description, {
+    smartCleanup: smartCleanupEnabled
+  });
+  const sourceId = normalizeTagField(clipId, {
+    smartCleanup: false
+  });
   const tracklistText = buildEmbeddedTracklistText(chapters);
   const embeddedMetadata = {
     title: tagTitle,
@@ -513,7 +578,7 @@ async function applyId3Tags({
     comment: tagComment,
     show: tagAlbum,
     source_url: tagComment,
-    episode_url: clean(episodeUrl),
+    episode_url: normalizeTagField(episodeUrl, { smartCleanup: false }),
     hosts: tagHosts.join(", "),
     location: tagLocation,
     tracklist: tracklistText,
@@ -558,7 +623,7 @@ async function applyId3Tags({
     "-metadata", `comment=${tagComment}`,
     "-metadata", `show=${tagAlbum}`,
     "-metadata", `source_url=${tagComment}`,
-    "-metadata", `episode_url=${clean(episodeUrl)}`,
+    "-metadata", `episode_url=${normalizeTagField(episodeUrl, { smartCleanup: false })}`,
     "-metadata", `hosts=${tagHosts.join(", ")}`,
     "-metadata", `location=${tagLocation}`,
     "-metadata", `tracklist=${tracklistText}`,

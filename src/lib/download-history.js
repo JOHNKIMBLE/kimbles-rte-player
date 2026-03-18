@@ -33,9 +33,27 @@ function createDownloadHistory(historyFilePath, maxEntries = 500) {
 
   function list() { return load(); }
 
+  function update(entryId, patch = {}) {
+    load();
+    const targetId = String(entryId || "").trim();
+    if (!targetId) {
+      return null;
+    }
+    const index = cache.findIndex((entry) => String(entry?.id || "") === targetId);
+    if (index < 0) {
+      return null;
+    }
+    cache[index] = {
+      ...cache[index],
+      ...(patch && typeof patch === "object" ? patch : {})
+    };
+    save();
+    return cache[index];
+  }
+
   function clear() { cache = []; save(); }
 
-  return { append, list, clear };
+  return { append, list, update, clear };
 }
 
 module.exports = { createDownloadHistory };

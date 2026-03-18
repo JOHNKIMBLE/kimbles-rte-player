@@ -937,6 +937,31 @@
             </div>
             <div class="hint">These filters estimate chapter/break landmarks only. They do not identify songs.</div>
           </div>
+          <div class="settings-subgroup">
+            <div class="hint">Download rules</div>
+            <div class="row setting-row">
+              <label for="downloadKeepLatestInput">Keep Latest Per Program</label>
+              <input id="downloadKeepLatestInput" type="number" min="0" max="500" step="1" value="0" />
+            </div>
+            <div class="hint">Set to 0 to keep everything. When above 0, older files for the same program are pruned after new downloads finish.</div>
+            <div class="row setting-row">
+              <label for="downloadDeleteOlderDaysInput">Delete Older Than Days</label>
+              <input id="downloadDeleteOlderDaysInput" type="number" min="0" max="3650" step="1" value="0" />
+            </div>
+            <div class="hint">Set to 0 to disable age pruning.</div>
+            <div class="row setting-row setting-switch">
+              <label for="skipRerunsCheckbox">Skip reruns / rebroadcasts in scheduler</label>
+              <input id="skipRerunsCheckbox" type="checkbox" />
+            </div>
+          </div>
+          <div class="settings-subgroup">
+            <div class="hint">Tag cleanup</div>
+            <div class="row setting-row setting-switch">
+              <label for="smartTagCleanupCheckbox">Smart cleanup for titles and metadata</label>
+              <input id="smartTagCleanupCheckbox" type="checkbox" />
+            </div>
+            <div class="hint">Removes duplicate program prefixes in episode titles and keeps host/genre tags tidy before writing artwork, chapters, and metadata.</div>
+          </div>
         </div>
         <div class="row">
           <button id="saveSettingsBtn">Save Settings</button>
@@ -956,10 +981,16 @@
         <p class="hint">Check the current runtime, inspect bundled binaries, and re-run vendor bootstrap if something is missing.</p>
         <div id="diagnosticsStatus" class="status muted"></div>
         <div class="row history-toolbar-meta">
-          <div id="diagnosticsHarvestSummary" class="hint">Loading harvest diagnostics...</div>
+        <div id="diagnosticsHarvestSummary" class="hint">Loading harvest diagnostics...</div>
         </div>
         <div id="diagnosticsHarvestMetrics" class="library-metrics-grid"></div>
         <div id="diagnosticsHarvestSources" class="list" style="margin-bottom:0.7rem;"></div>
+        <div class="hint">Source health</div>
+        <div id="diagnosticsSourceHealth" class="list" style="margin-bottom:0.7rem;"></div>
+        <div class="hint">Retry queue</div>
+        <div id="diagnosticsRetryHistory" class="list" style="margin-bottom:0.7rem;"></div>
+        <div class="hint">Slim docs</div>
+        <div id="diagnosticsThinDocs" class="list" style="margin-bottom:0.7rem;"></div>
         <div id="diagnosticsRuntime" class="diagnostics-grid"></div>
         <div id="diagnosticsBinaries" class="list" style="margin-top:0.6rem;"></div>
       </section>
@@ -977,6 +1008,15 @@
         </div>
         <audio id="nowPlayingAudio" class="now-playing-audio" controls preload="none"></audio>
         <button id="nowPlayingResumeBtn" class="secondary" style="display:none;font-size:0.8em;padding:2px 8px;"></button>
+        <div class="now-playing-queue-toolbar">
+          <div id="nowPlayingQueueSummary" class="now-playing-queue-summary">Queue empty</div>
+          <label class="now-playing-queue-toggle" for="nowPlayingAutoplayCheckbox">
+            <input id="nowPlayingAutoplayCheckbox" type="checkbox" checked />
+            Auto-play next
+          </label>
+          <button id="nowPlayingQueueClearBtn" class="secondary" type="button">Clear Queue</button>
+        </div>
+        <div id="nowPlayingQueueList" class="now-playing-queue-list"></div>
       </div>
       <button id="nowPlayingCloseBtn" class="secondary now-playing-close" aria-label="Hide player">X</button>
     </div>

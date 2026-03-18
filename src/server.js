@@ -84,6 +84,7 @@ const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
+const { enforceDownloadRules, isLikelyRerun } = require("./lib/download-rules");
 const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
@@ -163,6 +164,8 @@ const materializedMetadataStore = createMaterializedMetadataStore(path.join(DATA
 let materializedMetadataCache = null;
 let materializedMetadataDirty = true;
 let materializedMetadataRefreshPromise = null;
+let metadataHarvestRefreshPromise = null;
+const METADATA_HARVEST_POLL_MS = 1000 * 60 * 5;
 
 const globalEventSubscribers = new Set();
 function broadcastGlobalEvent(payload) {
@@ -461,6 +464,12 @@ function createPersistentDownloadPayload({ job, postProcess = {} }) {
 function appendDownloadHistoryEntry(entry) {
   try {
     downloadHistory.append(entry);
+    enforceDownloadRules({
+      downloadHistory,
+      settings: readSettings(),
+      sourceType: entry?.sourceType,
+      programTitle: entry?.programTitle
+    });
     patchMaterializedHistory();
     broadcastGlobalEvent({
       type: "download.history.updated",
@@ -701,30 +710,100 @@ function getMetadataHarvestSources() {
 }
 
 async function refreshMetadataHarvestCache(force = false) {
-  const existing = metadataHarvestStore.list();
-  const priorState = metadataHarvestStore.getState();
-  const localSnapshot = await ensureMaterializedMetadata({
-    allowStale: true,
-    refreshInBackground: false
-  });
-  const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
-  const harvestPlan = planMetadataHarvest(
-    getMetadataHarvestSources(),
-    priorState,
-    force,
-    Date.now()
-  );
-  if (!force && existing.length && !harvestPlan.plannedSources.length) {
-    return existing;
+  if (metadataHarvestRefreshPromise) {
+    return metadataHarvestRefreshPromise;
   }
-  const docs = await harvestMetadataDocs({
-    sources: harvestPlan.plannedSources,
-    searchTerms: deriveHarvestSearchTerms(localIndex)
+  metadataHarvestRefreshPromise = Promise.resolve().then(async () => {
+    const existing = metadataHarvestStore.list();
+    const priorState = metadataHarvestStore.getState();
+    const localSnapshot = await ensureMaterializedMetadata({
+      allowStale: true,
+      refreshInBackground: false
+    });
+    const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
+    const harvestPlan = planMetadataHarvest(
+      getMetadataHarvestSources(),
+      priorState,
+      force,
+      Date.now()
+    );
+    if (!force && existing.length && !harvestPlan.plannedSources.length) {
+      return existing;
+    }
+    const docs = await harvestMetadataDocs({
+      sources: harvestPlan.plannedSources,
+      searchTerms: deriveHarvestSearchTerms(localIndex)
+    });
+    const merged = mergeHarvestDocs(existing, docs);
+    metadataHarvestStore.replace(merged, new Date().toISOString(), harvestPlan.nextState);
+    markMaterializedMetadataDirty({ refreshInBackground: true });
+    return merged;
+  }).finally(() => {
+    metadataHarvestRefreshPromise = null;
   });
-  const merged = mergeHarvestDocs(existing, docs);
-  metadataHarvestStore.replace(merged, new Date().toISOString(), harvestPlan.nextState);
-  markMaterializedMetadataDirty({ refreshInBackground: true });
-  return merged;
+  return metadataHarvestRefreshPromise;
+}
+
+async function refreshMetadataHarvestSource(sourceType, options = {}) {
+  const safeSourceType = String(sourceType || "").trim().toLowerCase();
+  if (!safeSourceType) {
+    throw new Error("Source type is required.");
+  }
+  if (metadataHarvestRefreshPromise) {
+    await metadataHarvestRefreshPromise.catch(() => {});
+  }
+  metadataHarvestRefreshPromise = Promise.resolve().then(async () => {
+    const source = getMetadataHarvestSources().find((entry) => String(entry?.sourceType || "").trim().toLowerCase() === safeSourceType);
+    if (!source) {
+      throw new Error(`Unknown source: ${safeSourceType}`);
+    }
+    const existing = metadataHarvestStore.list();
+    const priorState = metadataHarvestStore.getState();
+    const localSnapshot = await ensureMaterializedMetadata({
+      allowStale: true,
+      refreshInBackground: false
+    });
+    const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
+    const current = priorState?.sources?.[safeSourceType] && typeof priorState.sources[safeSourceType] === "object"
+      ? { ...priorState.sources[safeSourceType] }
+      : {};
+    const maxEpisodePages = Math.max(1, Number(source.maxEpisodePages || current.maxEpisodePages || 3) || 3);
+    const requestedPages = options?.deeper
+      ? maxEpisodePages
+      : Math.max(1, Math.min(maxEpisodePages, Number(current.nextEpisodePages || current.lastEpisodePages || 1) || 1));
+    const docs = await harvestMetadataDocs({
+      sources: [{ ...source, episodePages: requestedPages }],
+      searchTerms: deriveHarvestSearchTerms(localIndex)
+    });
+    const merged = mergeHarvestDocs(existing, docs);
+    const cadenceMs = Math.max(1000 * 60 * 15, Number(source.harvestCadenceMs || current.harvestCadenceMs || 1000 * 60 * 60 * 6) || 1000 * 60 * 60 * 6);
+    const updatedState = {
+      ...(priorState && typeof priorState === "object" ? priorState : { sources: {} }),
+      sources: {
+        ...((priorState && priorState.sources && typeof priorState.sources === "object") ? priorState.sources : {}),
+        [safeSourceType]: {
+          ...current,
+          lastRunAt: new Date().toISOString(),
+          lastEpisodePages: requestedPages,
+          nextEpisodePages: requestedPages >= maxEpisodePages ? 1 : requestedPages + 1,
+          maxEpisodePages,
+          harvestCadenceMs: cadenceMs,
+          nextDueAt: new Date(Date.now() + cadenceMs).toISOString()
+        }
+      }
+    };
+    metadataHarvestStore.replace(merged, new Date().toISOString(), updatedState);
+    markMaterializedMetadataDirty({ refreshInBackground: true });
+    return {
+      ok: true,
+      sourceType: safeSourceType,
+      count: docs.length,
+      updatedAt: metadataHarvestStore.getUpdatedAt()
+    };
+  }).finally(() => {
+    metadataHarvestRefreshPromise = null;
+  });
+  return metadataHarvestRefreshPromise;
 }
 
 async function rebuildDownloadedFileMetadata(payload = {}) {
@@ -768,7 +847,10 @@ async function rebuildDownloadedFileMetadata(payload = {}) {
     hosts: normalizeMetadataList(payload.hosts),
     genres: normalizeMetadataList(payload.genres),
     chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
-    durationSeconds: Number(cue?.durationSeconds || 0)
+    durationSeconds: Number(cue?.durationSeconds || 0),
+    cleanupOptions: {
+      smartCleanup: readSettings().smartTagCleanup
+    }
   });
 
   return { ok: true, cue, tags };
@@ -1008,7 +1090,10 @@ async function maybeApplyId3({
       hosts,
       genres,
       chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
-      durationSeconds: Number(cue?.durationSeconds || 0)
+      durationSeconds: Number(cue?.durationSeconds || 0),
+      cleanupOptions: {
+        smartCleanup: settings.smartTagCleanup
+      }
     });
   } catch {
     return null;
@@ -1758,10 +1843,15 @@ async function onScheduleError(sourceType, schedule, error) {
   });
 }
 
+function shouldSkipSchedulerEpisode({ episode } = {}) {
+  return Boolean(readSettings()?.skipReruns) && isLikelyRerun(episode);
+}
+
 const scheduler = createSchedulerStore({
   dataDir: DATA_DIR,
   getProgramSummary,
   getProgramEpisodes,
+  shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
   onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("rte", schedule, latest),
   onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("rte", schedule, downloaded),
   onScheduleRunError: (schedule, error) => onScheduleError("rte", schedule, error),
@@ -1785,6 +1875,7 @@ const bbcScheduler = createSchedulerStore({
   dataDir: path.join(DATA_DIR, "bbc"),
   getProgramSummary: async (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson),
   getProgramEpisodes: async (programUrl, page) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+  shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
   onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("bbc", schedule, latest),
   onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("bbc", schedule, downloaded),
   onScheduleRunError: (schedule, error) => onScheduleError("bbc", schedule, error),
@@ -1848,6 +1939,7 @@ const wwfScheduler = createSchedulerStore({
   dataDir: path.join(DATA_DIR, "wwf"),
   getProgramSummary: async (programUrl) => getWwfProgramSummary(programUrl),
   getProgramEpisodes: async (programUrl, page) => getWwfProgramEpisodes(programUrl, page),
+  shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
   onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("wwf", schedule, latest),
   onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("wwf", schedule, downloaded),
   onScheduleRunError: (schedule, error) => onScheduleError("wwf", schedule, error),
@@ -1870,6 +1962,7 @@ const ntsScheduler = createSchedulerStore({
   dataDir: path.join(DATA_DIR, "nts"),
   getProgramSummary: async (programUrl) => getNtsProgramSummary(programUrl),
   getProgramEpisodes: async (programUrl, page) => getNtsProgramEpisodes(programUrl, page),
+  shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
   onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("nts", schedule, latest),
   onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("nts", schedule, downloaded),
   onScheduleRunError: (schedule, error) => onScheduleError("nts", schedule, error),
@@ -1892,6 +1985,7 @@ const fipScheduler = createSchedulerStore({
   dataDir: path.join(DATA_DIR, "fip"),
   getProgramSummary: async (programUrl) => getFipProgramSummary(programUrl),
   getProgramEpisodes: async (programUrl, page) => getFipProgramEpisodes(programUrl, page),
+  shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
   onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("fip", schedule, latest),
   onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("fip", schedule, downloaded),
   onScheduleRunError: (schedule, error) => onScheduleError("fip", schedule, error),
@@ -1914,6 +2008,7 @@ const kexpScheduler = createSchedulerStore({
   dataDir: path.join(DATA_DIR, "kexp"),
   getProgramSummary: async (programUrl) => getKexpProgramSummary(programUrl),
   getProgramEpisodes: async (programUrl, page) => getKexpProgramEpisodes(programUrl, page),
+  shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
   onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("kexp", schedule, latest),
   onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("kexp", schedule, downloaded),
   onScheduleRunError: (schedule, error) => onScheduleError("kexp", schedule, error),
@@ -1938,6 +2033,9 @@ if (process.env.NODE_ENV !== "test") {
     refreshMetadataHarvestCache(false).catch(() => {});
     refreshMaterializedMetadataSnapshot().catch(() => {});
   }, 2500);
+  setInterval(() => {
+    refreshMetadataHarvestCache(false).catch(() => {});
+  }, METADATA_HARVEST_POLL_MS);
 }
 
 app.get("/health", (_req, res) => {
@@ -2881,6 +2979,17 @@ app.post("/api/metadata/harvest-refresh", async (_req, res) => {
   }
 });
 
+app.post("/api/metadata/harvest-refresh/source", async (req, res) => {
+  try {
+    const result = await refreshMetadataHarvestSource(String(req.body?.sourceType || ""), {
+      deeper: Boolean(req.body?.deeper)
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.get("/api/collections", (_req, res) => {
   res.json({ collections: collectionsStore.list() });
 });
@@ -2963,20 +3072,29 @@ app.post("/api/history/postprocess", async (req, res) => {
 });
 
 app.get("/api/diagnostics", async (_req, res) => {
-  const settings = readSettings();
-  const snapshot = await ensureMaterializedMetadata();
-  res.json(collectRuntimeDiagnostics({
-    dataDir: DATA_DIR,
-    downloadDir: settings.downloadDir,
-    projectRoot: path.join(__dirname, ".."),
-    recentErrors: recentErrorsLog.list(),
-    settings,
-    harvestUpdatedAt: metadataHarvestStore.getUpdatedAt(),
-    harvestState: metadataHarvestStore.getState(),
-    harvestedItems: metadataHarvestStore.list(),
-    metadataIndex: snapshot.index,
-    entityGraph: snapshot.graph
-  }));
+  try {
+    const settings = readSettings();
+    if (process.env.NODE_ENV !== "test") {
+      await refreshMetadataHarvestCache(false);
+    }
+    const snapshot = await ensureMaterializedMetadata();
+    res.json(collectRuntimeDiagnostics({
+      dataDir: DATA_DIR,
+      downloadDir: settings.downloadDir,
+      projectRoot: path.join(__dirname, ".."),
+      recentErrors: recentErrorsLog.list(),
+      schedulesBySource: buildLibraryMetadataDataset().schedulesBySource,
+      queueSnapshot: downloadQueue.snapshot(),
+      settings,
+      harvestUpdatedAt: metadataHarvestStore.getUpdatedAt(),
+      harvestState: metadataHarvestStore.getState(),
+      harvestedItems: metadataHarvestStore.list(),
+      metadataIndex: snapshot.index,
+      entityGraph: snapshot.graph
+    }));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.post("/api/diagnostics/repair", async (_req, res) => {
