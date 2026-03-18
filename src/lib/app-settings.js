@@ -33,6 +33,10 @@ function createDefaultSettings(defaultDownloadDir) {
     ffmpegCueSilenceDetect: true,
     ffmpegCueLoudnessDetect: true,
     ffmpegCueSpectralDetect: true,
+    downloadKeepLatest: 0,
+    downloadDeleteOlderDays: 0,
+    skipReruns: false,
+    smartTagCleanup: true,
     episodesPerPage: 5,
     discoveryCount: 5
   };
@@ -101,6 +105,10 @@ function normalizeSettings(input, options = {}) {
     ffmpegCueSilenceDetect: raw.ffmpegCueSilenceDetect == null ? defaults.ffmpegCueSilenceDetect : Boolean(raw.ffmpegCueSilenceDetect),
     ffmpegCueLoudnessDetect: raw.ffmpegCueLoudnessDetect == null ? defaults.ffmpegCueLoudnessDetect : Boolean(raw.ffmpegCueLoudnessDetect),
     ffmpegCueSpectralDetect: raw.ffmpegCueSpectralDetect == null ? defaults.ffmpegCueSpectralDetect : Boolean(raw.ffmpegCueSpectralDetect),
+    downloadKeepLatest: clampInteger(raw.downloadKeepLatest, 0, 500, defaults.downloadKeepLatest),
+    downloadDeleteOlderDays: clampInteger(raw.downloadDeleteOlderDays, 0, 3650, defaults.downloadDeleteOlderDays),
+    skipReruns: raw.skipReruns == null ? defaults.skipReruns : Boolean(raw.skipReruns),
+    smartTagCleanup: raw.smartTagCleanup == null ? defaults.smartTagCleanup : Boolean(raw.smartTagCleanup),
     episodesPerPage: clampInteger(raw.episodesPerPage, 1, 50, defaults.episodesPerPage),
     discoveryCount: clampInteger(raw.discoveryCount, 1, 24, defaults.discoveryCount)
   };

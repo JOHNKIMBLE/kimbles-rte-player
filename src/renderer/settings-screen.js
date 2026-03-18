@@ -125,6 +125,18 @@
       if (dom.ffmpegCueSpectralCheckbox) {
         dom.ffmpegCueSpectralCheckbox.checked = state.ffmpegCueSpectralDetect;
       }
+      if (dom.downloadKeepLatestInput) {
+        dom.downloadKeepLatestInput.value = String(state.downloadKeepLatest);
+      }
+      if (dom.downloadDeleteOlderDaysInput) {
+        dom.downloadDeleteOlderDaysInput.value = String(state.downloadDeleteOlderDays);
+      }
+      if (dom.skipRerunsCheckbox) {
+        dom.skipRerunsCheckbox.checked = state.skipReruns;
+      }
+      if (dom.smartTagCleanupCheckbox) {
+        dom.smartTagCleanupCheckbox.checked = state.smartTagCleanup;
+      }
       renderPathFormatPreview();
     }
 
@@ -152,6 +164,10 @@
       state.ffmpegCueSilenceDetect = settings?.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect);
       state.ffmpegCueLoudnessDetect = settings?.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect);
       state.ffmpegCueSpectralDetect = settings?.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect);
+      state.downloadKeepLatest = Math.max(0, Math.min(500, Number(settings?.downloadKeepLatest || 0) || 0));
+      state.downloadDeleteOlderDays = Math.max(0, Math.min(3650, Number(settings?.downloadDeleteOlderDays || 0) || 0));
+      state.skipReruns = settings?.skipReruns == null ? false : Boolean(settings.skipReruns);
+      state.smartTagCleanup = settings?.smartTagCleanup == null ? true : Boolean(settings.smartTagCleanup);
     }
 
     async function loadSettings() {
@@ -183,6 +199,10 @@
       const ffmpegCueSilenceDetect = Boolean(dom.ffmpegCueSilenceCheckbox?.checked);
       const ffmpegCueLoudnessDetect = Boolean(dom.ffmpegCueLoudnessCheckbox?.checked);
       const ffmpegCueSpectralDetect = Boolean(dom.ffmpegCueSpectralCheckbox?.checked);
+      const downloadKeepLatest = Math.max(0, Math.min(500, Math.floor(Number(dom.downloadKeepLatestInput?.value || 0) || 0)));
+      const downloadDeleteOlderDays = Math.max(0, Math.min(3650, Math.floor(Number(dom.downloadDeleteOlderDaysInput?.value || 0) || 0)));
+      const skipReruns = Boolean(dom.skipRerunsCheckbox?.checked);
+      const smartTagCleanup = Boolean(dom.smartTagCleanupCheckbox?.checked);
       const maxConcurrentDownloads = Math.max(1, Math.min(8, Math.floor(Number(dom.maxConcurrentInput?.value || 2) || 2)));
 
       if (!activeDownloadDir) {
@@ -220,7 +240,11 @@
           songrecSampleSeconds,
           ffmpegCueSilenceDetect,
           ffmpegCueLoudnessDetect,
-          ffmpegCueSpectralDetect
+          ffmpegCueSpectralDetect,
+          downloadKeepLatest,
+          downloadDeleteOlderDays,
+          skipReruns,
+          smartTagCleanup
         });
         applySettingsToState(saved);
         syncFormFromState();

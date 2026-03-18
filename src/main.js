@@ -86,6 +86,7 @@ const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
+const { enforceDownloadRules, isLikelyRerun } = require("./lib/download-rules");
 const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
@@ -147,6 +148,8 @@ let collectionsStore = null;
 let materializedMetadataCache = null;
 let materializedMetadataDirty = true;
 let materializedMetadataRefreshPromise = null;
+let metadataHarvestRefreshPromise = null;
+const METADATA_HARVEST_POLL_MS = 1000 * 60 * 5;
 
 const streamProxyTokens = new Map();
 const ytDlpPipeTokens = new Map();
@@ -649,6 +652,12 @@ function appendDownloadHistoryEntry(entry) {
   try {
     if (downloadHistory) {
       downloadHistory.append(entry);
+      enforceDownloadRules({
+        downloadHistory,
+        settings: readSettings(),
+        sourceType: entry?.sourceType,
+        programTitle: entry?.programTitle
+      });
     }
     patchMaterializedHistory();
     broadcastGlobalEvent({
@@ -903,30 +912,103 @@ async function refreshMetadataHarvestCache(force = false) {
   if (!metadataHarvestStore) {
     return [];
   }
-  const existing = metadataHarvestStore.list();
-  const priorState = metadataHarvestStore.getState();
-  const localSnapshot = await ensureMaterializedMetadata({
-    allowStale: true,
-    refreshInBackground: false
-  });
-  const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
-  const harvestPlan = planMetadataHarvest(
-    getMetadataHarvestSources(),
-    priorState,
-    force,
-    Date.now()
-  );
-  if (!force && existing.length && !harvestPlan.plannedSources.length) {
-    return existing;
+  if (metadataHarvestRefreshPromise) {
+    return metadataHarvestRefreshPromise;
   }
-  const docs = await harvestMetadataDocs({
-    sources: harvestPlan.plannedSources,
-    searchTerms: deriveHarvestSearchTerms(localIndex)
+  metadataHarvestRefreshPromise = Promise.resolve().then(async () => {
+    const existing = metadataHarvestStore.list();
+    const priorState = metadataHarvestStore.getState();
+    const localSnapshot = await ensureMaterializedMetadata({
+      allowStale: true,
+      refreshInBackground: false
+    });
+    const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
+    const harvestPlan = planMetadataHarvest(
+      getMetadataHarvestSources(),
+      priorState,
+      force,
+      Date.now()
+    );
+    if (!force && existing.length && !harvestPlan.plannedSources.length) {
+      return existing;
+    }
+    const docs = await harvestMetadataDocs({
+      sources: harvestPlan.plannedSources,
+      searchTerms: deriveHarvestSearchTerms(localIndex)
+    });
+    const merged = mergeHarvestDocs(existing, docs);
+    metadataHarvestStore.replace(merged, new Date().toISOString(), harvestPlan.nextState);
+    patchMaterializedFeeds();
+    return merged;
+  }).finally(() => {
+    metadataHarvestRefreshPromise = null;
   });
-  const merged = mergeHarvestDocs(existing, docs);
-  metadataHarvestStore.replace(merged, new Date().toISOString(), harvestPlan.nextState);
-  patchMaterializedFeeds();
-  return merged;
+  return metadataHarvestRefreshPromise;
+}
+
+async function refreshMetadataHarvestSource(sourceType, options = {}) {
+  if (!metadataHarvestStore) {
+    return { ok: false, sourceType: "", count: 0, updatedAt: "" };
+  }
+  const safeSourceType = String(sourceType || "").trim().toLowerCase();
+  if (!safeSourceType) {
+    throw new Error("Source type is required.");
+  }
+  if (metadataHarvestRefreshPromise) {
+    await metadataHarvestRefreshPromise.catch(() => {});
+  }
+  metadataHarvestRefreshPromise = Promise.resolve().then(async () => {
+    const source = getMetadataHarvestSources().find((entry) => String(entry?.sourceType || "").trim().toLowerCase() === safeSourceType);
+    if (!source) {
+      throw new Error(`Unknown source: ${safeSourceType}`);
+    }
+    const existing = metadataHarvestStore.list();
+    const priorState = metadataHarvestStore.getState();
+    const localSnapshot = await ensureMaterializedMetadata({
+      allowStale: true,
+      refreshInBackground: false
+    });
+    const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
+    const current = priorState?.sources?.[safeSourceType] && typeof priorState.sources[safeSourceType] === "object"
+      ? { ...priorState.sources[safeSourceType] }
+      : {};
+    const maxEpisodePages = Math.max(1, Number(source.maxEpisodePages || current.maxEpisodePages || 3) || 3);
+    const requestedPages = options?.deeper
+      ? maxEpisodePages
+      : Math.max(1, Math.min(maxEpisodePages, Number(current.nextEpisodePages || current.lastEpisodePages || 1) || 1));
+    const docs = await harvestMetadataDocs({
+      sources: [{ ...source, episodePages: requestedPages }],
+      searchTerms: deriveHarvestSearchTerms(localIndex)
+    });
+    const merged = mergeHarvestDocs(existing, docs);
+    const cadenceMs = Math.max(1000 * 60 * 15, Number(source.harvestCadenceMs || current.harvestCadenceMs || 1000 * 60 * 60 * 6) || 1000 * 60 * 60 * 6);
+    const updatedState = {
+      ...(priorState && typeof priorState === "object" ? priorState : { sources: {} }),
+      sources: {
+        ...((priorState && priorState.sources && typeof priorState.sources === "object") ? priorState.sources : {}),
+        [safeSourceType]: {
+          ...current,
+          lastRunAt: new Date().toISOString(),
+          lastEpisodePages: requestedPages,
+          nextEpisodePages: requestedPages >= maxEpisodePages ? 1 : requestedPages + 1,
+          maxEpisodePages,
+          harvestCadenceMs: cadenceMs,
+          nextDueAt: new Date(Date.now() + cadenceMs).toISOString()
+        }
+      }
+    };
+    metadataHarvestStore.replace(merged, new Date().toISOString(), updatedState);
+    patchMaterializedFeeds();
+    return {
+      ok: true,
+      sourceType: safeSourceType,
+      count: docs.length,
+      updatedAt: metadataHarvestStore.getUpdatedAt()
+    };
+  }).finally(() => {
+    metadataHarvestRefreshPromise = null;
+  });
+  return metadataHarvestRefreshPromise;
 }
 
 async function rebuildDownloadedFileMetadata(payload = {}) {
@@ -970,7 +1052,10 @@ async function rebuildDownloadedFileMetadata(payload = {}) {
     hosts: normalizeMetadataList(payload.hosts),
     genres: normalizeMetadataList(payload.genres),
     chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
-    durationSeconds: Number(cue?.durationSeconds || 0)
+    durationSeconds: Number(cue?.durationSeconds || 0),
+    cleanupOptions: {
+      smartCleanup: readSettings().smartTagCleanup
+    }
   });
 
   return { ok: true, cue, tags };
@@ -1210,7 +1295,10 @@ async function maybeApplyId3({
       hosts,
       genres,
       chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
-      durationSeconds: Number(cue?.durationSeconds || 0)
+      durationSeconds: Number(cue?.durationSeconds || 0),
+      cleanupOptions: {
+        smartCleanup: settings.smartTagCleanup
+      }
     });
   } catch {
     return null;
@@ -2813,6 +2901,11 @@ ipcMain.handle("metadata-harvest-refresh", async () => {
   const items = await refreshMetadataHarvestCache(true);
   return { ok: true, count: items.length, updatedAt: metadataHarvestStore?.getUpdatedAt?.() || "" };
 });
+ipcMain.handle("metadata-harvest-refresh-source", async (_event, payload = {}) => {
+  return refreshMetadataHarvestSource(String(payload.sourceType || ""), {
+    deeper: Boolean(payload.deeper)
+  });
+});
 ipcMain.handle("collections-list", () => collectionsStore ? collectionsStore.list() : []);
 ipcMain.handle("collections-create", (_event, payload = {}) => {
   if (!collectionsStore) {
@@ -2882,12 +2975,17 @@ ipcMain.handle("collections-recommendations", async (_event, payload = {}) => {
 ipcMain.handle("history-postprocess", async (_event, payload = {}) => rebuildDownloadedFileMetadata(payload || {}));
 ipcMain.handle("diagnostics-get", async () => {
   const settings = readSettings();
+  if (process.env.NODE_ENV !== "test") {
+    await refreshMetadataHarvestCache(false);
+  }
   const snapshot = await ensureMaterializedMetadata();
   return collectRuntimeDiagnostics({
     dataDir: app.getPath("userData"),
     downloadDir: settings.downloadDir,
     projectRoot: path.join(__dirname, ".."),
     recentErrors: recentErrorsLog ? recentErrorsLog.list() : [],
+    schedulesBySource: buildLibraryMetadataDataset().schedulesBySource,
+    queueSnapshot: downloadQueue.snapshot(),
     settings,
     harvestUpdatedAt: metadataHarvestStore?.getUpdatedAt?.() || "",
     harvestState: metadataHarvestStore?.getState?.() || { sources: {} },
@@ -3038,6 +3136,10 @@ async function onScheduleError(sourceType, schedule, error) {
   });
 }
 
+function shouldSkipSchedulerEpisode({ episode } = {}) {
+  return Boolean(readSettings()?.skipReruns) && isLikelyRerun(episode);
+}
+
 app.whenReady().then(() => {
   readSettings();
 
@@ -3068,6 +3170,7 @@ app.whenReady().then(() => {
     app,
     getProgramSummary,
     getProgramEpisodes,
+    shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
     onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("rte", schedule, latest),
     onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("rte", schedule, downloaded),
     onScheduleRunError: (schedule, error) => onScheduleError("rte", schedule, error),
@@ -3092,6 +3195,7 @@ app.whenReady().then(() => {
     dataDir: path.join(app.getPath("userData"), "bbc"),
     getProgramSummary: async (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson),
     getProgramEpisodes: async (programUrl, page) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+    shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
     onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("bbc", schedule, latest),
     onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("bbc", schedule, downloaded),
     onScheduleRunError: (schedule, error) => onScheduleError("bbc", schedule, error),
@@ -3115,6 +3219,7 @@ app.whenReady().then(() => {
     dataDir: path.join(app.getPath("userData"), "wwf"),
     getProgramSummary: async (programUrl) => getWwfProgramSummary(programUrl),
     getProgramEpisodes: async (programUrl, page) => getWwfProgramEpisodes(programUrl, page),
+    shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
     onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("wwf", schedule, latest),
     onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("wwf", schedule, downloaded),
     onScheduleRunError: (schedule, error) => onScheduleError("wwf", schedule, error),
@@ -3138,6 +3243,7 @@ app.whenReady().then(() => {
     dataDir: path.join(app.getPath("userData"), "nts"),
     getProgramSummary: async (programUrl) => getNtsProgramSummary(programUrl),
     getProgramEpisodes: async (programUrl, page) => getNtsProgramEpisodes(programUrl, page),
+    shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
     onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("nts", schedule, latest),
     onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("nts", schedule, downloaded),
     onScheduleRunError: (schedule, error) => onScheduleError("nts", schedule, error),
@@ -3161,6 +3267,7 @@ app.whenReady().then(() => {
     dataDir: path.join(app.getPath("userData"), "fip"),
     getProgramSummary: async (programUrl) => getFipProgramSummary(programUrl),
     getProgramEpisodes: async (programUrl, page) => getFipProgramEpisodes(programUrl, page),
+    shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
     onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("fip", schedule, latest),
     onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("fip", schedule, downloaded),
     onScheduleRunError: (schedule, error) => onScheduleError("fip", schedule, error),
@@ -3184,6 +3291,7 @@ app.whenReady().then(() => {
     dataDir: path.join(app.getPath("userData"), "kexp"),
     getProgramSummary: async (programUrl) => getKexpProgramSummary(programUrl),
     getProgramEpisodes: async (programUrl, page) => getKexpProgramEpisodes(programUrl, page),
+    shouldSkipEpisodeDownload: shouldSkipSchedulerEpisode,
     onScheduleRefreshed: (schedule, latest) => onScheduleRefreshed("kexp", schedule, latest),
     onScheduleRunComplete: (schedule, downloaded) => onScheduleComplete("kexp", schedule, downloaded),
     onScheduleRunError: (schedule, error) => onScheduleError("kexp", schedule, error),
@@ -3219,6 +3327,9 @@ app.whenReady().then(() => {
       refreshMetadataHarvestCache(false).catch(() => {});
       refreshMaterializedMetadataSnapshot().catch(() => {});
     }, 2500);
+    setInterval(() => {
+      refreshMetadataHarvestCache(false).catch(() => {});
+    }, METADATA_HARVEST_POLL_MS);
   }
 
   createWindow();

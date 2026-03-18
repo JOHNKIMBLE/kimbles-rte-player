@@ -91,6 +91,10 @@
     ffmpegCueSilenceDetect: true,
     ffmpegCueLoudnessDetect: true,
     ffmpegCueSpectralDetect: true,
+    downloadKeepLatest: 0,
+    downloadDeleteOlderDays: 0,
+    skipReruns: false,
+    smartTagCleanup: true,
     episodesPerPage: 5,
     discoveryCount: 5
   };
@@ -138,6 +142,10 @@
         ffmpegCueSilenceDetect: parsed.ffmpegCueSilenceDetect == null ? defaultSettings.ffmpegCueSilenceDetect : Boolean(parsed.ffmpegCueSilenceDetect),
         ffmpegCueLoudnessDetect: parsed.ffmpegCueLoudnessDetect == null ? defaultSettings.ffmpegCueLoudnessDetect : Boolean(parsed.ffmpegCueLoudnessDetect),
         ffmpegCueSpectralDetect: parsed.ffmpegCueSpectralDetect == null ? defaultSettings.ffmpegCueSpectralDetect : Boolean(parsed.ffmpegCueSpectralDetect),
+        downloadKeepLatest: Math.max(0, Math.min(500, Math.floor(Number(parsed.downloadKeepLatest || defaultSettings.downloadKeepLatest)))),
+        downloadDeleteOlderDays: Math.max(0, Math.min(3650, Math.floor(Number(parsed.downloadDeleteOlderDays || defaultSettings.downloadDeleteOlderDays)))),
+        skipReruns: parsed.skipReruns == null ? defaultSettings.skipReruns : Boolean(parsed.skipReruns),
+        smartTagCleanup: parsed.smartTagCleanup == null ? defaultSettings.smartTagCleanup : Boolean(parsed.smartTagCleanup),
         episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(parsed.episodesPerPage || defaultSettings.episodesPerPage)))),
         discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(parsed.discoveryCount || defaultSettings.discoveryCount))))
       };
@@ -182,6 +190,10 @@
       ffmpegCueSilenceDetect: next.ffmpegCueSilenceDetect == null ? defaultSettings.ffmpegCueSilenceDetect : Boolean(next.ffmpegCueSilenceDetect),
       ffmpegCueLoudnessDetect: next.ffmpegCueLoudnessDetect == null ? defaultSettings.ffmpegCueLoudnessDetect : Boolean(next.ffmpegCueLoudnessDetect),
       ffmpegCueSpectralDetect: next.ffmpegCueSpectralDetect == null ? defaultSettings.ffmpegCueSpectralDetect : Boolean(next.ffmpegCueSpectralDetect),
+      downloadKeepLatest: Math.max(0, Math.min(500, Math.floor(Number(next.downloadKeepLatest || defaultSettings.downloadKeepLatest)))),
+      downloadDeleteOlderDays: Math.max(0, Math.min(3650, Math.floor(Number(next.downloadDeleteOlderDays || defaultSettings.downloadDeleteOlderDays)))),
+      skipReruns: next.skipReruns == null ? defaultSettings.skipReruns : Boolean(next.skipReruns),
+      smartTagCleanup: next.smartTagCleanup == null ? defaultSettings.smartTagCleanup : Boolean(next.smartTagCleanup),
       episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(next.episodesPerPage || defaultSettings.episodesPerPage)))),
       discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(next.discoveryCount || defaultSettings.discoveryCount))))
     };
@@ -499,6 +511,10 @@
     getEntityGraphEntity: (payload = {}) => API.getJson(`/api/entity-graph/entity?entityId=${encodeURIComponent(payload.entityId || "")}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     discoverMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/discover?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     refreshMetadataHarvest: () => API.sendJson("/api/metadata/harvest-refresh", "POST", {}),
+    refreshMetadataHarvestSource: (sourceType, options = {}) => API.sendJson("/api/metadata/harvest-refresh/source", "POST", {
+      sourceType,
+      deeper: Boolean(options?.deeper)
+    }),
     listCollections: () => API.getJson("/api/collections").then((body) => body?.collections || []),
     createCollection: (name) => API.sendJson("/api/collections", "POST", { name }).then((body) => body?.collections || []),
     deleteCollection: async (collectionId) => {
