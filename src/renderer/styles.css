@@ -741,6 +741,70 @@ button:disabled {
   margin-top: 0.35rem;
 }
 
+.now-playing-queue-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  margin-top: 0.45rem;
+}
+
+.now-playing-queue-summary {
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex: 1 1 220px;
+}
+
+.now-playing-queue-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.now-playing-queue-list {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.now-playing-queue-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.now-playing-queue-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.now-playing-queue-title {
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-playing-queue-meta,
+.now-playing-queue-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.now-playing-queue-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
 .now-playing-chapter-controls {
   display: flex;
   gap: 0.4rem;
@@ -771,6 +835,14 @@ button:disabled {
   .now-playing-image {
     width: 46px;
     height: 46px;
+  }
+
+  .now-playing-queue-item {
+    flex-direction: column;
+  }
+
+  .now-playing-queue-actions {
+    justify-content: flex-start;
   }
 }
 

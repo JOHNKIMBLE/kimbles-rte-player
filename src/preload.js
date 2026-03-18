@@ -152,6 +152,10 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getEntityGraphEntity: (payload = {}) => ipcRenderer.invoke("entity-graph-detail", payload || {}),
   discoverMetadataIndex: (payload = {}) => ipcRenderer.invoke("metadata-discover", payload || {}),
   refreshMetadataHarvest: () => ipcRenderer.invoke("metadata-harvest-refresh"),
+  refreshMetadataHarvestSource: (sourceType, options = {}) => ipcRenderer.invoke("metadata-harvest-refresh-source", {
+    sourceType,
+    deeper: Boolean(options?.deeper)
+  }),
   listCollections: () => ipcRenderer.invoke("collections-list"),
   createCollection: (name) => ipcRenderer.invoke("collections-create", { name }),
   deleteCollection: (collectionId) => ipcRenderer.invoke("collections-delete", { collectionId }),

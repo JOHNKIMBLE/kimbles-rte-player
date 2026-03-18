@@ -145,6 +145,51 @@ function buildMetadataHarvestDiagnostics(options = {}) {
     return Math.round((hits / safeRows.length) * 100);
   }
 
+  function buildThinReasons({ thinCount = 0, hostCoverage = 0, genreCoverage = 0 } = {}) {
+    const reasons = [];
+    if (Number(thinCount || 0) > 0) {
+      const count = Number(thinCount || 0);
+      reasons.push(`${count} metadata-thin doc${count === 1 ? "" : "s"}`);
+    }
+    if (Number(hostCoverage || 0) < 40) {
+      reasons.push(`hosts ${Number(hostCoverage || 0)}% coverage`);
+    }
+    if (Number(genreCoverage || 0) < 40) {
+      reasons.push(`genres ${Number(genreCoverage || 0)}% coverage`);
+    }
+    return reasons;
+  }
+
+  function buildThinDocDetails(rows = [], sourceType = "") {
+    return rows
+      .map((row) => {
+        const missingFields = [];
+        if (!(Array.isArray(row?.hosts) && row.hosts.length)) {
+          missingFields.push("hosts");
+        }
+        if (!(Array.isArray(row?.genres) && row.genres.length)) {
+          missingFields.push("genres");
+        }
+        if (!String(row?.description || row?.latestEpisodeDescription || "").trim()) {
+          missingFields.push("description");
+        }
+        if (!String(row?.location || row?.latestEpisodeLocation || "").trim()) {
+          missingFields.push("location");
+        }
+        return {
+          sourceType,
+          harvestKind: String(row?.harvestKind || "program").trim().toLowerCase() || "program",
+          title: String(row?.title || row?.programTitle || row?.episodeTitle || "").trim(),
+          programTitle: String(row?.programTitle || row?.title || "").trim(),
+          programUrl: String(row?.programUrl || "").trim(),
+          episodeUrl: String(row?.episodeUrl || "").trim(),
+          missingFields
+        };
+      })
+      .filter((row) => row.title && row.missingFields.length >= 2)
+      .sort((a, b) => b.missingFields.length - a.missingFields.length || a.title.localeCompare(b.title));
+  }
+
   const sourceStats = Array.from(new Set([
     ...Object.keys(harvestSources),
     ...sourceBuckets.keys()
@@ -165,6 +210,11 @@ function buildMetadataHarvestDiagnostics(options = {}) {
       const hasLocation = String(row?.location || row?.latestEpisodeLocation || "").trim();
       return !hasHosts && !hasGenres && !hasDescription && !hasLocation;
     }).length;
+    const thinReasons = buildThinReasons({
+      thinCount,
+      hostCoverage,
+      genreCoverage
+    });
     const due = Number.isFinite(nextDueMs) ? nextDueMs <= nowMs : !Number.isFinite(lastRunMs);
     return {
       sourceType,
@@ -177,6 +227,8 @@ function buildMetadataHarvestDiagnostics(options = {}) {
       genreCoverage,
       descriptionCoverage,
       locationCoverage,
+      isThinSource: thinReasons.length > 0,
+      thinReasons,
       lastRunAt: String(current.lastRunAt || ""),
       nextDueAt: String(current.nextDueAt || ""),
       lastEpisodePages: Number(current.lastEpisodePages || 0),
@@ -200,7 +252,85 @@ function buildMetadataHarvestDiagnostics(options = {}) {
     harvestedProgramCount: countKind(harvestedItems, "program"),
     harvestedHostCount: countKind(harvestedItems, "host"),
     harvestedEpisodeCount: countKind(harvestedItems, "episode"),
-    thinSourceCount: sourceStats.filter((row) => row.thinCount > 0 || row.hostCoverage < 40 || row.genreCoverage < 40).length
+    thinSourceCount: sourceStats.filter((row) => row.isThinSource).length,
+    thinDocs: sourceStats
+      .flatMap((stat) => buildThinDocDetails(sourceBuckets.get(stat.sourceType) || [], stat.sourceType).slice(0, 8))
+      .slice(0, 24)
+  };
+}
+
+function buildSourceHealth(options = {}) {
+  const schedulesBySource = options.schedulesBySource && typeof options.schedulesBySource === "object"
+    ? options.schedulesBySource
+    : {};
+  const harvestSourceStats = Array.isArray(options.metadataHarvest?.sourceStats) ? options.metadataHarvest.sourceStats : [];
+  const recentErrors = Array.isArray(options.recentErrors) ? options.recentErrors : [];
+  const queueRecent = Array.isArray(options.queueRecent) ? options.queueRecent : [];
+
+  const harvestBySource = new Map(
+    harvestSourceStats.map((row) => [String(row?.sourceType || "").trim().toLowerCase(), row])
+  );
+  const sourceKeys = new Set([
+    ...Object.keys(schedulesBySource || {}),
+    ...harvestBySource.keys(),
+    ...recentErrors.map((entry) => String(entry?.sourceType || "").trim().toLowerCase()).filter(Boolean),
+    ...queueRecent.map((entry) => String(entry?.sourceType || "").trim().toLowerCase()).filter(Boolean)
+  ]);
+
+  const retryHistory = [];
+  const sourceHealth = Array.from(sourceKeys)
+    .filter(Boolean)
+    .sort()
+    .map((sourceType) => {
+      const schedules = Array.isArray(schedulesBySource[sourceType]) ? schedulesBySource[sourceType] : [];
+      const harvest = harvestBySource.get(sourceType) || {};
+      const sourceErrors = recentErrors.filter((entry) => String(entry?.sourceType || "").trim().toLowerCase() === sourceType);
+      const queueFailures = queueRecent.filter((entry) => {
+        const status = String(entry?.status || "").trim().toLowerCase();
+        return String(entry?.sourceType || "").trim().toLowerCase() === sourceType && (status === "failed" || status === "cancelled");
+      });
+      const retryPending = schedules.reduce((sum, schedule) => sum + (Array.isArray(schedule?.retryQueue) ? schedule.retryQueue.length : 0), 0);
+      schedules.forEach((schedule) => {
+        for (const retry of Array.isArray(schedule?.retryQueue) ? schedule.retryQueue : []) {
+          retryHistory.push({
+            sourceType,
+            scheduleId: String(schedule?.id || "").trim(),
+            scheduleTitle: String(schedule?.title || "").trim(),
+            title: String(retry?.title || retry?.clipId || "").trim(),
+            clipId: String(retry?.clipId || "").trim(),
+            attempts: Math.max(1, Number(retry?.attempts || 1)),
+            nextRetryAt: String(retry?.nextRetryAt || "").trim(),
+            lastError: String(retry?.lastError || "").trim()
+          });
+        }
+      });
+      const latestFailure = [...sourceErrors, ...queueFailures]
+        .sort((a, b) => (Date.parse(String(b?.savedAt || b?.endedAt || "")) || 0) - (Date.parse(String(a?.savedAt || a?.endedAt || "")) || 0))[0] || null;
+      return {
+        sourceType,
+        scheduleCount: schedules.length,
+        enabledScheduleCount: schedules.filter((schedule) => schedule?.enabled !== false).length,
+        retryPending,
+        recentFailureCount: sourceErrors.length + queueFailures.length,
+        lastFailureAt: String(latestFailure?.savedAt || latestFailure?.endedAt || "").trim(),
+        lastFailureMessage: String(latestFailure?.error || latestFailure?.message || "").trim(),
+        lastFailureTitle: String(latestFailure?.title || latestFailure?.label || "").trim(),
+        lastScheduleRunAt: schedules
+          .map((schedule) => String(schedule?.lastRunAt || "").trim())
+          .filter(Boolean)
+          .sort()
+          .pop() || "",
+        thinReasons: Array.isArray(harvest?.thinReasons) ? harvest.thinReasons : [],
+        due: Boolean(harvest?.due),
+        harvestedCount: Number(harvest?.harvestedCount || 0)
+      };
+    });
+
+  retryHistory.sort((a, b) => (Date.parse(String(a?.nextRetryAt || "")) || Number.MAX_SAFE_INTEGER) - (Date.parse(String(b?.nextRetryAt || "")) || Number.MAX_SAFE_INTEGER));
+
+  return {
+    sourceHealth,
+    retryHistory: retryHistory.slice(0, 20)
   };
 }
 
@@ -210,11 +340,20 @@ function collectRuntimeDiagnostics(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || path.join(__dirname, "..", ".."));
   const bootstrapScriptPath = getBootstrapScriptPath(projectRoot);
   const vendorRoots = getVendorRootCandidates();
+  const queueSnapshot = options.queueSnapshot && typeof options.queueSnapshot === "object" ? options.queueSnapshot : {};
   const recentErrors = Array.isArray(options.recentErrors) ? options.recentErrors.slice(0, 10) : [];
 
   const settings = options.settings || {};
   const songrecEnabled = Boolean(settings.songrecTrackMatching);
   const fpcalcEnabled = Boolean(settings.fingerprintTrackMatching);
+
+  const metadataHarvest = buildMetadataHarvestDiagnostics(options);
+  const sourceHealth = buildSourceHealth({
+    schedulesBySource: options.schedulesBySource || {},
+    metadataHarvest,
+    recentErrors: Array.isArray(options.recentErrors) ? options.recentErrors : [],
+    queueRecent: Array.isArray(queueSnapshot?.recent) ? queueSnapshot.recent : []
+  });
 
   return {
     runtime: {
@@ -249,7 +388,9 @@ function collectRuntimeDiagnostics(options = {}) {
       })
     ],
     recentErrors,
-    metadataHarvest: buildMetadataHarvestDiagnostics(options)
+    metadataHarvest,
+    sourceHealth: sourceHealth.sourceHealth,
+    retryHistory: sourceHealth.retryHistory
   };
 }
 
