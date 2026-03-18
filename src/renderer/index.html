@@ -536,17 +536,49 @@
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Collections</h2>
           <div class="row" style="gap:0.5rem;">
+            <select id="collectionModeInput" style="font-size:0.85em;max-width:120px;">
+              <option value="manual">Manual</option>
+              <option value="smart">Smart</option>
+            </select>
             <input id="collectionNameInput" type="text" placeholder="New collection name" style="font-size:0.85em;width:200px;" />
             <button id="createCollectionBtn" class="secondary">Create</button>
           </div>
         </div>
         <p class="hint">Save hosts, shows, genres, episodes, and library items into named collections, then use them to drive smarter cross-source discovery.</p>
         <div class="row history-toolbar-meta">
+          <input id="collectionSmartQueryInput" type="text" placeholder="Smart query" style="font-size:0.85em;width:160px;" />
+          <select id="collectionSmartSourceFilter" style="font-size:0.85em;">
+            <option value="">Any Source</option>
+            <option value="rte">RTE</option>
+            <option value="bbc">BBC</option>
+            <option value="wwf">WWF</option>
+            <option value="nts">NTS</option>
+            <option value="fip">FIP</option>
+            <option value="kexp">KEXP</option>
+          </select>
+          <select id="collectionSmartKindFilter" style="font-size:0.85em;">
+            <option value="">Any Type</option>
+            <option value="discovery">Programs / Discovery</option>
+            <option value="host">Hosts</option>
+            <option value="episode">Episodes</option>
+            <option value="subscription">Subscriptions</option>
+            <option value="feed">Feeds</option>
+            <option value="history">History</option>
+          </select>
+          <input id="collectionSmartHostInput" type="text" placeholder="Host" style="font-size:0.85em;width:120px;" />
+          <input id="collectionSmartGenreInput" type="text" placeholder="Genre" style="font-size:0.85em;width:120px;" />
+          <input id="collectionSmartLocationInput" type="text" placeholder="Location" style="font-size:0.85em;width:120px;" />
+          <input id="collectionSmartLimitInput" type="number" min="1" max="100" value="24" style="font-size:0.85em;width:88px;" />
+          <label class="hint history-inline-label"><input id="collectionAutoUpdateCheckbox" type="checkbox" checked /> Auto</label>
+        </div>
+        <div class="row history-toolbar-meta">
           <div id="collectionsSummary" class="hint">Loading collections...</div>
           <div class="row" style="gap:0.5rem;margin-bottom:0;">
             <select id="collectionsSelect" style="font-size:0.85em;min-width:220px;">
               <option value="">Select collection</option>
             </select>
+            <button id="saveCollectionConfigBtn" class="secondary">Save Config</button>
+            <button id="refreshCollectionBtn" class="secondary">Refresh Smart</button>
             <button id="deleteCollectionBtn" class="secondary">Delete</button>
           </div>
         </div>
@@ -657,6 +689,9 @@
               <option value="history">History</option>
             </select>
             <input id="metadataIndexSearchInput" type="text" placeholder="Search hosts, genres, programs..." style="font-size:0.85em;width:240px;" />
+            <input id="metadataIndexHostFilter" type="text" placeholder="Host filter" style="font-size:0.85em;width:120px;" />
+            <input id="metadataIndexGenreFilter" type="text" placeholder="Genre filter" style="font-size:0.85em;width:120px;" />
+            <input id="metadataIndexLocationFilter" type="text" placeholder="Location filter" style="font-size:0.85em;width:120px;" />
             <button id="metadataIndexSaveAllBtn" class="secondary" style="font-size:0.85em;">Save Visible</button>
             <button id="metadataIndexSaveHostsBtn" class="secondary" style="font-size:0.85em;">Save Hosts</button>
             <button id="metadataIndexSaveEpisodesBtn" class="secondary" style="font-size:0.85em;">Save Episodes</button>
@@ -664,6 +699,35 @@
         </div>
         <div id="metadataIndexMetrics" class="library-metrics-grid"></div>
         <div id="metadataIndexList" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Metadata Repairs</h2>
+          <div id="metadataRepairSummary" class="hint">Normalize recurring metadata terms across the library.</div>
+        </div>
+        <p class="hint">Use repairs to merge duplicate hosts, genres, locations, programs, or episode names, then refresh the graph and recommendations on top of the repaired metadata.</p>
+        <div class="row history-toolbar-meta">
+          <select id="metadataRepairFieldInput" style="font-size:0.85em;">
+            <option value="host">Host</option>
+            <option value="genre">Genre</option>
+            <option value="location">Location</option>
+            <option value="program">Program</option>
+            <option value="episode">Episode</option>
+          </select>
+          <select id="metadataRepairSourceTypeInput" style="font-size:0.85em;">
+            <option value="">All Sources</option>
+            <option value="rte">RTE</option>
+            <option value="bbc">BBC</option>
+            <option value="wwf">WWF</option>
+            <option value="nts">NTS</option>
+            <option value="fip">FIP</option>
+            <option value="kexp">KEXP</option>
+          </select>
+          <input id="metadataRepairFromInput" type="text" placeholder="From" style="font-size:0.85em;width:180px;" />
+          <input id="metadataRepairToInput" type="text" placeholder="To" style="font-size:0.85em;width:180px;" />
+          <button id="metadataRepairAddBtn" class="secondary">Add Repair</button>
+        </div>
+        <div id="metadataRepairList" class="list"></div>
       </section>
       <section class="panel">
         <div class="row" style="justify-content:space-between;align-items:center;">
@@ -824,11 +888,16 @@
         </div>
         <div class="hint token-legend">Tokens:
           <code class="token-pill" title="Source radio group (RTE or BBC).">{radio}</code>
+          <code class="token-pill" title="Normalized source key such as rte, bbc, nts, or kexp.">{source_type}</code>
           <code class="token-pill" title="Program/show title, cleaned for file paths.">{program}</code>
           <code class="token-pill" title="Program title slug (lowercase, hyphen-separated).">{program_slug}</code>
           <code class="token-pill" title="Full episode title, cleaned for file paths.">{episode}</code>
           <code class="token-pill" title="Short episode title (best effort short form).">{episode_short}</code>
           <code class="token-pill" title="Episode title slug (lowercase, hyphen-separated).">{episode_slug}</code>
+          <code class="token-pill" title="Primary host / presenter name when available.">{host}</code>
+          <code class="token-pill" title="Primary host slug when available.">{host_slug}</code>
+          <code class="token-pill" title="Joined host names when multiple hosts exist.">{hosts}</code>
+          <code class="token-pill" title="Joined host slugs when multiple hosts exist.">{hosts_slug}</code>
           <code class="token-pill" title="Release/broadcast date in YYYY-MM-DD.">{release_date}</code>
           <code class="token-pill" title="Year from release date (YYYY).">{year}</code>
           <code class="token-pill" title="Month from release date (MM).">{month}</code>
@@ -890,6 +959,14 @@
             <div class="row setting-row">
               <label for="webhookUrlInput">Webhook URL (optional)</label>
               <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" />
+            </div>
+            <div class="row setting-row">
+              <label for="discordWebhookUrlInput">Discord Webhook (optional)</label>
+              <input id="discordWebhookUrlInput" type="url" placeholder="https://discord.com/api/webhooks/..." />
+            </div>
+            <div class="row setting-row">
+              <label for="ntfyTopicUrlInput">ntfy Topic URL (optional)</label>
+              <input id="ntfyTopicUrlInput" type="url" placeholder="https://ntfy.sh/your-topic" />
             </div>
           </div>
           <div class="settings-subgroup">
@@ -962,6 +1039,58 @@
             </div>
             <div class="hint">Removes duplicate program prefixes in episode titles and keeps host/genre tags tidy before writing artwork, chapters, and metadata.</div>
           </div>
+          <div class="settings-subgroup">
+            <div class="hint">Per-program rules</div>
+            <div class="row setting-row">
+              <label for="programRuleSourceTypeInput">Source</label>
+              <select id="programRuleSourceTypeInput">
+                <option value="">Any</option>
+                <option value="rte">RTE</option>
+                <option value="bbc">BBC</option>
+                <option value="wwf">WWF</option>
+                <option value="nts">NTS</option>
+                <option value="fip">FIP</option>
+                <option value="kexp">KEXP</option>
+              </select>
+            </div>
+            <div class="row setting-row">
+              <label for="programRuleProgramTitleInput">Program Title</label>
+              <input id="programRuleProgramTitleInput" type="text" placeholder="Match by program title" />
+            </div>
+            <div class="row setting-row">
+              <label for="programRuleProgramUrlInput">Program URL</label>
+              <input id="programRuleProgramUrlInput" type="text" placeholder="Exact program URL match (recommended)" />
+            </div>
+            <div class="row setting-row">
+              <label for="programRuleOutputDirInput">Override Folder</label>
+              <input id="programRuleOutputDirInput" type="text" placeholder="/downloads/Shows/Breakfast" />
+            </div>
+            <div class="row setting-row">
+              <label for="programRulePathFormatInput">Override Path Format</label>
+              <input id="programRulePathFormatInput" type="text" placeholder="{radio}/{program}/{host}/{release_date} - {episode}" />
+            </div>
+            <div class="row setting-row">
+              <label for="programRuleKeepLatestInput">Keep Latest</label>
+              <input id="programRuleKeepLatestInput" type="number" min="0" max="500" step="1" value="0" />
+            </div>
+            <div class="row setting-row">
+              <label for="programRuleDeleteOlderDaysInput">Delete Older Than Days</label>
+              <input id="programRuleDeleteOlderDaysInput" type="number" min="0" max="3650" step="1" value="0" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="programRuleSkipRerunsCheckbox">Skip reruns for this program</label>
+              <input id="programRuleSkipRerunsCheckbox" type="checkbox" />
+            </div>
+            <div class="row setting-row setting-switch">
+              <label for="programRuleEnabledCheckbox">Rule enabled</label>
+              <input id="programRuleEnabledCheckbox" type="checkbox" checked />
+            </div>
+            <div class="row">
+              <button id="addProgramRuleBtn" type="button" class="secondary">Add Rule</button>
+              <button id="resetProgramRuleBtn" type="button" class="secondary">Clear Rule</button>
+            </div>
+            <div id="programRuleList" class="list compact-list"></div>
+          </div>
         </div>
         <div class="row">
           <button id="saveSettingsBtn">Save Settings</button>
@@ -991,6 +1120,8 @@
         <div id="diagnosticsRetryHistory" class="list" style="margin-bottom:0.7rem;"></div>
         <div class="hint">Slim docs</div>
         <div id="diagnosticsThinDocs" class="list" style="margin-bottom:0.7rem;"></div>
+        <div class="hint">Slim doc details</div>
+        <div id="diagnosticsThinDocDetails" class="list" style="margin-bottom:0.7rem;"></div>
         <div id="diagnosticsRuntime" class="diagnostics-grid"></div>
         <div id="diagnosticsBinaries" class="list" style="margin-top:0.6rem;"></div>
       </section>

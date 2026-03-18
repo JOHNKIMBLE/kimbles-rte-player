@@ -109,7 +109,8 @@
         schedule?.description,
         schedule?.location,
         Array.isArray(schedule?.genres) ? schedule.genres.join(" ") : "",
-        Array.isArray(schedule?.hosts) ? schedule.hosts.join(" ") : ""
+        Array.isArray(schedule?.hosts) ? schedule.hosts.join(" ") : "",
+        Array.isArray(schedule?.hostHistory) ? schedule.hostHistory.join(" ") : ""
       ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
     }
 

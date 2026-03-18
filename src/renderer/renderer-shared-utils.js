@@ -373,7 +373,8 @@
       const isNts = sourceType === "nts";
       const isFip = sourceType === "fip";
       const isKexp = sourceType === "kexp";
-      const hosts = normalizeMetadataList(schedule?.hosts);
+      const hosts = [];
+      const hostHistory = normalizeMetadataList(schedule?.hostHistory || schedule?.hosts);
       const genres = normalizeMetadataList(schedule?.genres);
       const location = String(schedule?.location || "").trim();
       const description = String(schedule?.description || "").trim();
@@ -410,6 +411,9 @@
         hosts.length ? `Host${hosts.length === 1 ? "" : "s"}: ${escapeHtml(hosts.join(", "))}` : "",
         location ? escapeHtml(location) : ""
       ].filter(Boolean).join(" • ");
+      const hostsHtml = hostHistory.length
+        ? `<div class="item-meta">Hosts:</div><div class="genre-pills">${hostHistory.map((host) => `<span class="genre-pill">${escapeHtml(host)}</span>`).join("")}</div>`
+        : "";
       const genresHtml = genres.length
         ? `<div class="genre-pills">${genres.map((genre) => `<span class="genre-pill">${escapeHtml(genre)}</span>`).join("")}</div>`
         : "";
@@ -439,6 +443,7 @@
                 ${backfillSummary ? `<span class="scheduler-badge scheduler-badge-progress">Backfill ${escapeHtml(backfillSummary)}</span>` : ""}
               </div>
               ${metadataLine ? `<div class="item-meta">${metadataLine}</div>` : ""}
+              ${hostsHtml}
               ${descriptionHtml}
               ${genresHtml}
             </div>

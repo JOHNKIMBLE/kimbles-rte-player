@@ -7,6 +7,7 @@
     const formatDurationFromSeconds = deps.formatDurationFromSeconds;
     const setSettingsStatus = deps.setSettingsStatus;
     const onPlaybackStarted = deps.onPlaybackStarted;
+    const onListenProgress = deps.onListenProgress;
 
     const DEFAULT_NOW_PLAYING_ART = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='8' fill='%231f2a3a'/%3E%3Ccircle cx='28' cy='28' r='17' fill='%2335445a'/%3E%3Cpath d='M21 20h4v16h-4zM31 20l10 8-10 8z' fill='%23c9d6e8'/%3E%3C/svg%3E";
     const RESUME_KEY_PREFIX = "resume:";
@@ -19,6 +20,7 @@
     let resumeSaveTimer = null;
     let playbackQueue = [];
     let autoplayNext = true;
+    let listenReportTimer = null;
     const queueListeners = new Set();
 
     function saveResumePosition(key, pos) {
@@ -54,20 +56,61 @@
     function normalizeQueueItem(item = {}) {
       const outputDir = String(item.outputDir || "").trim();
       const fileName = String(item.fileName || "").trim();
-      if (!outputDir || !fileName) {
+      const mode = String(item.mode || (outputDir && fileName ? "local" : "episode")).trim().toLowerCase();
+      if (mode === "local") {
+        if (!outputDir || !fileName) {
+          return null;
+        }
+        return {
+          id: String(item.id || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`).trim(),
+          mode,
+          outputDir,
+          fileName,
+          title: String(item.title || fileName).trim() || fileName,
+          source: String(item.source || "Queue").trim() || "Queue",
+          subtitle: String(item.subtitle || "").trim(),
+          image: String(item.image || "").trim(),
+          episodeUrl: String(item.episodeUrl || "").trim(),
+          sourceType: String(item.sourceType || "").trim().toLowerCase(),
+          programTitle: String(item.programTitle || "").trim()
+        };
+      }
+      const sourceType = String(item.sourceType || "").trim().toLowerCase();
+      const episodeUrl = String(item.episodeUrl || "").trim();
+      const streamUrl = String(item.streamUrl || "").trim();
+      if (!sourceType || (!episodeUrl && !streamUrl)) {
         return null;
       }
       return {
         id: String(item.id || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`).trim(),
-        outputDir,
-        fileName,
-        title: String(item.title || fileName).trim() || fileName,
+        mode: "episode",
+        title: String(item.title || "Episode").trim() || "Episode",
         source: String(item.source || "Queue").trim() || "Queue",
         subtitle: String(item.subtitle || "").trim(),
         image: String(item.image || "").trim(),
-        episodeUrl: String(item.episodeUrl || "").trim(),
-        sourceType: String(item.sourceType || "").trim().toLowerCase()
+        episodeUrl,
+        sourceType,
+        streamUrl,
+        cacheKey: String(item.cacheKey || episodeUrl).trim() || episodeUrl,
+        sourceLabel: String(item.sourceLabel || item.source || "Queue").trim() || "Queue",
+        programTitle: String(item.programTitle || "").trim(),
+        durationSeconds: Math.max(0, Number(item.durationSeconds || 0) || 0),
+        playbackKey: String(item.playbackKey || `${sourceType}:queued:${episodeUrl || streamUrl}`).trim()
       };
+    }
+
+    function isSameQueueTarget(left, right) {
+      const a = normalizeQueueItem(left);
+      const b = normalizeQueueItem(right);
+      if (!a || !b || a.mode !== b.mode) {
+        return false;
+      }
+      if (a.mode === "local") {
+        return a.outputDir === b.outputDir && a.fileName === b.fileName;
+      }
+      return a.sourceType === b.sourceType
+        && a.episodeUrl === b.episodeUrl
+        && a.streamUrl === b.streamUrl;
     }
 
     function savePlaybackQueue() {
@@ -104,13 +147,13 @@
       }
     }
 
-    function renderQueue() {
+    function _renderQueueLegacy() {
       if (dom.autoplayCheckbox) {
         dom.autoplayCheckbox.checked = autoplayNext;
       }
       if (dom.queueSummary) {
         dom.queueSummary.textContent = playbackQueue.length
-          ? `${playbackQueue.length} queued â€¢ next ${playbackQueue[0].title}`
+          ? `${playbackQueue.length} queued | next ${playbackQueue[0].title}`
           : "Queue empty";
       }
       if (dom.queueClearBtn) {
@@ -124,7 +167,7 @@
           <div class="now-playing-queue-item">
             <div class="now-playing-queue-main">
               <div class="now-playing-queue-title">${index === 0 ? "Up Next: " : ""}${item.title}</div>
-              <div class="now-playing-queue-meta">${item.source}${item.subtitle ? ` â€¢ ${item.subtitle}` : ""}</div>
+              <div class="now-playing-queue-meta">${item.source}${item.subtitle ? ` | ${item.subtitle}` : ""}</div>
             </div>
             <div class="now-playing-queue-actions">
               <button class="secondary" type="button" data-queue-play-now="${item.id}">Play</button>
@@ -132,12 +175,43 @@
             </div>
           </div>
         `).join("")
-        : `<div class="now-playing-queue-empty">Queue the next local episode from History or Queue.</div>`;
+        : `<div class="now-playing-queue-empty">Queue another episode or local file while something is already playing.</div>`;
+    }
+
+    function renderQueueView() {
+      if (dom.autoplayCheckbox) {
+        dom.autoplayCheckbox.checked = autoplayNext;
+      }
+      if (dom.queueSummary) {
+        dom.queueSummary.textContent = playbackQueue.length
+          ? `${playbackQueue.length} queued | next ${playbackQueue[0].title}`
+          : "Queue empty";
+      }
+      if (dom.queueClearBtn) {
+        dom.queueClearBtn.disabled = playbackQueue.length === 0;
+      }
+      if (!dom.queueList) {
+        return;
+      }
+      dom.queueList.innerHTML = playbackQueue.length
+        ? playbackQueue.map((item, index) => `
+          <div class="now-playing-queue-item">
+            <div class="now-playing-queue-main">
+              <div class="now-playing-queue-title">${index === 0 ? "Up Next: " : ""}${item.title}</div>
+              <div class="now-playing-queue-meta">${item.source}${item.subtitle ? ` &middot; ${item.subtitle}` : ""}</div>
+            </div>
+            <div class="now-playing-queue-actions">
+              <button class="secondary" type="button" data-queue-play-now="${item.id}">Play</button>
+              <button class="secondary" type="button" data-queue-remove="${item.id}">Remove</button>
+            </div>
+          </div>
+        `).join("")
+        : `<div class="now-playing-queue-empty">Queue another episode or local file while something is already playing.</div>`;
     }
 
     function notifyQueueChange() {
       savePlaybackQueue();
-      renderQueue();
+      renderQueueView();
       const snapshot = {
         items: playbackQueue.slice(),
         autoplayNext
@@ -152,7 +226,7 @@
     function setAutoplayEnabled(enabled) {
       autoplayNext = Boolean(enabled);
       saveAutoplayPreference();
-      renderQueue();
+      renderQueueView();
     }
 
     async function playQueueItem(item) {
@@ -177,6 +251,9 @@
       }
       const [nextItem] = playbackQueue.splice(index, 1);
       notifyQueueChange();
+      if (hasActivePlayback()) {
+        clearGlobalNowPlaying();
+      }
       await playQueueItem(nextItem);
     }
 
@@ -198,9 +275,9 @@
     function enqueueQueueItem(item, options = {}) {
       const normalized = normalizeQueueItem(item);
       if (!normalized) {
-        throw new Error("A downloaded file is required to queue playback.");
+        throw new Error("A playable episode or downloaded file is required to queue playback.");
       }
-      if (!playbackQueue.some((entry) => entry.outputDir === normalized.outputDir && entry.fileName === normalized.fileName)) {
+      if (!playbackQueue.some((entry) => isSameQueueTarget(entry, normalized))) {
         if (options.prepend) {
           playbackQueue.unshift(normalized);
         } else {
@@ -208,7 +285,7 @@
         }
         notifyQueueChange();
       } else {
-        renderQueue();
+        renderQueueView();
       }
       if (options.playNow) {
         playQueuedItemNow(normalized.id).catch((error) => {
@@ -230,6 +307,14 @@
     function clearQueue() {
       playbackQueue = [];
       notifyQueueChange();
+    }
+
+    function hasActivePlayback() {
+      return Boolean(activeNowPlaying && dom.audio && !dom.audio.paused && !dom.audio.ended);
+    }
+
+    function getActivePlaybackKey() {
+      return String(activeNowPlaying?.playbackKey || "").trim();
     }
 
     function updateResumeBadge() {
@@ -371,6 +456,10 @@
     }
 
     function clearGlobalNowPlaying() {
+      if (listenReportTimer) {
+        clearTimeout(listenReportTimer);
+        listenReportTimer = null;
+      }
       stopHlsPlayback();
       try {
         dom.audio?.pause();
@@ -411,7 +500,8 @@
       tracks = [],
       chaptersFromTracks = false,
       playbackKey = "",
-      startOffset = 0
+      startOffset = 0,
+      listenContext = null
     }) {
       const url = String(streamUrl || "").trim();
       if (!url) {
@@ -426,7 +516,17 @@
         chapters: normalizeChapters(chapters),
         tracks: normalizeTracks(tracks),
         chaptersFromTracks: Boolean(chaptersFromTracks),
-        playbackKey: String(playbackKey || "").trim()
+        playbackKey: String(playbackKey || "").trim(),
+        listenContext: listenContext && typeof listenContext === "object"
+          ? {
+            outputDir: String(listenContext.outputDir || "").trim(),
+            fileName: String(listenContext.fileName || "").trim(),
+            sourceType: String(listenContext.sourceType || "").trim().toLowerCase(),
+            episodeUrl: String(listenContext.episodeUrl || "").trim(),
+            episodeTitle: String(listenContext.episodeTitle || title || "").trim()
+          }
+          : null,
+        lastReportedListenSeconds: 0
       };
 
       if (dom.title) {
@@ -538,6 +638,31 @@
       updateNowPlayingChapterControls();
     }
 
+    function reportListenProgress(options = {}) {
+      if (typeof onListenProgress !== "function" || !activeNowPlaying?.listenContext || !dom.audio) {
+        return;
+      }
+      const listenSeconds = Math.max(0, Math.floor(Number(dom.audio.currentTime || 0) || 0));
+      const durationSeconds = Math.max(0, Math.floor(Number(dom.audio.duration || 0) || 0));
+      const completed = Boolean(options.completed);
+      if (!completed) {
+        if (listenSeconds < 5) {
+          return;
+        }
+        const lastSeconds = Math.max(0, Number(activeNowPlaying.lastReportedListenSeconds || 0) || 0);
+        if (!options.force && (listenSeconds - lastSeconds) < 15) {
+          return;
+        }
+      }
+      activeNowPlaying.lastReportedListenSeconds = listenSeconds;
+      Promise.resolve(onListenProgress({
+        ...activeNowPlaying.listenContext,
+        listenSeconds,
+        durationSeconds,
+        completed
+      })).catch(() => {});
+    }
+
     function bindEvents() {
       dom.closeBtn?.addEventListener("click", () => {
         clearGlobalNowPlaying();
@@ -600,6 +725,12 @@
             }, 5000);
           }
         }
+        if (!listenReportTimer) {
+          listenReportTimer = setTimeout(() => {
+            listenReportTimer = null;
+            reportListenProgress();
+          }, 1500);
+        }
       });
 
       dom.audio?.addEventListener("seeking", () => {
@@ -637,7 +768,12 @@
         }
       });
 
+      dom.audio?.addEventListener("pause", () => {
+        reportListenProgress({ force: true });
+      });
+
       dom.audio?.addEventListener("ended", () => {
+        reportListenProgress({ completed: true, force: true });
         clearResumePosition(activeNowPlaying?.playbackKey);
         playNextQueueItem().then((playedNext) => {
           if (!playedNext) {
@@ -652,7 +788,7 @@
     autoplayNext = loadAutoplayPreference();
     playbackQueue = loadPlaybackQueue();
     bindEvents();
-    renderQueue();
+    renderQueueView();
 
     return {
       clearGlobalNowPlaying,
@@ -663,6 +799,8 @@
       removeQueueItem,
       clearQueue,
       setAutoplayEnabled,
+      hasActivePlayback,
+      getActivePlaybackKey,
       onQueueChange(listener) {
         if (typeof listener !== "function") {
           return () => {};

@@ -17,6 +17,8 @@
     const formatCueAlignment = deps.formatCueAlignment;
     const setRteEpisodeChapters = deps.setRteEpisodeChapters;
     const setFipEpisodeChapters = deps.setFipEpisodeChapters;
+    const setSettingsStatus = deps.setSettingsStatus;
+    const WEB_TRACKLIST_SOURCES = new Set(["rte", "bbc", "wwf", "nts", "fip", "kexp"]);
 
     const cuePreviewInflight = new Map();
 
@@ -198,6 +200,60 @@
       return job;
     }
 
+    function queueEpisodeInsteadOfInterrupting(payload = {}, statusUpdater = null) {
+      if (!playbackController?.hasActivePlayback?.()) {
+        return false;
+      }
+      const playbackKey = String(payload.playbackKey || "").trim();
+      if (playbackKey && playbackKey === String(playbackController?.getActivePlaybackKey?.() || "").trim()) {
+        return false;
+      }
+      playbackController.enqueueQueueItem({
+        mode: "episode",
+        sourceType: payload.sourceType,
+        cacheKey: payload.cacheKey,
+        source: payload.sourceLabel,
+        sourceLabel: payload.sourceLabel,
+        title: payload.title,
+        subtitle: payload.subtitle,
+        image: payload.image,
+        episodeUrl: payload.episodeUrl,
+        streamUrl: payload.streamUrl,
+        programTitle: payload.programTitle,
+        durationSeconds: payload.durationSeconds,
+        playbackKey
+      });
+      if (typeof statusUpdater === "function") {
+        statusUpdater(`Added to queue: ${payload.title || "Episode"}`);
+      }
+      setSettingsStatus?.(`Queued ${payload.title || "episode"} because audio is already playing.`);
+      return true;
+    }
+
+    function queueLocalInsteadOfInterrupting(payload = {}) {
+      if (!playbackController?.hasActivePlayback?.()) {
+        return false;
+      }
+      const playbackKey = String(payload.playbackKey || "").trim();
+      if (playbackKey && playbackKey === String(playbackController?.getActivePlaybackKey?.() || "").trim()) {
+        return false;
+      }
+      playbackController.enqueueQueueItem({
+        mode: "local",
+        outputDir: payload.outputDir,
+        fileName: payload.fileName,
+        title: payload.title,
+        source: payload.source,
+        subtitle: payload.subtitle,
+        image: payload.image,
+        episodeUrl: payload.episodeUrl,
+        sourceType: payload.sourceType,
+        programTitle: payload.programTitle
+      });
+      setSettingsStatus?.(`Queued ${payload.title || payload.fileName || "audio"} because audio is already playing.`);
+      return true;
+    }
+
     async function playEpisodeWithBackgroundCue({
       sourceType,
       cacheKey,
@@ -250,6 +306,22 @@
         chapters = chapters.map((chapter) => ({ ...chapter, startSec: (chapter.startSec || 0) + safeStartOffset }));
       }
 
+      if (queueEpisodeInsteadOfInterrupting({
+        sourceType: safeSourceType,
+        cacheKey: safeCacheKey,
+        sourceLabel,
+        title,
+        programTitle,
+        subtitle,
+        image,
+        episodeUrl: safeEpisodeUrl,
+        durationSeconds,
+        streamUrl: resolvedStreamUrl,
+        playbackKey: safePlaybackKey
+      }, statusUpdater)) {
+        return;
+      }
+
       await playbackController.startGlobalNowPlaying({
         source: sourceLabel,
         title,
@@ -260,7 +332,14 @@
         tracks,
         chaptersFromTracks,
         playbackKey: safePlaybackKey,
-        startOffset: safeStartOffset
+        startOffset: safeStartOffset,
+        listenContext: safeOutputDir && safeFileName ? {
+          outputDir: safeOutputDir,
+          fileName: safeFileName,
+          sourceType: safeSourceType,
+          episodeUrl: safeEpisodeUrl,
+          episodeTitle: title || safeFileName
+        } : null
       });
 
       if (!hasResolvedCue) {
@@ -309,7 +388,24 @@
       }
       const safeEpisodeUrl = String(episodeUrl || "").trim();
       const safeSourceType = String(sourceType || "").trim().toLowerCase();
-      if (safeEpisodeUrl && (safeSourceType === "rte" || safeSourceType === "bbc" || safeSourceType === "wwf" || safeSourceType === "nts")) {
+      const localPlaybackKey = `${safeSourceType || "local"}:local:${safeEpisodeUrl || `${safeOutputDir}/${safeFileName}`}`;
+      if (queueLocalInsteadOfInterrupting({
+        outputDir: safeOutputDir,
+        fileName: safeFileName,
+        title: title || safeFileName,
+        source,
+        subtitle,
+        image,
+        episodeUrl: safeEpisodeUrl,
+        sourceType: safeSourceType,
+        programTitle: subtitle,
+        playbackKey: localPlaybackKey
+      })) {
+        return {
+          queued: true
+        };
+      }
+      if (safeEpisodeUrl && WEB_TRACKLIST_SOURCES.has(safeSourceType)) {
         const cacheKey = safeEpisodeUrl;
         await playEpisodeWithBackgroundCue({
           sourceType: safeSourceType,
@@ -336,7 +432,15 @@
         image,
         streamUrl: url,
         chapters: cueChapters,
-        tracks: []
+        tracks: [],
+        playbackKey: localPlaybackKey,
+        listenContext: {
+          outputDir: safeOutputDir,
+          fileName: safeFileName,
+          sourceType: safeSourceType,
+          episodeUrl: safeEpisodeUrl,
+          episodeTitle: title || safeFileName
+        }
       });
     }
 

@@ -58,6 +58,19 @@ function normalizeCollection(input = {}) {
   return {
     id: normalizeText(input.id) || crypto.randomBytes(6).toString("hex"),
     name: normalizeText(input.name) || "Untitled Collection",
+    mode: normalizeText(input.mode).toLowerCase() === "smart" ? "smart" : "manual",
+    autoUpdate: input.autoUpdate == null ? false : Boolean(input.autoUpdate),
+    smartCriteria: input.smartCriteria && typeof input.smartCriteria === "object"
+      ? {
+        query: normalizeText(input.smartCriteria.query),
+        sourceType: normalizeText(input.smartCriteria.sourceType).toLowerCase(),
+        kind: normalizeText(input.smartCriteria.kind).toLowerCase(),
+        host: normalizeText(input.smartCriteria.host),
+        genre: normalizeText(input.smartCriteria.genre),
+        location: normalizeText(input.smartCriteria.location),
+        limit: Math.max(1, Math.min(200, Number(input.smartCriteria.limit || 50) || 50))
+      }
+      : null,
     createdAt: normalizeText(input.createdAt) || now,
     updatedAt: normalizeText(input.updatedAt) || now,
     entries: Array.isArray(input.entries) ? input.entries.map((entry) => normalizeEntry(entry)) : []
@@ -95,8 +108,9 @@ function createCollectionsStore(filePath) {
     return cloneValue(load().collections);
   }
 
-  function create(name) {
-    const text = normalizeText(name);
+  function create(nameOrInput) {
+    const payload = typeof nameOrInput === "string" ? { name: nameOrInput } : (nameOrInput || {});
+    const text = normalizeText(payload.name);
     if (!text) {
       throw new Error("Collection name is required.");
     }
@@ -105,7 +119,10 @@ function createCollectionsStore(filePath) {
     if (duplicate) {
       return cloneValue(duplicate);
     }
-    const collection = normalizeCollection({ name: text });
+    const collection = normalizeCollection({
+      ...payload,
+      name: text
+    });
     current.collections.unshift(collection);
     save();
     return cloneValue(collection);
@@ -209,13 +226,80 @@ function createCollectionsStore(filePath) {
     return true;
   }
 
+  function update(collectionId, patch = {}) {
+    const current = load();
+    const collection = current.collections.find((item) => item.id === String(collectionId || ""));
+    if (!collection) {
+      throw new Error("Collection not found.");
+    }
+    const next = normalizeCollection({
+      ...collection,
+      ...(patch && typeof patch === "object" ? patch : {}),
+      id: collection.id,
+      createdAt: collection.createdAt,
+      entries: patch.entries == null ? collection.entries : patch.entries
+    });
+    Object.assign(collection, next, {
+      updatedAt: new Date().toISOString()
+    });
+    save();
+    return cloneValue(collection);
+  }
+
+  function replaceEntries(collectionId, entriesInput = []) {
+    const current = load();
+    const collection = current.collections.find((item) => item.id === String(collectionId || ""));
+    if (!collection) {
+      throw new Error("Collection not found.");
+    }
+    collection.entries = Array.isArray(entriesInput) ? entriesInput.map((entry) => normalizeEntry(entry)) : [];
+    collection.updatedAt = new Date().toISOString();
+    save();
+    return cloneValue(collection);
+  }
+
+  function patchEntries(patcher) {
+    if (typeof patcher !== "function") {
+      return 0;
+    }
+    const current = load();
+    let updatedCount = 0;
+    for (const collection of current.collections) {
+      let touched = false;
+      collection.entries = collection.entries.map((entry) => {
+        const next = patcher(cloneValue(entry), cloneValue(collection));
+        if (!next || typeof next !== "object") {
+          return entry;
+        }
+        touched = true;
+        updatedCount += 1;
+        return normalizeEntry({
+          ...entry,
+          ...next,
+          id: entry.id,
+          createdAt: entry.createdAt
+        });
+      });
+      if (touched) {
+        collection.updatedAt = new Date().toISOString();
+      }
+    }
+    if (updatedCount > 0) {
+      save();
+    }
+    return updatedCount;
+  }
+
   return {
     list,
     create,
     remove,
     addEntry,
     addEntries,
-    removeEntry
+    removeEntry,
+    update,
+    replaceEntries,
+    patchEntries
   };
 }
 

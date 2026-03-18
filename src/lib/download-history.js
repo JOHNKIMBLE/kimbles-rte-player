@@ -53,7 +53,30 @@ function createDownloadHistory(historyFilePath, maxEntries = 500) {
 
   function clear() { cache = []; save(); }
 
-  return { append, list, update, clear };
+  function patchAll(predicate, patcher) {
+    load();
+    let updatedCount = 0;
+    cache = cache.map((entry) => {
+      if (typeof predicate === "function" && !predicate(entry)) {
+        return entry;
+      }
+      const nextPatch = typeof patcher === "function" ? patcher(entry) : patcher;
+      if (!nextPatch || typeof nextPatch !== "object") {
+        return entry;
+      }
+      updatedCount += 1;
+      return {
+        ...entry,
+        ...nextPatch
+      };
+    });
+    if (updatedCount > 0) {
+      save();
+    }
+    return updatedCount;
+  }
+
+  return { append, list, update, clear, patchAll };
 }
 
 module.exports = { createDownloadHistory };

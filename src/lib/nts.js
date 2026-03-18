@@ -3,6 +3,7 @@
  * Show: /shows/{show-slug}, Episode: /shows/{show-slug}/episodes/{episode-slug}
  * Episodes have tracklists with timestamps for cue/chapters.
  */
+/* eslint-disable no-irregular-whitespace */
 
 const BASE_URL = "https://www.nts.live";
 const NTS_API_BASE = `${BASE_URL}/api/v2`;
@@ -166,7 +167,64 @@ function extractNtsHosts(obj) {
   return uniqueCleanList(hosts).slice(0, 6);
 }
 
+function extractNamesFromArtistLinks(fragment) {
+  const names = [];
+  const linkPattern = /<a[^>]+href=["']\/artists\/[^"']+["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+  while ((match = linkPattern.exec(String(fragment || ""))) !== null) {
+    const name = cleanText(stripHtml(match[1] || ""));
+    if (name) {
+      names.push(name);
+    }
+  }
+  return uniqueCleanList(names).slice(0, 6);
+}
+
+function extractNtsHostsFromHtml(html) {
+  const raw = String(html || "");
+  if (!raw) {
+    return [];
+  }
+
+  const headingMatch = raw.match(/<h[12][^>]*>\s*With(?:&nbsp;|&#160;|\s| )+([\s\S]*?)<\/h[12]>/i);
+  const fromHeading = extractNamesFromArtistLinks(headingMatch?.[1] || "");
+  if (fromHeading.length) {
+    return fromHeading;
+  }
+
+  const topSection = raw.split(/<h[1-6][^>]*>\s*Tracklist\s*<\/h[1-6]>/i)[0] || raw.slice(0, 8000);
+  return extractNamesFromArtistLinks(topSection);
+}
+
+function _normalizeNtsDisplayTextFallback(input) {
+  return String(input || "")
+    .replace(/â€¢/g, "|")
+    .replace(/â€“/g, "-")
+    .replace(/â€”/g, "-")
+    .replace(/â†’/g, "to")
+    .replace(/Â·/g, "·")
+    .trim();
+}
+
 /** GET /api/v2/shows?offset=&limit= — paginated list of shows. */
+function _normalizeNtsDisplayTextLegacy(input) {
+  return String(input || "")
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00c2\u00a2/g, "|")
+    .replace(/\u00e2\u20ac\u00a2/g, "|")
+    .replace(/\u2022/g, "|")
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u0153/g, "-")
+    .replace(/\u00e2\u20ac\u201c/g, "-")
+    .replace(/\u2013/g, "-")
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac/g, "-")
+    .replace(/\u00e2\u20ac\u201d/g, "-")
+    .replace(/\u2014/g, "-")
+    .replace(/\u00c3\u00a2\u00e2\u20ac\u00a0\u00e2\u20ac\u2122/g, "to")
+    .replace(/\u00e2\u2020\u2019/g, "to")
+    .replace(/\u00c3\u201a\u00c2\u00b7/g, "·")
+    .replace(/\u00c2\u00b7/g, "·")
+    .trim();
+}
+
 async function fetchNtsShowsFromApi(offset = 0, limit = 50) {
   const url = `${NTS_API_BASE}/shows?offset=${Number(offset)}&limit=${Number(limit)}`;
   const data = await fetchJson(url);
@@ -287,7 +345,7 @@ function parseNtsTimeslot(timeslot) {
  * Build scheduler-compatible runSchedule from NTS show data + episode broadcasts.
  * Returns { runSchedule, cadence, nextBroadcastAt }.
  */
-function buildNtsScheduleInfo(apiShow, episodes) {
+function buildSanitizedNtsScheduleInfo(apiShow, episodes) {
   const parsed = parseNtsTimeslot(apiShow?.timeslot);
   if (!parsed) return { runSchedule: "", cadence: "irregular", nextBroadcastAt: "" };
 
@@ -358,6 +416,85 @@ function buildNtsScheduleInfo(apiShow, episodes) {
   return { runSchedule, cadence, nextBroadcastAt };
 }
 
+function _buildNtsScheduleInfoLegacy(apiShow, episodes) {
+  const parsed = parseNtsTimeslot(apiShow?.timeslot);
+  if (!parsed) return { runSchedule: "", cadence: "irregular", nextBroadcastAt: "" };
+
+  let startHour = parsed.startHour;
+  let endHour = parsed.endHour;
+  if (startHour == null && Array.isArray(episodes) && episodes.length) {
+    for (const ep of episodes) {
+      const broadcast = ep?.broadcast || "";
+      if (!broadcast) {
+        continue;
+      }
+      const d = new Date(broadcast);
+      if (Number.isNaN(d.getTime())) {
+        continue;
+      }
+      startHour = d.getUTCHours();
+      endHour = endHour != null ? endHour : (startHour + 2) % 24;
+      break;
+    }
+  }
+
+  let dayPart = "";
+  if (parsed.days.length >= 2) {
+    dayPart = `${parsed.days[0]}-${parsed.days[parsed.days.length - 1]}`;
+  } else if (parsed.days.length === 1) {
+    dayPart = parsed.days[0];
+  }
+
+  let runSchedule = "";
+  if (dayPart && startHour != null && endHour != null) {
+    const fmt = (h) => String(h).padStart(2, "0") + ":00";
+    runSchedule = `${dayPart} | ${fmt(startHour)} - ${fmt(endHour)}`;
+  }
+
+  let cadence = "irregular";
+  if (parsed.frequency === "daily") cadence = "daily";
+  else if (parsed.frequency === "weekly") cadence = "weekly";
+  else if (parsed.frequency === "fortnightly" || parsed.frequency === "bimonthly") cadence = "weekly";
+
+  let nextBroadcastAt = "";
+  if (Array.isArray(episodes) && episodes.length && parsed.days.length && startHour != null) {
+    const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const dayIndices = parsed.days.map((d) => DAY_NAMES.indexOf(d)).filter((i) => i >= 0);
+    if (dayIndices.length) {
+      const now = new Date();
+      for (let offset = 0; offset <= 7; offset += 1) {
+        const candidate = new Date(now);
+        candidate.setUTCDate(candidate.getUTCDate() + offset);
+        candidate.setUTCHours(startHour, 0, 0, 0);
+        if (dayIndices.includes(candidate.getUTCDay()) && candidate > now) {
+          nextBroadcastAt = candidate.toISOString();
+          break;
+        }
+      }
+    }
+  }
+
+  return { runSchedule, cadence, nextBroadcastAt };
+}
+
+function sanitizeNtsDisplayText(input) {
+  return String(input || "")
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00c2\u00a2/g, "|")
+    .replace(/\u00e2\u20ac\u00a2/g, "|")
+    .replace(/\u2022/g, "|")
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u0153/g, "-")
+    .replace(/\u00e2\u20ac\u201c/g, "-")
+    .replace(/\u2013/g, "-")
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac/g, "-")
+    .replace(/\u00e2\u20ac\u201d/g, "-")
+    .replace(/\u2014/g, "-")
+    .replace(/\u00c3\u00a2\u00e2\u20ac\u00a0\u00e2\u20ac\u2122/g, "to")
+    .replace(/\u00e2\u2020\u2019/g, "to")
+    .replace(/\u00c3\u201a\u00c2\u00b7/g, "|")
+    .replace(/\u00c2\u00b7/g, "|")
+    .trim();
+}
+
 /** Map API show object to program summary shape. */
 function mapApiShowToSummary(apiShow, episodes) {
   const showAlias = apiShow?.show_alias || "";
@@ -372,10 +509,10 @@ function mapApiShowToSummary(apiShow, episodes) {
     || (Array.isArray(episodes) && episodes.length ? cleanText(episodes[0]?.location_short || episodes[0]?.location_long || "") : "");
 
   // Build scheduler-friendly schedule info
-  const schedInfo = buildNtsScheduleInfo(apiShow, episodes);
+  const schedInfo = buildSanitizedNtsScheduleInfo(apiShow, episodes);
   // Keep original timeslot + frequency as display fallback
   const displayParts = [apiShow?.timeslot, apiShow?.frequency].filter(Boolean);
-  const displaySchedule = displayParts.join(" ").trim();
+  const displaySchedule = sanitizeNtsDisplayText(displayParts.join(" ").trim());
 
   return {
     source: "nts",
@@ -383,7 +520,7 @@ function mapApiShowToSummary(apiShow, episodes) {
     title,
     description,
     image,
-    runSchedule: schedInfo.runSchedule || displaySchedule || "",
+    runSchedule: sanitizeNtsDisplayText(schedInfo.runSchedule || displaySchedule || ""),
     nextBroadcastAt: schedInfo.nextBroadcastAt || "",
     nextBroadcastTitle: "",
     cadence: schedInfo.cadence || "irregular",
@@ -627,12 +764,14 @@ async function getNtsEpisodeInfo(episodeUrl) {
   const image = cleanText(imgMatch?.[1] || "");
   const slug = (url.match(/\/episodes\/([^/?#]+)/) || [])[1] || "";
   const tracklist = parseTracklistFromEpisodeHtml(html);
+  const hosts = extractNtsHostsFromHtml(html);
   return {
     episodeUrl: url,
     title: title || slug,
     description,
     image,
     clipId: slug || url,
+    hosts: hosts.length ? hosts : undefined,
     tracklist
   };
 }
@@ -653,6 +792,15 @@ async function getNtsProgramSummary(showUrl) {
       ]);
       if (apiShow && (apiShow.show_alias || apiShow.name)) {
         const summary = mapApiShowToSummary(apiShow, episodesData.results);
+        if (!Array.isArray(summary.hosts) || !summary.hosts.length) {
+          try {
+            const html = await fetchText(url);
+            const fallbackHosts = extractNtsHostsFromHtml(html);
+            if (fallbackHosts.length) {
+              summary.hosts = fallbackHosts;
+            }
+          } catch {}
+        }
         showCache.set(url, summary);
         return summary;
       }
@@ -666,12 +814,14 @@ async function getNtsProgramSummary(showUrl) {
   const description = cleanText(descMatch?.[1] || "");
   const imgMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
   const image = cleanText(imgMatch?.[1] || "");
+  const hosts = extractNtsHostsFromHtml(html);
   const summary = {
     source: "nts",
     programUrl: url,
     title,
     description,
     image,
+    hosts: hosts.length ? hosts : undefined,
     runSchedule: "",
     nextBroadcastAt: "",
     nextBroadcastTitle: ""
@@ -698,7 +848,13 @@ async function getNtsProgramEpisodes(showUrl, page = 1) {
         const summary = mapApiShowToSummary(showData, episodesData.results);
         const totalCount = episodesData.totalCount || 0;
         const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
-        const pageEpisodes = (episodesData.results || []).map((ep) => mapApiEpisodeToExplorer(ep, showAlias));
+        const pageEpisodes = (episodesData.results || []).map((ep) => {
+          const mapped = mapApiEpisodeToExplorer(ep, showAlias);
+          if ((!Array.isArray(mapped.hosts) || !mapped.hosts.length) && Array.isArray(summary.hosts) && summary.hosts.length) {
+            mapped.hosts = summary.hosts.slice();
+          }
+          return mapped;
+        });
         return {
           source: "nts",
           programUrl: url,
@@ -714,7 +870,8 @@ async function getNtsProgramEpisodes(showUrl, page = 1) {
           runSchedule: summary.runSchedule || "",
           nextBroadcastAt: summary.nextBroadcastAt || "",
           nextBroadcastTitle: summary.nextBroadcastTitle || "",
-          genres: summary.genres || undefined
+          genres: summary.genres || undefined,
+          hosts: summary.hosts || undefined
         };
       }
     } catch (_) {}
@@ -739,7 +896,8 @@ async function getNtsProgramEpisodes(showUrl, page = 1) {
     averageDaysBetween: null,
     runSchedule: summary.runSchedule || "",
     nextBroadcastAt: summary.nextBroadcastAt || "",
-    nextBroadcastTitle: summary.nextBroadcastTitle || ""
+    nextBroadcastTitle: summary.nextBroadcastTitle || "",
+    hosts: summary.hosts || undefined
   };
 }
 
@@ -1307,7 +1465,7 @@ async function getNtsLiveNow(channelId) {
       description: description || "",
       image: image || "",
       location: location || "",
-      timeSlot: timeSlot || "",
+      timeSlot: sanitizeNtsDisplayText(timeSlot || ""),
       startTimestamp: startTimestamp || undefined,
       endTimestamp: endTimestamp || undefined
     };
@@ -1447,5 +1605,7 @@ module.exports = {
   parseDateNts,
   generateSlugGuesses,
   parseNtsTimeslot,
+  extractNtsHostsFromHtml,
+  normalizeNtsDisplayText: sanitizeNtsDisplayText,
   configure
 };

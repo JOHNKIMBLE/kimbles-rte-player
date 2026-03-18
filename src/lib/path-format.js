@@ -123,22 +123,32 @@ function buildDownloadTarget({
   episodeTitle,
   publishedTime,
   clipId,
-  episodeUrl
+  episodeUrl,
+  hosts = []
 }) {
   const radio = sourceType === "bbc" ? "BBC" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : sourceType === "fip" ? "FIP" : sourceType === "kexp" ? "KEXP" : "RTE";
   const releaseDate = extractReleaseDate(publishedTime) || extractReleaseDate(episodeTitle);
   const [year = "", month = "", day = ""] = String(releaseDate).split("-");
   const sourceId = pickSourceId({ clipId, episodeUrl });
+  const safeHosts = (Array.isArray(hosts) ? hosts : [])
+    .map((host) => sanitizePathSegment(host))
+    .filter(Boolean);
+  const firstHost = safeHosts[0] || "";
   const program = sanitizePathSegment(programTitle) || "misc";
   const episode = sanitizePathSegment(episodeTitle) || "episode";
   const episodeShort = sanitizePathSegment(toEpisodeShort(episodeTitle)) || "episode";
   const tokens = {
     radio,
+    source_type: sanitizePathSegment(String(sourceType || "").toLowerCase()),
     program,
     program_slug: slugify(program) || "misc",
     episode,
     episode_slug: slugify(episode) || "episode",
     episode_short: episodeShort,
+    host: firstHost,
+    host_slug: slugify(firstHost),
+    hosts: safeHosts.join(", "),
+    hosts_slug: slugify(safeHosts.join("-")),
     release_date: sanitizePathSegment(releaseDate || "")
     ,year: sanitizePathSegment(year)
     ,month: sanitizePathSegment(month)

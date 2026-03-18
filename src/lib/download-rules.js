@@ -9,6 +9,83 @@ function normalizeKey(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function normalizeProgramRule(input = {}) {
+  return {
+    id: normalizeText(input.id),
+    sourceType: normalizeKey(input.sourceType),
+    programTitle: normalizeText(input.programTitle),
+    programUrl: normalizeText(input.programUrl),
+    outputDir: normalizeText(input.outputDir),
+    pathFormat: normalizeText(input.pathFormat),
+    downloadKeepLatest: Math.max(0, Number(input.downloadKeepLatest || 0) || 0),
+    downloadDeleteOlderDays: Math.max(0, Number(input.downloadDeleteOlderDays || 0) || 0),
+    skipReruns: Boolean(input.skipReruns),
+    enabled: input.enabled == null ? true : Boolean(input.enabled)
+  };
+}
+
+function normalizeProgramRules(input) {
+  const rows = Array.isArray(input) ? input : [];
+  return rows
+    .map((row) => normalizeProgramRule(row))
+    .filter((row) => row.enabled)
+    .filter((row) => row.sourceType || row.programTitle || row.programUrl);
+}
+
+function matchProgramRule(rule, context = {}) {
+  if (!rule?.enabled) {
+    return false;
+  }
+  const sourceType = normalizeKey(context.sourceType);
+  const programTitle = normalizeKey(context.programTitle);
+  const programUrl = normalizeText(context.programUrl);
+  if (rule.sourceType && sourceType && rule.sourceType !== sourceType) {
+    return false;
+  }
+  if (rule.programUrl) {
+    const target = normalizeText(rule.programUrl);
+    if (!programUrl || programUrl !== target) {
+      return false;
+    }
+  }
+  if (rule.programTitle) {
+    const target = normalizeKey(rule.programTitle);
+    if (!programTitle || programTitle !== target) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resolveProgramRule(settings = {}, context = {}) {
+  const rules = normalizeProgramRules(settings?.perProgramRules);
+  const exactUrl = rules.find((rule) => rule.programUrl && matchProgramRule(rule, context));
+  if (exactUrl) {
+    return exactUrl;
+  }
+  return rules.find((rule) => !rule.programUrl && matchProgramRule(rule, context)) || null;
+}
+
+function mergeRuleSettings(settings = {}, rule = null) {
+  if (!rule) {
+    return {
+      ...settings,
+      perProgramRules: normalizeProgramRules(settings?.perProgramRules)
+    };
+  }
+  return {
+    ...settings,
+    perProgramRules: normalizeProgramRules(settings?.perProgramRules),
+    downloadKeepLatest: Number(rule.downloadKeepLatest || 0) > 0 ? Number(rule.downloadKeepLatest || 0) : Number(settings?.downloadKeepLatest || 0) || 0,
+    downloadDeleteOlderDays: Number(rule.downloadDeleteOlderDays || 0) > 0
+      ? Number(rule.downloadDeleteOlderDays || 0)
+      : Number(settings?.downloadDeleteOlderDays || 0) || 0,
+    skipReruns: rule.skipReruns == null ? Boolean(settings?.skipReruns) : Boolean(rule.skipReruns),
+    downloadDir: normalizeText(rule.outputDir) || normalizeText(settings?.downloadDir),
+    pathFormat: normalizeText(rule.pathFormat) || normalizeText(settings?.pathFormat)
+  };
+}
+
 function buildEpisodeRuleText(entry = {}) {
   return [
     entry?.title,
@@ -135,5 +212,9 @@ function enforceDownloadRules({
 
 module.exports = {
   enforceDownloadRules,
-  isLikelyRerun
+  isLikelyRerun,
+  normalizeProgramRule,
+  normalizeProgramRules,
+  resolveProgramRule,
+  mergeRuleSettings
 };
