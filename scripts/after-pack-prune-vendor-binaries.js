@@ -22,15 +22,15 @@ function prunePlatformBins(binRoot, platformPrefix) {
   }
 }
 
-module.exports = async function afterPack(context) {
-  const platform = context.electronPlatformName;
-  const platformPrefix = platform === "win32"
+function getPlatformPrefix(platform) {
+  return platform === "win32"
     ? "win32-"
     : platform === "darwin"
       ? "darwin-"
       : "linux-";
+}
 
-  const unpackedVendorRoot = path.join(context.appOutDir, "resources", "app.asar.unpacked", "vendor");
+function pruneVendorPlatformBins(unpackedVendorRoot, platformPrefix) {
   const ytBinRoot = path.join(unpackedVendorRoot, "yt-dlp", "bin");
   const ffmpegBinRoot = path.join(unpackedVendorRoot, "ffmpeg", "bin");
   const songrecBinRoot = path.join(unpackedVendorRoot, "songrec", "bin");
@@ -42,4 +42,16 @@ module.exports = async function afterPack(context) {
   prunePlatformBins(songrecBinRoot, platformPrefix);
   prunePlatformBins(chromaprintBinRoot, platformPrefix);
   prunePlatformBins(atomicParsleyBinRoot, platformPrefix);
-};
+}
+
+async function afterPack(context) {
+  const platformPrefix = getPlatformPrefix(context.electronPlatformName);
+
+  const unpackedVendorRoot = path.join(context.appOutDir, "resources", "app.asar.unpacked", "vendor");
+  pruneVendorPlatformBins(unpackedVendorRoot, platformPrefix);
+}
+
+module.exports = afterPack;
+module.exports.getPlatformPrefix = getPlatformPrefix;
+module.exports.prunePlatformBins = prunePlatformBins;
+module.exports.pruneVendorPlatformBins = pruneVendorPlatformBins;

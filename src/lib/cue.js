@@ -1983,6 +1983,7 @@ async function buildCueForInput({
   ffmpegCueLoudnessDetect = true,
   ffmpegCueSpectralDetect = true,
   fileStartOffset = 0,
+  prefetchedTracks = [],
   onProgress = null,
   getRteTracks,
   getBbcTracks,
@@ -1994,7 +1995,7 @@ async function buildCueForInput({
   const localAudioPath = resolvedInput.localAudioPath;
 
   let source = "none";
-  let tracks = [];
+  let tracks = Array.isArray(prefetchedTracks) ? prefetchedTracks.filter((track) => track && cleanText(track.title || track.artist || "")) : [];
   let acoustid = null;
   let auddWindowTracks = [];
   let auddWindowSamplesUsed = 0;
@@ -2059,6 +2060,10 @@ async function buildCueForInput({
         source = "external-tracklist";
       }
     } catch {}
+  }
+
+  if (tracks.length) {
+    source = "prefetched-tracklist";
   }
 
   if (!tracks.length && sourceType === "rte" && typeof getRteTracks === "function" && episodeUrl) {
@@ -2487,5 +2492,7 @@ async function generateCuePreview(options = {}) {
 
 module.exports = {
   generateCueForAudio,
-  generateCuePreview
+  generateCuePreview,
+  resolveFpcalcBinary,
+  resolveSongrecBinary
 };

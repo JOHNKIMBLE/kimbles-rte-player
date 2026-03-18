@@ -16,13 +16,14 @@ const programCache = {
   fetchedAt: 0,
   programs: []
 };
+const STATION_NAME_BY_SLUG = new Map(LIVE_STATIONS.map((station) => [station.slug, station.name]));
 const programSummaryCache = new Map();
 let _diskCache = null;
 function configure({ diskCache } = {}) {
   _diskCache = diskCache || null;
 }
 
-const { cleanText, inferCadence } = require("./utils");
+const { cleanText, stripHtml, inferCadence } = require("./utils");
 
 function cleanTitle(title) {
   return cleanText(title).replace(/\s+-\s+[^-]+$/, "").trim();
@@ -40,6 +41,288 @@ function findFirstMatch(html, patterns) {
     }
   }
   return null;
+}
+
+function uniqueCleanList(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = cleanText(value || "");
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function isLikelyRteHostName(value, programTitle = "") {
+  const text = cleanText(stripHtml(value || ""));
+  if (!text || text.length < 2 || text.length > 80) {
+    return false;
+  }
+  if (!/[A-Za-zÀ-ÿ]/.test(text)) {
+    return false;
+  }
+  if (text.split(/\s+/g).length > 8) {
+    return false;
+  }
+  if (/parent page|breadcrumb|cookie|privacy|javascript|share this|listen back|read more|skip to/i.test(text)) {
+    return false;
+  }
+  if (/\bif\s*\(location\b/i.test(text) || /\blocation\b/i.test(text) && /\bhost\b/i.test(text)) {
+    return false;
+  }
+  if (/^(rte|rté)\b/i.test(text)) {
+    return false;
+  }
+  if (programTitle && cleanText(programTitle).toLowerCase() === text.toLowerCase()) {
+    return false;
+  }
+  return true;
+}
+
+function inferRteHostsFromProgramTitle(title = "") {
+  const text = cleanText(title || "");
+  if (!text) {
+    return [];
+  }
+  const match = text.match(/(?:with|w\/|hosted by|presented by)\s+(.+)$/i);
+  if (!match?.[1]) {
+    return [];
+  }
+  return uniqueCleanList(
+    match[1]
+      .split(/\s*(?:,|&| and )\s*/gi)
+      .map((value) => cleanText(value))
+      .filter((value) => isLikelyRteHostName(value, text))
+  ).slice(0, 6);
+}
+
+function collectRtePeople(value, bucket) {
+  if (!value) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectRtePeople(entry, bucket));
+    return;
+  }
+  if (typeof value === "string") {
+    const text = cleanText(value);
+    if (text) {
+      bucket.push(text);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    const directName = cleanText(
+      value.name
+      || value.alternateName
+      || value.title
+      || value.label
+      || [value.givenName, value.familyName].filter(Boolean).join(" ")
+    );
+    if (directName) {
+      bucket.push(directName);
+      return;
+    }
+    for (const key of ["author", "creator", "contributor", "host", "presenter"]) {
+      if (value[key]) {
+        collectRtePeople(value[key], bucket);
+      }
+    }
+  }
+}
+
+function extractRteHostsFromHtml(html, programTitle = "") {
+  const hosts = [];
+  for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const data = JSON.parse(match[1]);
+      const items = Array.isArray(data) ? data : [data];
+      for (const item of items) {
+        collectRtePeople(item?.author, hosts);
+        collectRtePeople(item?.creator, hosts);
+        collectRtePeople(item?.contributor, hosts);
+        collectRtePeople(item?.host, hosts);
+      }
+    } catch {}
+  }
+
+  const metaHosts = [
+    findFirstMatch(html, [/<meta\s+name=["']author["']\s+content=["']([^"']+)["']/i]),
+    findFirstMatch(html, [/<meta\s+name=["']DC\.creator["']\s+content=["']([^"']+)["']/i])
+  ].filter(Boolean);
+  hosts.push(...metaHosts);
+
+  if (!hosts.length) {
+    const labelMatch = html.match(/(?:Presented by|presented by|with)\s*<\/[^>]+>\s*<[^>]+>([^<]+)<\/[^>]+>/i)
+      || html.match(/(?:Presented by|presented by|with)\s+([^<.,|]{2,80})/i);
+    if (labelMatch?.[1]) {
+      hosts.push(cleanText(labelMatch[1]));
+    }
+  }
+
+  const filtered = uniqueCleanList(hosts)
+    .filter((host) => isLikelyRteHostName(host, programTitle))
+    .slice(0, 6);
+  if (filtered.length) {
+    return filtered;
+  }
+  return inferRteHostsFromProgramTitle(programTitle);
+}
+
+function scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight) {
+  const text = cleanText(value || "").toLowerCase();
+  if (!text || !query) {
+    return 0;
+  }
+  if (text === query) {
+    return exactWeight;
+  }
+  if (text.startsWith(query)) {
+    return prefixWeight;
+  }
+  if (text.includes(query)) {
+    return includesWeight;
+  }
+  return 0;
+}
+
+function scoreListMatch(values, query, exactWeight, prefixWeight, includesWeight) {
+  let best = 0;
+  for (const value of values || []) {
+    best = Math.max(best, scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight));
+  }
+  return best;
+}
+
+function buildProgramSearchText(item) {
+  return [
+    item.title,
+    item.stationName,
+    item.stationSlug,
+    item.description,
+    item.location,
+    item.runSchedule,
+    item.programUrl,
+    ...(item.hosts || []),
+    ...(item.genres || [])
+  ]
+    .map((value) => cleanText(value || "").toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function scoreRteProgramResult(item, query) {
+  if (!query) {
+    return 0;
+  }
+
+  let score = 0;
+  score += scoreTextMatch(item.title, query, 240, 185, 135);
+  score += scoreTextMatch(item.stationName, query, 130, 95, 70);
+  score += scoreTextMatch(item.stationSlug, query, 100, 80, 55);
+  score += scoreTextMatch(item.location, query, 180, 145, 115);
+  score += scoreTextMatch(item.description, query, 90, 0, 55);
+  score += scoreTextMatch(item.programUrl, query, 30, 20, 15);
+  score += scoreTextMatch(item.runSchedule, query, 25, 15, 10);
+  score += scoreListMatch(item.hosts, query, 230, 190, 150);
+  score += scoreListMatch(item.genres, query, 170, 140, 115);
+
+  const tokens = query.split(/\s+/g).filter(Boolean);
+  if (tokens.length > 1) {
+    const searchText = buildProgramSearchText(item);
+    if (tokens.every((token) => searchText.includes(token))) {
+      score += 70;
+    }
+  }
+
+  return score;
+}
+
+function getMetadataRichnessScore(item) {
+  return [
+    item.image ? 1 : 0,
+    item.description ? 2 : 0,
+    Array.isArray(item.hosts) ? Math.min(item.hosts.length, 3) * 2 : 0,
+    Array.isArray(item.genres) ? Math.min(item.genres.length, 3) : 0,
+    item.location ? 2 : 0,
+    item.runSchedule ? 1 : 0
+  ].reduce((sum, value) => sum + value, 0);
+}
+
+function scoreDiscoveryNovelty(item, selected) {
+  const seenHosts = new Set();
+  const seenGenres = new Set();
+  const seenStations = new Set();
+  const seenLocations = new Set();
+
+  for (const entry of selected || []) {
+    for (const host of entry.hosts || []) {
+      seenHosts.add(cleanText(host || "").toLowerCase());
+    }
+    for (const genre of entry.genres || []) {
+      seenGenres.add(cleanText(genre || "").toLowerCase());
+    }
+    seenStations.add(cleanText(entry.stationSlug || entry.stationName || "").toLowerCase());
+    seenLocations.add(cleanText(entry.location || "").toLowerCase());
+  }
+
+  let score = 0;
+  const stationKey = cleanText(item.stationSlug || item.stationName || "").toLowerCase();
+  const locationKey = cleanText(item.location || "").toLowerCase();
+  if (stationKey && !seenStations.has(stationKey)) {
+    score += 3;
+  }
+  if (locationKey && !seenLocations.has(locationKey)) {
+    score += 3;
+  }
+  for (const host of item.hosts || []) {
+    const key = cleanText(host || "").toLowerCase();
+    if (key && !seenHosts.has(key)) {
+      score += 5;
+    }
+  }
+  for (const genre of item.genres || []) {
+    const key = cleanText(genre || "").toLowerCase();
+    if (key && !seenGenres.has(key)) {
+      score += 3;
+    }
+  }
+  return score;
+}
+
+function pickDiscoveryResults(items, count) {
+  const remaining = (items || [])
+    .map((item) => ({
+      item,
+      richness: getMetadataRichnessScore(item) + Math.random()
+    }))
+    .sort((a, b) => b.richness - a.richness)
+    .map((entry) => entry.item);
+
+  const selected = [];
+  while (remaining.length && selected.length < count) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const item = remaining[index];
+      const score = getMetadataRichnessScore(item) + scoreDiscoveryNovelty(item, selected) + Math.random();
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return selected;
 }
 
 function normalizeProgramUrl(inputUrl) {
@@ -178,11 +461,13 @@ function mapEpisodeItem(item) {
   const episodeUrl = item.url ? toAbsoluteRteUrl(item.url) : null;
   const image = item?.image || item?.thumbnail || item?.thumb || "";
   const fullTitle = cleanText(item.title || item.show_title || "Untitled");
+  const description = cleanText(item.description || item.summary || item.standfirst || item.synopsis || item.subtitle || "");
 
   return {
     title: cleanTitle(item.title || item.show_title || "Untitled"),
     fullTitle,
     subtitle: cleanText(item.subtitle || ""),
+    description,
     publishedTime: item.published_time || item.broadcast_date || "",
     publishedTimeFormatted: cleanText(item.published_time_formatted || ""),
     durationString: cleanText(item.duration_string || ""),
@@ -202,6 +487,15 @@ async function getProgramEpisodes(programUrl, page = 1) {
     : [];
 
   const cadenceInfo = inferCadence(episodes);
+  const summary = await getProgramSummary(normalizedProgramUrl);
+  const enrichedEpisodes = episodes.map((episode) => ({
+    ...episode,
+    description: episode.description || summary.description || "",
+    image: episode.image || summary.image || "",
+    hosts: summary.hosts || [],
+    genres: summary.genres || [],
+    location: summary.location || ""
+  }));
 
   return {
     programUrl: normalizedProgramUrl,
@@ -209,9 +503,15 @@ async function getProgramEpisodes(programUrl, page = 1) {
     page: Number(payload?.page || page),
     totalItems: Number(payload?.total_items || episodes.length),
     numPages: Number(payload?.num_pages || 1),
-    episodes,
+    title: summary.title,
+    description: summary.description,
+    image: summary.image || episodes.find((episode) => episode.image)?.image || "",
+    hosts: summary.hosts || [],
+    genres: summary.genres || [],
+    episodes: enrichedEpisodes,
     cadence: cadenceInfo.cadence,
-    averageDaysBetween: cadenceInfo.averageDaysBetween
+    averageDaysBetween: cadenceInfo.averageDaysBetween,
+    runSchedule: summary.runSchedule || ""
   };
 }
 
@@ -268,9 +568,11 @@ async function getProgramSummary(programUrl) {
     findFirstMatch(html, [
       /<span[^>]+id=["']datetimePlayer["'][^>]*>([^<]+)<\/span>/i
     ]) || "";
+  const hosts = extractRteHostsFromHtml(html, cleanTitle(title));
 
   // Extract genres from JSON-LD, Dublin Core subject, or keywords meta
   let genres = [];
+  let location = "";
   for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
       const data = JSON.parse(m[1]);
@@ -279,6 +581,17 @@ async function getProgramSummary(programUrl) {
         if (item.genre) {
           const g = Array.isArray(item.genre) ? item.genre : [item.genre];
           genres.push(...g.map((x) => cleanText(String(x))).filter(Boolean));
+        }
+        if (!location) {
+          location = cleanText(
+            item.contentLocation?.name
+            || item.locationCreated?.name
+            || item.spatialCoverage?.name
+            || item.areaServed?.name
+            || item.location?.name
+            || item.location
+            || ""
+          );
         }
       }
     } catch {}
@@ -298,12 +611,20 @@ async function getProgramSummary(programUrl) {
       genres = kwMatch[1].split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
     }
   }
+  if (!location) {
+    location = findFirstMatch(html, [
+      /<meta\s+name=["']DC\.coverage["']\s+content=["']([^"']+)["']/i,
+      /<meta\s+name=["']dc\.coverage["']\s+content=["']([^"']+)["']/i
+    ]) || "";
+  }
 
   const summary = {
     programUrl: normalizedProgramUrl,
     title: cleanTitle(title),
     description: cleanText(description),
     image: image ? toAbsoluteRteUrl(image) : "",
+    hosts,
+    location,
     runSchedule: dublinScheduleToUtc(cleanText(runSchedule)),
     genres: [...new Set(genres)].slice(0, 6)
   };
@@ -382,6 +703,7 @@ function parseProgramsFromStationHtml(html, stationSlug) {
 
     programs.push({
       stationSlug,
+      stationName: STATION_NAME_BY_SLUG.get(stationSlug) || stationSlug,
       title,
       programUrl: toAbsoluteRteUrl(href)
     });
@@ -418,13 +740,12 @@ async function searchPrograms(query) {
     ? await buildProgramCache()
     : programCache.programs;
 
-  const matched = (q
-    ? programs.filter((item) => item.title.toLowerCase().includes(q) || item.programUrl.toLowerCase().includes(q))
-    : programs.slice().sort((a, b) => a.title.localeCompare(b.title))
-  ).slice(0, q ? 25 : 40);
+  const baseItems = q
+    ? programs
+    : programs.slice().sort((a, b) => a.title.localeCompare(b.title));
 
   const enriched = await Promise.all(
-    matched.map(async (item) => {
+    baseItems.map(async (item) => {
       try {
         const summary = await getProgramSummary(item.programUrl);
         return {
@@ -433,7 +754,9 @@ async function searchPrograms(query) {
           description: summary.description,
           image: summary.image,
           runSchedule: summary.runSchedule,
-          genres: summary.genres || []
+          hosts: summary.hosts || [],
+          genres: summary.genres || [],
+          location: summary.location || ""
         };
       } catch {
         return {
@@ -441,20 +764,40 @@ async function searchPrograms(query) {
           description: "",
           image: "",
           runSchedule: "",
-          genres: []
+          hosts: [],
+          genres: [],
+          location: ""
         };
       }
     })
   );
 
-  return enriched;
+  if (!q) {
+    return enriched.slice(0, 40);
+  }
+
+  return enriched
+    .map((item) => ({ ...item, _score: scoreRteProgramResult(item, q) }))
+    .filter((item) => item._score > 0)
+    .sort((a, b) => {
+      if (b._score !== a._score) {
+        return b._score - a._score;
+      }
+      return String(a.title || "").localeCompare(String(b.title || ""), "en");
+    })
+    .slice(0, 25)
+    .map((item) => {
+      const copy = { ...item };
+      delete copy._score;
+      return copy;
+    });
 }
 
 async function getRteDiscovery(count = 5) {
   try {
-    // Empty query returns up to 40 programs alphabetically — shuffle for discovery
+    // Empty query returns up to 40 programs alphabetically; pick a metadata-rich, diverse subset.
     const results = await searchPrograms("");
-    return results.sort(() => Math.random() - 0.5).slice(0, count);
+    return pickDiscoveryResults(results, count);
   } catch { return []; }
 }
 

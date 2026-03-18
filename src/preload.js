@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld("rteDownloader", {
     ipcRenderer.on("download-progress", listener);
     return () => ipcRenderer.removeListener("download-progress", listener);
   },
+  connectGlobalEvents: (handler) => {
+    const listener = (_event, payload) => {
+      handler(payload);
+    };
+    ipcRenderer.on("global-event", listener);
+    return () => ipcRenderer.removeListener("global-event", listener);
+  },
 
   getLiveStations: () => ipcRenderer.invoke("rte-live-stations"),
   getLiveNow: (channelId) => ipcRenderer.invoke("rte-live-now", { channelId }),
@@ -90,8 +97,16 @@ contextBridge.exposeInMainWorld("rteDownloader", {
     ipcRenderer.invoke("fip-program-episodes", { programUrl, page }),
   getFipProgramSummary: (programUrl) => ipcRenderer.invoke("fip-program-summary", { programUrl }),
   getFipEpisodeStream: (episodeUrl) => ipcRenderer.invoke("fip-episode-stream", { episodeUrl }),
-  getFipEpisodeTracklist: (episodeUrl, startTs, durationSecs) =>
-    ipcRenderer.invoke("fip-episode-tracklist", { episodeUrl, startTs, durationSecs }),
+  getFipEpisodeTracklist: (episodeUrl, startTsOrOptions, durationSecs) => {
+    const options = startTsOrOptions && typeof startTsOrOptions === "object"
+      ? startTsOrOptions
+      : { startTs: startTsOrOptions, durationSecs };
+    return ipcRenderer.invoke("fip-episode-tracklist", {
+      episodeUrl,
+      startTs: options.startTs,
+      durationSecs: options.durationSecs
+    });
+  },
   listFipSchedules: () => ipcRenderer.invoke("fip-scheduler-list"),
   addFipSchedule: (programUrl, options = {}) => ipcRenderer.invoke("fip-scheduler-add", { programUrl, options }),
   removeFipSchedule: (scheduleId) => ipcRenderer.invoke("fip-scheduler-remove", { scheduleId }),
@@ -131,6 +146,23 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   runKexpScheduleNow: (scheduleId) => ipcRenderer.invoke("kexp-scheduler-check-one", { scheduleId }),
   listDownloadHistory: () => ipcRenderer.invoke("download-history-list"),
   clearDownloadHistory: () => ipcRenderer.invoke("download-history-clear"),
+  listProgramFeeds: () => ipcRenderer.invoke("program-feeds-list"),
+  searchMetadataIndex: (payload = {}) => ipcRenderer.invoke("metadata-search", payload || {}),
+  searchEntityGraph: (payload = {}) => ipcRenderer.invoke("entity-graph-search", payload || {}),
+  getEntityGraphEntity: (payload = {}) => ipcRenderer.invoke("entity-graph-detail", payload || {}),
+  discoverMetadataIndex: (payload = {}) => ipcRenderer.invoke("metadata-discover", payload || {}),
+  refreshMetadataHarvest: () => ipcRenderer.invoke("metadata-harvest-refresh"),
+  listCollections: () => ipcRenderer.invoke("collections-list"),
+  createCollection: (name) => ipcRenderer.invoke("collections-create", { name }),
+  deleteCollection: (collectionId) => ipcRenderer.invoke("collections-delete", { collectionId }),
+  addCollectionEntry: (collectionId, entry = {}) => ipcRenderer.invoke("collections-add-entry", { collectionId, entry }),
+  addCollectionEntries: (collectionId, entries = []) => ipcRenderer.invoke("collections-add-entries", { collectionId, entries }),
+  removeCollectionEntry: (collectionId, entryId) => ipcRenderer.invoke("collections-remove-entry", { collectionId, entryId }),
+  getCollectionRecommendations: (payload = {}) => ipcRenderer.invoke("collections-recommendations", payload || {}),
+  postprocessHistoryEntry: (payload = {}) => ipcRenderer.invoke("history-postprocess", payload || {}),
+  getDiagnostics: () => ipcRenderer.invoke("diagnostics-get"),
+  repairBinaries: () => ipcRenderer.invoke("diagnostics-repair"),
+  openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),
   previewCue: (payload) => ipcRenderer.invoke("cue-preview", payload || {}),
   getDownloadQueueStats: () => ipcRenderer.invoke("download-queue-stats"),
@@ -138,6 +170,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   pauseDownloadQueue: () => ipcRenderer.invoke("download-queue-pause"),
   resumeDownloadQueue: () => ipcRenderer.invoke("download-queue-resume"),
   cancelDownloadQueueTask: (taskId) => ipcRenderer.invoke("download-queue-cancel", { taskId }),
+  rerunDownloadQueueTask: (taskId, mode = "exact") => ipcRenderer.invoke("download-queue-rerun", { taskId, mode }),
   clearPendingDownloadQueue: () => ipcRenderer.invoke("download-queue-clear-pending"),
   getSettings: () => ipcRenderer.invoke("settings-get"),
   saveSettings: (payload) => ipcRenderer.invoke("settings-save", payload || {}),

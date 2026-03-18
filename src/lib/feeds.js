@@ -26,27 +26,87 @@ function ensureFeedDir(baseDataDir) {
   return feedDir;
 }
 
+function safeReadJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function toFeedUrl(basePath, slug, ext) {
+  const safeBase = String(basePath || "").replace(/\/+$/, "");
+  if (!safeBase) {
+    return "";
+  }
+  return `${safeBase}/${encodeURIComponent(slug)}${ext}`;
+}
+
+function normalizeMetadataList(value) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[;,|]+/g)
+      : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of raw) {
+    const text = String(entry || "").trim();
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function buildFeedEpisode(episode) {
+  return {
+    clipId: episode.clipId || "",
+    title: episode.fullTitle || episode.title || "",
+    description: episode.description || "",
+    publishedTime: episode.publishedTime || "",
+    episodeUrl: episode.episodeUrl || "",
+    image: episode.image || "",
+    location: String(episode.location || "").trim(),
+    hosts: normalizeMetadataList(episode.hosts),
+    genres: normalizeMetadataList(episode.genres)
+  };
+}
+
 function writeProgramFeedFiles({ dataDir, schedule, latest }) {
   const episodes = Array.isArray(latest?.episodes) ? latest.episodes : [];
   const slug = sanitizeName(schedule?.title || schedule?.id || "program") || "program";
   const feedDir = ensureFeedDir(dataDir);
   const jsonPath = path.join(feedDir, `${slug}.json`);
   const rssPath = path.join(feedDir, `${slug}.rss.xml`);
+  const topEpisode = episodes.find((episode) => episode && (episode.clipId || episode.title)) || null;
 
   const jsonPayload = {
     id: schedule?.id || "",
     title: schedule?.title || "",
     description: schedule?.description || "",
     programUrl: schedule?.programUrl || "",
+    image: schedule?.image || "",
+    location: String(schedule?.location || "").trim(),
+    hosts: normalizeMetadataList(schedule?.hosts),
+    genres: normalizeMetadataList(schedule?.genres),
+    runSchedule: String(schedule?.runSchedule || latest?.runSchedule || "").trim(),
+    nextBroadcastAt: String(schedule?.nextBroadcastAt || latest?.nextBroadcastAt || "").trim(),
+    nextBroadcastTitle: String(schedule?.nextBroadcastTitle || latest?.nextBroadcastTitle || "").trim(),
+    latestEpisodeTitle: String(schedule?.latestEpisodeTitle || topEpisode?.fullTitle || topEpisode?.title || "").trim(),
+    latestEpisodePublishedTime: String(schedule?.latestEpisodePublishedTime || topEpisode?.publishedTime || "").trim(),
+    latestEpisodeDescription: String(schedule?.latestEpisodeDescription || topEpisode?.description || "").trim(),
+    latestEpisodeLocation: String(schedule?.latestEpisodeLocation || topEpisode?.location || "").trim(),
+    latestEpisodeHosts: normalizeMetadataList(schedule?.latestEpisodeHosts || topEpisode?.hosts),
+    latestEpisodeGenres: normalizeMetadataList(schedule?.latestEpisodeGenres || topEpisode?.genres),
     updatedAt: new Date().toISOString(),
-    episodes: episodes.slice(0, 100).map((episode) => ({
-      clipId: episode.clipId || "",
-      title: episode.fullTitle || episode.title || "",
-      description: episode.description || "",
-      publishedTime: episode.publishedTime || "",
-      episodeUrl: episode.episodeUrl || "",
-      image: episode.image || ""
-    }))
+    episodes: episodes.slice(0, 100).map(buildFeedEpisode)
   };
   fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload, null, 2), "utf8");
 
@@ -58,6 +118,9 @@ function writeProgramFeedFiles({ dataDir, schedule, latest }) {
         `<title>${xmlEscape(episode.title)}</title>`,
         episode.episodeUrl ? `<link>${xmlEscape(episode.episodeUrl)}</link>` : "",
         episode.description ? `<description>${xmlEscape(episode.description)}</description>` : "",
+        episode.hosts.length ? `<author>${xmlEscape(episode.hosts.join(", "))}</author>` : "",
+        episode.location ? `<location>${xmlEscape(episode.location)}</location>` : "",
+        ...episode.genres.map((genre) => `<category>${xmlEscape(genre)}</category>`),
         pubDate ? `<pubDate>${xmlEscape(pubDate)}</pubDate>` : "",
         "</item>"
       ].filter(Boolean).join("");
@@ -70,6 +133,9 @@ function writeProgramFeedFiles({ dataDir, schedule, latest }) {
     `<title>${xmlEscape(jsonPayload.title)}</title>`,
     jsonPayload.programUrl ? `<link>${xmlEscape(jsonPayload.programUrl)}</link>` : "",
     jsonPayload.description ? `<description>${xmlEscape(jsonPayload.description)}</description>` : "",
+    jsonPayload.hosts.length ? `<managingEditor>${xmlEscape(jsonPayload.hosts.join(", "))}</managingEditor>` : "",
+    jsonPayload.location ? `<location>${xmlEscape(jsonPayload.location)}</location>` : "",
+    ...jsonPayload.genres.map((genre) => `<category>${xmlEscape(genre)}</category>`),
     `<lastBuildDate>${new Date().toUTCString()}</lastBuildDate>`,
     itemsXml,
     "</channel></rss>"
@@ -83,7 +149,49 @@ function writeProgramFeedFiles({ dataDir, schedule, latest }) {
   };
 }
 
+function listProgramFeedFiles({ dataDir, sourceType = "", publicBasePath = "" }) {
+  const feedDir = ensureFeedDir(dataDir);
+  const entries = fs.readdirSync(feedDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.json$/i.test(entry.name))
+    .map((entry) => {
+      const jsonPath = path.join(feedDir, entry.name);
+      const slug = entry.name.replace(/\.json$/i, "");
+      const rssPath = path.join(feedDir, `${slug}.rss.xml`);
+      const payload = safeReadJson(jsonPath) || {};
+      const jsonStat = fs.statSync(jsonPath);
+      return {
+        slug,
+        sourceType,
+        title: String(payload.title || slug),
+        description: String(payload.description || ""),
+        programUrl: String(payload.programUrl || ""),
+        image: String(payload.image || ""),
+        location: String(payload.location || ""),
+        hosts: normalizeMetadataList(payload.hosts),
+        genres: normalizeMetadataList(payload.genres),
+        runSchedule: String(payload.runSchedule || ""),
+        nextBroadcastAt: String(payload.nextBroadcastAt || ""),
+        nextBroadcastTitle: String(payload.nextBroadcastTitle || ""),
+        latestEpisodeTitle: String(payload.latestEpisodeTitle || ""),
+        latestEpisodePublishedTime: String(payload.latestEpisodePublishedTime || ""),
+        latestEpisodeDescription: String(payload.latestEpisodeDescription || ""),
+        latestEpisodeLocation: String(payload.latestEpisodeLocation || ""),
+        latestEpisodeHosts: normalizeMetadataList(payload.latestEpisodeHosts),
+        latestEpisodeGenres: normalizeMetadataList(payload.latestEpisodeGenres),
+        updatedAt: String(payload.updatedAt || jsonStat.mtime.toISOString()),
+        episodeCount: Array.isArray(payload.episodes) ? payload.episodes.length : 0,
+        jsonPath,
+        rssPath,
+        jsonUrl: toFeedUrl(publicBasePath, slug, ".json"),
+        rssUrl: fs.existsSync(rssPath) ? toFeedUrl(publicBasePath, slug, ".rss.xml") : ""
+      };
+    })
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return entries;
+}
+
 module.exports = {
+  ensureFeedDir,
+  listProgramFeedFiles,
   writeProgramFeedFiles
 };
-
