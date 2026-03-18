@@ -90,7 +90,9 @@
     songrecSampleSeconds: 20,
     ffmpegCueSilenceDetect: true,
     ffmpegCueLoudnessDetect: true,
-    ffmpegCueSpectralDetect: true
+    ffmpegCueSpectralDetect: true,
+    episodesPerPage: 5,
+    discoveryCount: 5
   };
 
   function normalizeOutputFormat(value) {
@@ -135,7 +137,9 @@
         songrecSampleSeconds: Math.max(8, Math.min(45, Math.floor(Number(parsed.songrecSampleSeconds || defaultSettings.songrecSampleSeconds)))),
         ffmpegCueSilenceDetect: parsed.ffmpegCueSilenceDetect == null ? defaultSettings.ffmpegCueSilenceDetect : Boolean(parsed.ffmpegCueSilenceDetect),
         ffmpegCueLoudnessDetect: parsed.ffmpegCueLoudnessDetect == null ? defaultSettings.ffmpegCueLoudnessDetect : Boolean(parsed.ffmpegCueLoudnessDetect),
-        ffmpegCueSpectralDetect: parsed.ffmpegCueSpectralDetect == null ? defaultSettings.ffmpegCueSpectralDetect : Boolean(parsed.ffmpegCueSpectralDetect)
+        ffmpegCueSpectralDetect: parsed.ffmpegCueSpectralDetect == null ? defaultSettings.ffmpegCueSpectralDetect : Boolean(parsed.ffmpegCueSpectralDetect),
+        episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(parsed.episodesPerPage || defaultSettings.episodesPerPage)))),
+        discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(parsed.discoveryCount || defaultSettings.discoveryCount))))
       };
     } catch {
       return { ...defaultSettings };
@@ -177,7 +181,9 @@
       songrecSampleSeconds: Math.max(8, Math.min(45, Math.floor(Number(next.songrecSampleSeconds || defaultSettings.songrecSampleSeconds)))),
       ffmpegCueSilenceDetect: next.ffmpegCueSilenceDetect == null ? defaultSettings.ffmpegCueSilenceDetect : Boolean(next.ffmpegCueSilenceDetect),
       ffmpegCueLoudnessDetect: next.ffmpegCueLoudnessDetect == null ? defaultSettings.ffmpegCueLoudnessDetect : Boolean(next.ffmpegCueLoudnessDetect),
-      ffmpegCueSpectralDetect: next.ffmpegCueSpectralDetect == null ? defaultSettings.ffmpegCueSpectralDetect : Boolean(next.ffmpegCueSpectralDetect)
+      ffmpegCueSpectralDetect: next.ffmpegCueSpectralDetect == null ? defaultSettings.ffmpegCueSpectralDetect : Boolean(next.ffmpegCueSpectralDetect),
+      episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(next.episodesPerPage || defaultSettings.episodesPerPage)))),
+      discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(next.discoveryCount || defaultSettings.discoveryCount))))
     };
     localStorage.setItem("rte_web_settings", JSON.stringify(normalized));
     return normalized;
@@ -363,8 +369,14 @@
       API.getJson(`/api/fip/program/summary?url=${encodeURIComponent(programUrl)}`),
     getFipEpisodeStream: (episodeUrl) =>
       API.getJson(`/api/fip/episode/stream?url=${encodeURIComponent(episodeUrl)}`),
-    getFipEpisodeTracklist: (episodeUrl, startTs, durationSecs) =>
-      API.getJson(`/api/fip/episode/tracklist?url=${encodeURIComponent(episodeUrl)}${startTs ? `&startTs=${encodeURIComponent(startTs)}` : ""}${durationSecs ? `&durationSecs=${encodeURIComponent(durationSecs)}` : ""}`),
+    getFipEpisodeTracklist: (episodeUrl, startTsOrOptions, durationSecs) => {
+      const options = startTsOrOptions && typeof startTsOrOptions === "object"
+        ? startTsOrOptions
+        : { startTs: startTsOrOptions, durationSecs };
+      const startTs = options.startTs;
+      const safeDurationSecs = options.durationSecs;
+      return API.getJson(`/api/fip/episode/tracklist?url=${encodeURIComponent(episodeUrl)}${startTs ? `&startTs=${encodeURIComponent(startTs)}` : ""}${safeDurationSecs ? `&durationSecs=${encodeURIComponent(safeDurationSecs)}` : ""}`);
+    },
     listFipSchedules: () => API.getJson("/api/fip/scheduler"),
     addFipSchedule: (programUrl, options = {}) =>
       API.sendJson("/api/fip/scheduler", "POST", { programUrl, backfillCount: Number(options.backfillCount || 0) }),
@@ -433,6 +445,7 @@
     pauseDownloadQueue: () => API.sendJson("/api/download-queue/pause", "POST", {}),
     resumeDownloadQueue: () => API.sendJson("/api/download-queue/resume", "POST", {}),
     cancelDownloadQueueTask: (taskId) => API.sendJson("/api/download-queue/cancel", "POST", { taskId }),
+    rerunDownloadQueueTask: (taskId, mode = "exact") => API.sendJson("/api/download-queue/rerun", "POST", { taskId, mode }),
     clearPendingDownloadQueue: () => API.sendJson("/api/download-queue/clear-pending", "POST", {}),
 
     getSettings: async () => {
@@ -480,6 +493,39 @@
     },
     listDownloadHistory: () => fetch("/api/download-history").then(r => r.json()),
     clearDownloadHistory: () => fetch("/api/download-history", { method: "DELETE" }).then(r => r.json()),
+    listProgramFeeds: () => API.getJson("/api/feeds"),
+    searchMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 50)}`),
+    searchEntityGraph: (payload = {}) => API.getJson(`/api/entity-graph/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&type=${encodeURIComponent(payload.type || "")}&limit=${encodeURIComponent(payload.limit || 24)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
+    getEntityGraphEntity: (payload = {}) => API.getJson(`/api/entity-graph/entity?entityId=${encodeURIComponent(payload.entityId || "")}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
+    discoverMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/discover?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
+    refreshMetadataHarvest: () => API.sendJson("/api/metadata/harvest-refresh", "POST", {}),
+    listCollections: () => API.getJson("/api/collections").then((body) => body?.collections || []),
+    createCollection: (name) => API.sendJson("/api/collections", "POST", { name }).then((body) => body?.collections || []),
+    deleteCollection: async (collectionId) => {
+      const response = await fetch(`/api/collections/${encodeURIComponent(collectionId || "")}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || `Request failed: ${response.status}`);
+      }
+      return body?.collections || [];
+    },
+    addCollectionEntry: (collectionId, entry = {}) => API.sendJson(`/api/collections/${encodeURIComponent(collectionId || "")}/entries`, "POST", entry || {}).then((body) => body?.collections || []),
+    addCollectionEntries: (collectionId, entries = []) => API.sendJson(`/api/collections/${encodeURIComponent(collectionId || "")}/entries/batch`, "POST", { entries: Array.isArray(entries) ? entries : [] }).then((body) => ({
+      collections: body?.collections || [],
+      addedCount: Number(body?.addedCount || 0)
+    })),
+    removeCollectionEntry: async (collectionId, entryId) => {
+      const response = await fetch(`/api/collections/${encodeURIComponent(collectionId || "")}/entries/${encodeURIComponent(entryId || "")}`, { method: "DELETE", headers: { Accept: "application/json" } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.error || `Request failed: ${response.status}`);
+      }
+      return body?.collections || [];
+    },
+    getCollectionRecommendations: (payload = {}) => API.getJson(`/api/collections/${encodeURIComponent(payload.collectionId || "")}/recommendations?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
+    postprocessHistoryEntry: (payload = {}) => API.sendJson("/api/history/postprocess", "POST", payload || {}),
+    getDiagnostics: () => API.getJson("/api/diagnostics"),
+    repairBinaries: () => API.sendJson("/api/diagnostics/repair", "POST"),
     connectGlobalEvents: (handler) => {
       const source = new EventSource("/api/events");
       source.onmessage = (e) => {
@@ -487,6 +533,7 @@
       };
       return () => source.close();
     },
+    openPath: async () => ({ ok: false, error: "Open path is only available in the desktop app." }),
     pickDownloadDirectory: async () => "",
     canPickDownloadDirectory: async () => false
   };

@@ -1,0 +1,3 @@
+date_partition,account_id,account_user_id,email,name,public_id,usage_type,usage_credits,usage_quantity,usage_units
+2026-03-16,5bbfe8c7321043a5b71a114213c69356,bf700718b89444e9867827e4894b2690,ilian.lepilov_c@clearcover.com,Ilian Lepilov,user-FEK8S6kLRdENPXkeB7ge3EW1,codex,118.38,2367.6,counts
+2026-03-16,5bbfe8c7321043a5b71a114213c69356,8421a1f285d046a190d6fb9b21f9dbdd,cegan@clearcover.com,Connor Egan,user-Hx5XxWrg6GIvuJbBZTOqn13f,codex,281.89,5637.8,counts

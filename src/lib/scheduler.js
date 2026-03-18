@@ -219,6 +219,10 @@ function createSchedulerStore({
       }
       const parsed = JSON.parse(fs.readFileSync(storagePath, "utf8"));
       schedules = Array.isArray(parsed) ? parsed : [];
+      schedules.forEach((schedule) => {
+        normalizeScheduleMetadata(schedule);
+        normalizeRetryQueue(schedule);
+      });
     } catch {
       schedules = [];
     }
@@ -243,7 +247,72 @@ function createSchedulerStore({
     return schedules.find((item) => item.id === scheduleId);
   }
 
+  function normalizeMetadataList(value) {
+    const raw = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[;,|]+/g)
+        : [];
+    const out = [];
+    const seen = new Set();
+    for (const entry of raw) {
+      const text = String(entry || "").trim();
+      if (!text) {
+        continue;
+      }
+      const key = text.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(text);
+    }
+    return out;
+  }
+
+  function normalizeScheduleMetadata(schedule) {
+    schedule.description = String(schedule?.description || "").trim();
+    schedule.image = String(schedule?.image || "").trim();
+    schedule.location = String(schedule?.location || "").trim();
+    schedule.genres = normalizeMetadataList(schedule?.genres);
+    schedule.hosts = normalizeMetadataList(schedule?.hosts);
+    schedule.latestEpisodeDescription = String(schedule?.latestEpisodeDescription || "").trim();
+    schedule.latestEpisodeLocation = String(schedule?.latestEpisodeLocation || "").trim();
+    schedule.latestEpisodeGenres = normalizeMetadataList(schedule?.latestEpisodeGenres);
+    schedule.latestEpisodeHosts = normalizeMetadataList(schedule?.latestEpisodeHosts);
+  }
+
+  function applyProgramMetadata(schedule, metadata) {
+    if (!schedule || !metadata) {
+      return;
+    }
+    const description = String(metadata.description || "").trim();
+    const image = String(metadata.image || "").trim();
+    const location = String(metadata.location || "").trim();
+    const genres = normalizeMetadataList(metadata.genres);
+    const hosts = normalizeMetadataList(metadata.hosts);
+
+    if (description) {
+      schedule.description = description;
+    }
+    if (image) {
+      schedule.image = image;
+    }
+    if (location) {
+      schedule.location = location;
+    }
+    if (genres.length) {
+      schedule.genres = genres;
+    }
+    if (hosts.length) {
+      schedule.hosts = hosts;
+    }
+
+    normalizeScheduleMetadata(schedule);
+  }
+
   function setLatestEpisodeFields(schedule, latest) {
+    applyProgramMetadata(schedule, latest);
     const episodes = Array.isArray(latest?.episodes) ? latest.episodes : [];
     const top = episodes.find((episode) => episode && (episode.title || episode.clipId));
     if (!top) {
@@ -252,6 +321,20 @@ function createSchedulerStore({
     schedule.latestEpisodeTitle = String(top.fullTitle || top.title || "");
     schedule.latestEpisodePublishedTime = String(top.publishedTime || top.publishedTimeFormatted || "");
     schedule.latestEpisodeImage = String(top.image || "");
+    schedule.latestEpisodeDescription = String(top.description || "").trim();
+    schedule.latestEpisodeLocation = String(top.location || "").trim();
+    schedule.latestEpisodeGenres = normalizeMetadataList(top.genres);
+    schedule.latestEpisodeHosts = normalizeMetadataList(top.hosts);
+    if (!schedule.location && schedule.latestEpisodeLocation) {
+      schedule.location = schedule.latestEpisodeLocation;
+    }
+    if (!schedule.genres.length && schedule.latestEpisodeGenres.length) {
+      schedule.genres = schedule.latestEpisodeGenres.slice();
+    }
+    if (!schedule.hosts.length && schedule.latestEpisodeHosts.length) {
+      schedule.hosts = schedule.latestEpisodeHosts.slice();
+    }
+    normalizeScheduleMetadata(schedule);
   }
 
   function normalizeRetryQueue(schedule) {
@@ -440,6 +523,9 @@ function createSchedulerStore({
       title: summary.title,
       description: summary.description,
       image: summary.image || "",
+      genres: normalizeMetadataList(summary.genres),
+      hosts: normalizeMetadataList(summary.hosts),
+      location: String(summary.location || "").trim(),
       runSchedule: summary.runSchedule || "",
       nextBroadcastAt: summary.nextBroadcastAt || "",
       nextBroadcastTitle: summary.nextBroadcastTitle || "",
@@ -449,6 +535,10 @@ function createSchedulerStore({
       latestEpisodeTitle: "",
       latestEpisodePublishedTime: "",
       latestEpisodeImage: "",
+      latestEpisodeDescription: "",
+      latestEpisodeLocation: "",
+      latestEpisodeGenres: [],
+      latestEpisodeHosts: [],
       lastDownloaded: null,
       downloadedClipIds: Array.from(known),
       retryQueue: [],
@@ -463,6 +553,7 @@ function createSchedulerStore({
         ? `Created (backfill queued: 0/${backfillCount})`
         : "Created (new episodes only)"
     };
+    applyProgramMetadata(schedule, summary);
     setLatestEpisodeFields(schedule, latest);
 
     schedules.push(schedule);
@@ -741,7 +832,3 @@ function createSchedulerStore({
 module.exports = {
   createSchedulerStore
 };
-
-
-
-

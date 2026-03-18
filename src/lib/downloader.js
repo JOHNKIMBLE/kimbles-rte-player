@@ -857,7 +857,9 @@ function spawnYtDlpPipe(url, extraArgs = []) {
 }
 
 module.exports = {
+  getVendorRootCandidates,
   resolveBundledFfmpegDir,
+  resolveYtDlpCommand,
   runYtDlpDownload,
   runYtDlpGetUrl,
   runYtDlpJson,

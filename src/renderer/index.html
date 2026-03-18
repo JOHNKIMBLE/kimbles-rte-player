@@ -23,13 +23,13 @@
         <button id="tabNtsBtn" class="secondary">NTS</button>
         <button id="tabFipBtn" class="secondary">FIP</button>
         <button id="tabKexpBtn" class="secondary">KEXP</button>
-        <button id="tabSchedulesBtn" class="secondary">Schedules</button>
+        <button id="tabSchedulesBtn" class="secondary">Library</button>
         <button id="tabSettingsBtn" class="secondary">Settings</button>
       </div>
     </header>
 
     <div id="rteTabContent">
-    <section class="panel">
+    <section class="panel" id="rteExplorerSection">
       <h2>Live Stations</h2>
       <div class="row">
         <select id="stationSelect"></select>
@@ -56,13 +56,16 @@
       <h2>Program Explorer</h2>
 
       <div class="subheading">Search Programs</div>
-      <div class="search-box">
-        <div class="row">
-          <input id="programSearchInput" type="text" placeholder="e.g. jenny greene" />
-          <button id="programSearchBtn">Search</button>
+        <div class="search-box">
+          <div class="row">
+            <input id="programSearchInput" type="text" placeholder="e.g. jenny greene" />
+            <button id="programSearchBtn">Search</button>
+          </div>
+          <div id="programSearchResult" class="list search-dropdown hidden"></div>
         </div>
-        <div id="programSearchResult" class="list search-dropdown hidden"></div>
-      </div>
+        <div class="row">
+          <input id="programResultFilterInput" type="text" placeholder="Refine visible search/discovery cards by host, genre, location..." />
+        </div>
 
       <div class="subheading">Load Program by URL</div>
       <div class="row">
@@ -71,6 +74,9 @@
       </div>
 
       <div id="programMeta" class="status muted">No program loaded.</div>
+      <div class="row">
+        <input id="episodeFilterInput" type="text" placeholder="Filter loaded episodes by title, host, genre, location..." />
+      </div>
       <div class="row">
         <button id="prevPageBtn" class="secondary">Prev Page</button>
         <button id="nextPageBtn" class="secondary">Next Page</button>
@@ -103,7 +109,7 @@
     </div>
 
     <div id="bbcTabContent" class="hidden">
-      <section class="panel">
+      <section class="panel" id="bbcExplorerSection">
         <h2>BBC Live Stations</h2>
         <div class="row">
           <select id="bbcStationSelect"></select>
@@ -116,7 +122,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="wwfExplorerSection">
         <h2>BBC Quick Download</h2>
         <div class="row">
           <input id="bbcUrlInput" type="url" placeholder="https://www.bbc.co.uk/sounds/..." />
@@ -126,7 +132,7 @@
         <pre id="bbcLog" class="log"></pre>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="ntsExplorerSection">
         <h2>BBC Explorer</h2>
         <div class="subheading">Search Programs</div>
         <div class="search-box">
@@ -136,6 +142,9 @@
           </div>
           <div id="bbcProgramSearchResult" class="list search-dropdown hidden"></div>
         </div>
+        <div class="row">
+          <input id="bbcProgramResultFilterInput" type="text" placeholder="Refine visible search/discovery cards by host, genre, location..." />
+        </div>
 
         <div class="subheading">Load Program by URL</div>
         <div class="row">
@@ -143,6 +152,9 @@
           <button id="bbcLoadProgramBtn">Load Episodes</button>
         </div>
         <div id="bbcProgramMeta" class="status muted">No BBC program loaded.</div>
+        <div class="row">
+          <input id="bbcEpisodeFilterInput" type="text" placeholder="Filter loaded episodes by title, host, genre, location..." />
+        </div>
         <div class="row">
           <button id="bbcPrevPageBtn" class="secondary">Prev Page</button>
           <button id="bbcNextPageBtn" class="secondary">Next Page</button>
@@ -159,14 +171,14 @@
         <div id="bbcEpisodesResult" class="list"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="fipExplorerSection">
         <h2>BBC Discovery</h2>
         <p class="hint">Discover random BBC shows. Click a card to explore, or add directly to the scheduler.</p>
         <button id="bbcDiscoverBtn" class="secondary">Discover Shows</button>
         <div id="bbcDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="kexpExplorerSection">
         <h2>BBC Schedulers</h2>
         <p class="hint">Scheduler checks for new BBC episodes in background and auto-downloads unseen ones.</p>
         <div id="bbcScheduleList" class="list"></div>
@@ -174,7 +186,7 @@
     </div>
 
     <div id="wwfTabContent" class="hidden">
-      <section class="panel">
+      <section class="panel" id="collectionsSection">
         <h2>Worldwide FM Live</h2>
         <div class="row">
           <select id="wwfStationSelect"></select>
@@ -188,7 +200,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="entityGraphSection">
         <h2>Worldwide FM Quick Download</h2>
         <div class="row">
           <input id="wwfUrlInput" type="url" placeholder="https://www.worldwidefm.net/episode/..." />
@@ -198,7 +210,7 @@
         <pre id="wwfLog" class="log"></pre>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="entityProfileSection">
         <h2>Worldwide FM Explorer</h2>
         <div class="subheading">Search Shows / Programs</div>
         <div class="search-box">
@@ -208,6 +220,9 @@
           </div>
           <div id="wwfProgramSearchResult" class="list search-dropdown hidden"></div>
         </div>
+        <div class="row">
+          <input id="wwfProgramResultFilterInput" type="text" placeholder="Refine visible search/discovery cards by host, genre, location..." />
+        </div>
 
         <div class="subheading">Load program by name</div>
         <div class="row">
@@ -215,6 +230,9 @@
           <button id="wwfLoadProgramBtn">Load Episodes</button>
         </div>
         <div id="wwfProgramMeta" class="status muted">No program loaded.</div>
+        <div class="row">
+          <input id="wwfEpisodeFilterInput" type="text" placeholder="Filter loaded episodes by title, host, genre, location..." />
+        </div>
         <div class="row">
           <button id="wwfPrevPageBtn" class="secondary">Prev Page</button>
           <button id="wwfNextPageBtn" class="secondary">Next Page</button>
@@ -231,7 +249,7 @@
         <div id="wwfEpisodesResult" class="list"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="metadataExplorerSection">
         <h2>Worldwide FM Discovery</h2>
         <p class="hint">Discover random Worldwide FM shows. Click a card to explore, or add directly to the scheduler.</p>
         <button id="wwfDiscoverBtn" class="secondary">Discover Shows</button>
@@ -283,6 +301,9 @@
           </div>
           <div id="ntsProgramSearchResult" class="list search-dropdown hidden"></div>
         </div>
+        <div class="row">
+          <input id="ntsProgramResultFilterInput" type="text" placeholder="Refine visible search/discovery cards by host, genre, location..." />
+        </div>
 
         <div class="subheading">Load show by URL or slug</div>
         <div class="row">
@@ -290,6 +311,9 @@
           <button id="ntsLoadProgramBtn">Load Episodes</button>
         </div>
         <div id="ntsProgramMeta" class="status muted">No show loaded.</div>
+        <div class="row">
+          <input id="ntsEpisodeFilterInput" type="text" placeholder="Filter loaded episodes by title, host, genre, location..." />
+        </div>
         <div class="row">
           <button id="ntsPrevPageBtn" class="secondary">Prev Page</button>
           <button id="ntsNextPageBtn" class="secondary">Next Page</button>
@@ -353,10 +377,16 @@
         </div>
         <div id="fipProgramSearchResult" class="list hidden"></div>
         <div class="row">
+          <input id="fipProgramResultFilterInput" type="text" placeholder="Refine visible search/discovery cards by host, genre, location..." />
+        </div>
+        <div class="row">
           <input id="fipProgramUrlInput" type="text" placeholder="Show URL or slug e.g. certains-laiment-fip" />
           <button id="fipLoadProgramBtn">Load Episodes</button>
         </div>
         <div id="fipProgramMeta" class="status muted">No show loaded.</div>
+        <div class="row">
+          <input id="fipEpisodeFilterInput" type="text" placeholder="Filter loaded episodes by title, host, genre, location..." />
+        </div>
         <div class="row">
           <button id="fipPrevPageBtn" class="secondary">Prev Page</button>
           <button id="fipNextPageBtn" class="secondary">Next Page</button>
@@ -416,10 +446,16 @@
         </div>
         <div id="kexpProgramSearchResult" class="list hidden"></div>
         <div class="row">
+          <input id="kexpProgramResultFilterInput" type="text" placeholder="Refine visible search/discovery cards by host, genre, location..." />
+        </div>
+        <div class="row">
           <input id="kexpProgramUrlInput" type="text" placeholder="Program ID or API URL, e.g. 123" />
           <button id="kexpLoadProgramBtn">Load Shows</button>
         </div>
         <div id="kexpProgramMeta" class="status muted">No program loaded.</div>
+        <div class="row">
+          <input id="kexpEpisodeFilterInput" type="text" placeholder="Filter loaded episodes by title, host, genre, location..." />
+        </div>
         <div class="row">
           <button id="kexpPrevPageBtn" class="secondary">Prev Page</button>
           <button id="kexpNextPageBtn" class="secondary">Next Page</button>
@@ -438,11 +474,10 @@
 
       <section class="panel">
         <h2>KEXP Discovery</h2>
-        <p class="hint">Discover random active KEXP programs. Click a card to explore or add to the scheduler.</p>
+        <p class="hint">Discover random active KEXP programs. Click a card to load it in Program Explorer, or hit Discover again for a fresh random set.</p>
         <button id="kexpDiscoverBtn" class="secondary">Discover Shows</button>
         <div id="kexpDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
       </section>
-
 
       <section class="panel">
         <h2>KEXP Schedulers</h2>
@@ -454,17 +489,294 @@
     <div id="schedulesTabContent" class="hidden">
       <section class="panel" id="healthDashboardSection">
         <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
-          <h2 style="margin:0;font-size:1rem;">Scheduler Health</h2>
+          <h2 style="margin:0;font-size:1rem;">Library Health</h2>
         </div>
         <div id="healthGrid" class="health-grid"></div>
       </section>
       <section class="panel">
         <div class="row" style="justify-content:space-between;align-items:center;">
-          <h2 style="margin:0;">All Schedules</h2>
+          <h2 style="margin:0;">Subscriptions</h2>
           <button id="refreshAllSchedulesBtn" class="secondary">Refresh All</button>
         </div>
         <p class="hint">Combined view of active schedulers across all sources.</p>
+        <div class="row history-toolbar-meta">
+          <div id="allSchedulesSummary" class="hint">Loading subscriptions...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <input id="allSchedulesSearchInput" type="text" placeholder="Search subscriptions..." style="font-size:0.85em;width:180px;" />
+            <select id="allSchedulesViewMode" style="font-size:0.85em;">
+              <option value="full">Full View</option>
+              <option value="compact">Compact View</option>
+            </select>
+            <select id="allSchedulesSourceFilter" style="font-size:0.85em;">
+              <option value="">All Sources</option>
+              <option value="rte">RTE</option>
+              <option value="bbc">BBC</option>
+              <option value="wwf">WWF</option>
+              <option value="nts">NTS</option>
+              <option value="fip">FIP</option>
+              <option value="kexp">KEXP</option>
+            </select>
+            <select id="allSchedulesStatusFilter" style="font-size:0.85em;">
+              <option value="">All Statuses</option>
+              <option value="enabled">Enabled</option>
+              <option value="paused">Paused</option>
+              <option value="attention">Needs Attention</option>
+            </select>
+            <select id="allSchedulesSort" style="font-size:0.85em;">
+              <option value="next-broadcast">Sort: Next Broadcast</option>
+              <option value="last-run">Sort: Last Run</option>
+              <option value="title">Sort: Title</option>
+            </select>
+          </div>
+        </div>
+        <div id="allSchedulesMetrics" class="library-metrics-grid"></div>
         <div id="allSchedulesList" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Collections</h2>
+          <div class="row" style="gap:0.5rem;">
+            <input id="collectionNameInput" type="text" placeholder="New collection name" style="font-size:0.85em;width:200px;" />
+            <button id="createCollectionBtn" class="secondary">Create</button>
+          </div>
+        </div>
+        <p class="hint">Save hosts, shows, genres, episodes, and library items into named collections, then use them to drive smarter cross-source discovery.</p>
+        <div class="row history-toolbar-meta">
+          <div id="collectionsSummary" class="hint">Loading collections...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <select id="collectionsSelect" style="font-size:0.85em;min-width:220px;">
+              <option value="">Select collection</option>
+            </select>
+            <button id="deleteCollectionBtn" class="secondary">Delete</button>
+          </div>
+        </div>
+        <div id="collectionsMetrics" class="library-metrics-grid"></div>
+        <div class="item">
+          <div class="item-title">Saved Entries</div>
+          <div id="collectionsList" class="list compact-list"></div>
+        </div>
+        <div class="row history-toolbar-meta">
+          <div id="collectionsRecommendationsSummary" class="hint">Select a collection to load recommendations.</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <button id="collectionsRecommendationsRefreshBtn" class="secondary" style="font-size:0.85em;">Refresh Recommendations</button>
+          </div>
+        </div>
+        <div id="collectionsRecommendationsMetrics" class="library-metrics-grid"></div>
+        <div id="collectionsRecommendationsList" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Entity Graph</h2>
+          <button id="entityGraphRefreshBtn" class="secondary">Refresh Graph</button>
+        </div>
+        <p class="hint">Normalized hosts, programs, genres, locations, and episodes built from your metadata index and harvest cache.</p>
+        <div class="row history-toolbar-meta">
+          <div id="entityGraphSummary" class="hint">Loading entity graph...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <select id="entityGraphSourceFilter" style="font-size:0.85em;">
+              <option value="">All Sources</option>
+              <option value="rte">RTE</option>
+              <option value="bbc">BBC</option>
+              <option value="wwf">WWF</option>
+              <option value="nts">NTS</option>
+              <option value="fip">FIP</option>
+              <option value="kexp">KEXP</option>
+            </select>
+            <select id="entityGraphTypeFilter" style="font-size:0.85em;">
+              <option value="">All Entity Types</option>
+              <option value="host">Hosts</option>
+              <option value="program">Programs</option>
+              <option value="episode">Episodes</option>
+              <option value="genre">Genres</option>
+              <option value="location">Locations</option>
+            </select>
+            <input id="entityGraphSearchInput" type="text" placeholder="Search hosts, programs, genres..." style="font-size:0.85em;width:240px;" />
+          </div>
+        </div>
+        <div id="entityGraphMetrics" class="library-metrics-grid"></div>
+        <div id="entityGraphList" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Entity Profile</h2>
+          <div id="entityProfileSummary" class="hint">Select an entity from the graph, collections, or recommendations.</div>
+        </div>
+        <p class="hint">Graph-powered relationships and second-order recommendations for hosts, programs, genres, locations, and episodes.</p>
+        <div id="entityProfileMetrics" class="library-metrics-grid"></div>
+        <div id="entityProfileCard" class="list"></div>
+        <div id="entityProfileRecommendations" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Metadata Explorer</h2>
+          <button id="metadataHarvestRefreshBtn" class="secondary">Refresh Discovery Cache</button>
+        </div>
+        <p class="hint">Hybrid metadata index from local library data plus aggressively harvested discovery/search results. Source tabs stay unchanged.</p>
+        <div class="row history-toolbar-meta">
+          <div id="metadataDiscoverySummary" class="hint">Loading curated discovery...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <button id="metadataDiscoveryRefreshBtn" class="secondary" style="font-size:0.85em;">Refresh Picks</button>
+            <button id="metadataDiscoverySaveAllBtn" class="secondary" style="font-size:0.85em;">Save Visible</button>
+            <button id="metadataDiscoverySaveHostsBtn" class="secondary" style="font-size:0.85em;">Save Hosts</button>
+            <button id="metadataDiscoverySaveEpisodesBtn" class="secondary" style="font-size:0.85em;">Save Episodes</button>
+          </div>
+        </div>
+        <div id="metadataDiscoveryMetrics" class="library-metrics-grid"></div>
+        <div class="item">
+          <div class="item-title">Quick Hosts</div>
+          <div id="metadataDiscoveryHosts" class="genre-pills"></div>
+        </div>
+        <div class="item">
+          <div class="item-title">Quick Genres</div>
+          <div id="metadataDiscoveryGenres" class="genre-pills"></div>
+        </div>
+        <div class="item">
+          <div class="item-title">Quick Locations</div>
+          <div id="metadataDiscoveryLocations" class="genre-pills"></div>
+        </div>
+        <div id="metadataDiscoveryList" class="list"></div>
+        <div class="row history-toolbar-meta">
+          <div id="metadataIndexSummary" class="hint">Search hosts, genres, locations, programs, and episodes across your local library.</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <select id="metadataIndexSourceFilter" style="font-size:0.85em;">
+              <option value="">All Sources</option>
+              <option value="rte">RTE</option>
+              <option value="bbc">BBC</option>
+              <option value="wwf">WWF</option>
+              <option value="nts">NTS</option>
+              <option value="fip">FIP</option>
+              <option value="kexp">KEXP</option>
+            </select>
+            <select id="metadataIndexKindFilter" style="font-size:0.85em;">
+              <option value="">All Types</option>
+              <option value="discovery">Programs / Discovery</option>
+              <option value="host">Hosts</option>
+              <option value="episode">Episodes</option>
+              <option value="subscription">Subscriptions</option>
+              <option value="feed">Feeds</option>
+              <option value="history">History</option>
+            </select>
+            <input id="metadataIndexSearchInput" type="text" placeholder="Search hosts, genres, programs..." style="font-size:0.85em;width:240px;" />
+            <button id="metadataIndexSaveAllBtn" class="secondary" style="font-size:0.85em;">Save Visible</button>
+            <button id="metadataIndexSaveHostsBtn" class="secondary" style="font-size:0.85em;">Save Hosts</button>
+            <button id="metadataIndexSaveEpisodesBtn" class="secondary" style="font-size:0.85em;">Save Episodes</button>
+          </div>
+        </div>
+        <div id="metadataIndexMetrics" class="library-metrics-grid"></div>
+        <div id="metadataIndexList" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Program Feeds</h2>
+          <div class="row" style="gap:0.5rem;">
+            <button id="feedsRefreshBtn" class="secondary">Refresh Feeds</button>
+            <button id="feedsOpenDirBtn" class="secondary">Open Feed Folder</button>
+          </div>
+        </div>
+        <p class="hint">JSON and RSS exports generated from subscriptions.</p>
+        <div class="row history-toolbar-meta">
+          <div id="feedsSummary" class="hint">Loading feeds...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <select id="feedsSourceFilter" style="font-size:0.85em;">
+              <option value="">All Sources</option>
+              <option value="rte">RTE</option>
+              <option value="bbc">BBC</option>
+              <option value="wwf">WWF</option>
+              <option value="nts">NTS</option>
+              <option value="fip">FIP</option>
+              <option value="kexp">KEXP</option>
+            </select>
+            <input id="feedsSearchInput" type="text" placeholder="Search feeds..." style="font-size:0.85em;width:220px;" />
+          </div>
+        </div>
+        <div id="feedsMetrics" class="library-metrics-grid"></div>
+        <div id="feedsList" class="list"></div>
+      </section>
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Download Queue</h2>
+          <div id="downloadQueueStatus" class="hint">Loading queue...</div>
+        </div>
+        <div class="row">
+          <button id="queuePauseBtn" class="secondary">Pause Queue</button>
+          <button id="queueResumeBtn" class="secondary">Resume Queue</button>
+          <button id="queueClearBtn" class="secondary">Clear Pending</button>
+        </div>
+        <div class="hint">Active</div>
+        <div id="downloadQueueActive" class="list compact-list"></div>
+        <div class="hint">Queued</div>
+        <div id="downloadQueuePending" class="list compact-list"></div>
+        <div class="hint">Recent</div>
+        <div class="row history-toolbar-meta">
+          <div id="queueRecentSummary" class="hint">Loading recent queue...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <select id="queueRecentSourceFilter" style="font-size:0.85em;">
+              <option value="">All Sources</option>
+              <option value="rte">RTE</option>
+              <option value="bbc">BBC</option>
+              <option value="wwf">WWF</option>
+              <option value="nts">NTS</option>
+              <option value="fip">FIP</option>
+              <option value="kexp">KEXP</option>
+            </select>
+            <select id="queueRecentStatusFilter" style="font-size:0.85em;">
+              <option value="">All Statuses</option>
+              <option value="done">Done</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <input id="queueRecentSearchInput" type="text" placeholder="Search recent..." style="font-size:0.85em;width:160px;" />
+            <label for="queueRecentPageSizeSelect" class="hint history-inline-label">Show</label>
+            <select id="queueRecentPageSizeSelect" style="font-size:0.85em;min-width:84px;flex:0 0 auto;">
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+            </select>
+            <button id="queueRecentShowMoreBtn" class="secondary hidden" style="font-size:0.85em;">Show More</button>
+          </div>
+        </div>
+        <div id="queueMetrics" class="library-metrics-grid"></div>
+        <div id="downloadQueueRecent" class="list compact-list"></div>
+      </section>
+      <section class="panel" id="historySection">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Download History</h2>
+          <div class="row" style="gap:0.5rem;">
+            <select id="historySourceFilter" style="font-size:0.85em;">
+              <option value="">All Sources</option>
+              <option value="rte">RTÉ</option>
+              <option value="bbc">BBC</option>
+              <option value="wwf">WWF</option>
+              <option value="nts">NTS</option>
+              <option value="fip">FIP</option>
+              <option value="kexp">KEXP</option>
+            </select>
+            <select id="historyProgramFilter" style="font-size:0.85em;max-width:220px;">
+              <option value="">All Programs</option>
+            </select>
+            <select id="historyStatusFilter" style="font-size:0.85em;">
+              <option value="">All Statuses</option>
+              <option value="downloaded">Downloaded</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <input id="historySearchInput" type="text" placeholder="Search..." style="font-size:0.85em;width:140px;" />
+            <button id="historyClearBtn" class="secondary" style="font-size:0.85em;">Clear</button>
+          </div>
+        </div>
+        <div class="row history-toolbar-meta">
+          <div id="historySummary" class="hint">Loading history...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <label for="historyPageSizeSelect" class="hint history-inline-label">Show</label>
+            <select id="historyPageSizeSelect" style="font-size:0.85em;min-width:84px;flex:0 0 auto;">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+            <button id="historyShowMoreBtn" class="secondary hidden" style="font-size:0.85em;">Show More</button>
+          </div>
+        </div>
+        <div id="historyMetrics" class="library-metrics-grid"></div>
+        <div id="historyList" style="margin-top:0.6rem;max-height:400px;overflow-y:auto;"></div>
       </section>
     </div>
 
@@ -531,7 +843,7 @@
           <div class="settings-subgroup">
             <div class="hint">Core download settings</div>
             <div class="row setting-row setting-switch">
-              <label for="cueAutoGenerateCheckbox">Generate CUE/Chapters on download</label>
+              <label for="cueAutoGenerateCheckbox">Write physical .cue file on download</label>
               <input id="cueAutoGenerateCheckbox" type="checkbox" />
             </div>
             <div class="row setting-row">
@@ -568,7 +880,7 @@
               </select>
             </div>
             <div class="row setting-row setting-switch">
-              <label for="id3TaggingCheckbox">Write ID3 tags on download</label>
+              <label for="id3TaggingCheckbox">Write ID3 tags + embedded tracklist/chapters</label>
               <input id="id3TaggingCheckbox" type="checkbox" />
             </div>
             <div class="row setting-row setting-switch">
@@ -626,44 +938,30 @@
             <div class="hint">These filters estimate chapter/break landmarks only. They do not identify songs.</div>
           </div>
         </div>
-        <div class="settings-group">
-          <div class="subheading">Download Queue</div>
-          <div id="downloadQueueStatus" class="hint">Loading queue...</div>
-          <div class="row">
-            <button id="queuePauseBtn" class="secondary">Pause Queue</button>
-            <button id="queueResumeBtn" class="secondary">Resume Queue</button>
-            <button id="queueClearBtn" class="secondary">Clear Pending</button>
-          </div>
-          <div class="hint">Active</div>
-          <div id="downloadQueueActive" class="list compact-list"></div>
-          <div class="hint">Queued</div>
-          <div id="downloadQueuePending" class="list compact-list"></div>
-          <div class="hint">Recent</div>
-          <div id="downloadQueueRecent" class="list compact-list"></div>
-        </div>
         <div class="row">
           <button id="saveSettingsBtn">Save Settings</button>
         </div>
         <div id="settingsStatus" class="status muted"></div>
       </section>
-      <section class="panel" id="historySection">
+      <section class="panel" id="diagnosticsSection">
         <div class="row" style="justify-content:space-between;align-items:center;">
-          <h2 style="margin:0;font-size:1rem;">Download History</h2>
+          <h2 style="margin:0;font-size:1rem;">Diagnostics</h2>
           <div class="row" style="gap:0.5rem;">
-            <select id="historySourceFilter" style="font-size:0.85em;">
-              <option value="">All Sources</option>
-              <option value="rte">RTÉ</option>
-              <option value="bbc">BBC</option>
-              <option value="wwf">WWF</option>
-              <option value="nts">NTS</option>
-              <option value="fip">FIP</option>
-              <option value="kexp">KEXP</option>
-            </select>
-            <input id="historySearchInput" type="text" placeholder="Search…" style="font-size:0.85em;width:140px;" />
-            <button id="historyClearBtn" class="secondary" style="font-size:0.85em;">Clear</button>
+            <button id="diagnosticsRefreshBtn" class="secondary">Refresh</button>
+            <button id="diagnosticsRepairBtn" class="secondary">Repair Binaries</button>
+            <button id="diagnosticsOpenDownloadDirBtn" class="secondary">Open Download Folder</button>
+            <button id="diagnosticsOpenDataDirBtn" class="secondary">Open Data Folder</button>
           </div>
         </div>
-        <div id="historyList" style="margin-top:0.6rem;max-height:400px;overflow-y:auto;"></div>
+        <p class="hint">Check the current runtime, inspect bundled binaries, and re-run vendor bootstrap if something is missing.</p>
+        <div id="diagnosticsStatus" class="status muted"></div>
+        <div class="row history-toolbar-meta">
+          <div id="diagnosticsHarvestSummary" class="hint">Loading harvest diagnostics...</div>
+        </div>
+        <div id="diagnosticsHarvestMetrics" class="library-metrics-grid"></div>
+        <div id="diagnosticsHarvestSources" class="list" style="margin-bottom:0.7rem;"></div>
+        <div id="diagnosticsRuntime" class="diagnostics-grid"></div>
+        <div id="diagnosticsBinaries" class="list" style="margin-top:0.6rem;"></div>
       </section>
     </div>
 
@@ -690,6 +988,20 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.2/dist/hls.min.js"></script>
   <script src="./web-api-bridge.js"></script>
-  <script src="./renderer.js"></script>
-</body>
+    <script src="./library-screen.js"></script>
+    <script src="./schedules-screen.js"></script>
+    <script src="./settings-screen.js"></script>
+    <script src="./rte-screen.js"></script>
+    <script src="./bbc-screen.js"></script>
+    <script src="./wwf-screen.js"></script>
+    <script src="./nts-screen.js"></script>
+    <script src="./fip-screen.js"></script>
+    <script src="./kexp-screen.js"></script>
+    <script src="./playback-controller.js"></script>
+    <script src="./cue-manager.js"></script>
+    <script src="./renderer-core-helpers.js"></script>
+    <script src="./renderer-shared-utils.js"></script>
+    <script src="./app-shell.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
 </html>

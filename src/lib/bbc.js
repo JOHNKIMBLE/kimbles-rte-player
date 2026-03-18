@@ -9,6 +9,11 @@ const BBC_LIVE_STATIONS_FALLBACK = [
 ];
 const DISABLED_BBC_STATION_IDS = new Set(["bbc_5live_sportsextra", "bbc_radio_fourfm", "bbc_world_service"]);
 const bbcEpisodeDateCache = new Map();
+const BBC_DISCOVERY_BOOTSTRAP_TERMS = ["music", "arts", "jazz", "soul", "world", "electronic", "dance", "classical", "comedy", "culture", "documentary"];
+const bbcDiscoveryTermsCache = {
+  fetchedAt: 0,
+  terms: []
+};
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const { decodeHtml, cleanText, stripHtml, inferCadence } = require("./utils");
@@ -114,6 +119,305 @@ async function fetchJson(url) {
 }
 
 const stripTags = (input) => cleanText(stripHtml(input));
+
+function uniqueCleanList(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = cleanText(value || "");
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight) {
+  const text = cleanText(value || "").toLowerCase();
+  if (!text || !query) {
+    return 0;
+  }
+  if (text === query) {
+    return exactWeight;
+  }
+  if (text.startsWith(query)) {
+    return prefixWeight;
+  }
+  if (text.includes(query)) {
+    return includesWeight;
+  }
+  return 0;
+}
+
+function scoreListMatch(values, query, exactWeight, prefixWeight, includesWeight) {
+  let best = 0;
+  for (const value of values || []) {
+    best = Math.max(best, scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight));
+  }
+  return best;
+}
+
+function buildBbcProgramSearchText(item) {
+  return [
+    item.title,
+    item.description,
+    item.runSchedule,
+    item.nextBroadcastTitle,
+    item.programUrl,
+    ...(item.hosts || []),
+    ...(item.genres || [])
+  ]
+    .map((value) => cleanText(value || "").toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function scoreBbcProgramResult(item, query) {
+  if (!query) {
+    return 0;
+  }
+
+  let score = 0;
+  score += scoreTextMatch(item.title, query, 240, 185, 135);
+  score += scoreTextMatch(item.description, query, 95, 0, 60);
+  score += scoreTextMatch(item.runSchedule, query, 20, 15, 10);
+  score += scoreTextMatch(item.nextBroadcastTitle, query, 40, 30, 20);
+  score += scoreTextMatch(item.programUrl, query, 30, 20, 15);
+  score += scoreListMatch(item.hosts, query, 230, 190, 150);
+  score += scoreListMatch(item.genres, query, 170, 145, 115);
+
+  const tokens = query.split(/\s+/g).filter(Boolean);
+  if (tokens.length > 1) {
+    const searchText = buildBbcProgramSearchText(item);
+    if (tokens.every((token) => searchText.includes(token))) {
+      score += 70;
+    }
+  }
+
+  return score;
+}
+
+function getMetadataRichnessScore(item) {
+  return [
+    item.image ? 1 : 0,
+    item.description ? 2 : 0,
+    Array.isArray(item.hosts) ? Math.min(item.hosts.length, 3) * 2 : 0,
+    Array.isArray(item.genres) ? Math.min(item.genres.length, 3) : 0,
+    item.runSchedule ? 2 : 0,
+    item.nextBroadcastAt ? 1 : 0
+  ].reduce((sum, value) => sum + value, 0);
+}
+
+function normalizeDiscoveryTerm(value) {
+  const text = cleanText(value || "");
+  if (!text || text.length < 3 || /^\d+$/.test(text)) {
+    return "";
+  }
+  return text.slice(0, 60);
+}
+
+function getCachedDiscoveryTerms() {
+  const stale = Date.now() - bbcDiscoveryTermsCache.fetchedAt > 1000 * 60 * 60 * 6;
+  if (stale) {
+    return [];
+  }
+  return bbcDiscoveryTermsCache.terms.slice();
+}
+
+function rememberBbcDiscoveryTerms(items) {
+  const weights = new Map(
+    getCachedDiscoveryTerms().map((entry) => [String(entry.term || ""), Number(entry.weight || 0)])
+  );
+
+  for (const item of items || []) {
+    for (const host of item.hosts || []) {
+      const term = normalizeDiscoveryTerm(host);
+      if (term) {
+        weights.set(term, (weights.get(term) || 0) + 4);
+      }
+    }
+    for (const genre of item.genres || []) {
+      const term = normalizeDiscoveryTerm(genre);
+      if (term) {
+        weights.set(term, (weights.get(term) || 0) + 3);
+      }
+    }
+    const title = normalizeDiscoveryTerm(item.title);
+    if (title) {
+      weights.set(title, (weights.get(title) || 0) + 1);
+    }
+  }
+
+  bbcDiscoveryTermsCache.fetchedAt = Date.now();
+  bbcDiscoveryTermsCache.terms = [...weights.entries()]
+    .map(([term, weight]) => ({ term, weight }))
+    .sort((a, b) => {
+      if (b.weight !== a.weight) {
+        return b.weight - a.weight;
+      }
+      return a.term.localeCompare(b.term, "en");
+    })
+    .slice(0, 32);
+}
+
+function pickDiscoveryTerms(count, exclude = []) {
+  const excluded = new Set((exclude || []).map((value) => String(value || "").toLowerCase()));
+  const cached = getCachedDiscoveryTerms()
+    .map((entry) => entry.term)
+    .filter((term) => term && !excluded.has(term.toLowerCase()));
+
+  const pool = cached.length
+    ? cached
+    : BBC_DISCOVERY_BOOTSTRAP_TERMS.filter((term) => !excluded.has(term.toLowerCase()));
+
+  const randomized = pool
+    .map((term, index) => ({
+      term,
+      score: pool.length - index + Math.random()
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.term);
+
+  return randomized.slice(0, count);
+}
+
+function scoreDiscoveryNovelty(item, selected) {
+  const seenHosts = new Set();
+  const seenGenres = new Set();
+  const seenTitles = new Set();
+
+  for (const entry of selected || []) {
+    for (const host of entry.hosts || []) {
+      seenHosts.add(cleanText(host || "").toLowerCase());
+    }
+    for (const genre of entry.genres || []) {
+      seenGenres.add(cleanText(genre || "").toLowerCase());
+    }
+    seenTitles.add(cleanText(entry.title || "").toLowerCase());
+  }
+
+  let score = 0;
+  const title = cleanText(item.title || "").toLowerCase();
+  if (title && !seenTitles.has(title)) {
+    score += 2;
+  }
+  for (const host of item.hosts || []) {
+    const key = cleanText(host || "").toLowerCase();
+    if (key && !seenHosts.has(key)) {
+      score += 5;
+    }
+  }
+  for (const genre of item.genres || []) {
+    const key = cleanText(genre || "").toLowerCase();
+    if (key && !seenGenres.has(key)) {
+      score += 3;
+    }
+  }
+  return score;
+}
+
+function pickDiscoveryResults(pool, count) {
+  const ranked = (pool || [])
+    .map((item) => ({
+      item,
+      richness: getMetadataRichnessScore(item) + Math.random()
+    }))
+    .sort((a, b) => b.richness - a.richness)
+    .map((entry) => entry.item);
+
+  const selected = [];
+  const remaining = ranked.slice();
+  while (remaining.length && selected.length < count) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const item = remaining[index];
+      const score = getMetadataRichnessScore(item) + scoreDiscoveryNovelty(item, selected) + Math.random();
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return selected;
+}
+
+function collectBbcPeople(value, bucket) {
+  if (!value) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectBbcPeople(entry, bucket));
+    return;
+  }
+  if (typeof value === "string") {
+    const text = cleanText(value);
+    if (text) {
+      bucket.push(text);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    const directName = cleanText(
+      value.name
+      || value.alternateName
+      || value.title
+      || value.label
+      || [value.givenName, value.familyName].filter(Boolean).join(" ")
+    );
+    if (directName) {
+      bucket.push(directName);
+      return;
+    }
+    for (const key of ["author", "creator", "contributor", "actor", "performer", "host"]) {
+      if (value[key]) {
+        collectBbcPeople(value[key], bucket);
+      }
+    }
+  }
+}
+
+function extractBbcHostsFromHtml(html) {
+  const hosts = [];
+  for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const data = JSON.parse(match[1]);
+      const items = Array.isArray(data) ? data : [data];
+      for (const item of items) {
+        collectBbcPeople(item?.author, hosts);
+        collectBbcPeople(item?.creator, hosts);
+        collectBbcPeople(item?.contributor, hosts);
+        collectBbcPeople(item?.actor, hosts);
+        collectBbcPeople(item?.performer, hosts);
+        collectBbcPeople(item?.host, hosts);
+      }
+    } catch {}
+  }
+
+  const metaHosts = [
+    html.match(/<meta\s+name=["']parsely-author["']\s+content=["']([^"']+)["']/i)?.[1],
+    html.match(/<meta\s+name=["']author["']\s+content=["']([^"']+)["']/i)?.[1]
+  ].map((value) => cleanText(value || "")).filter(Boolean);
+  hosts.push(...metaHosts);
+
+  if (!hosts.length) {
+    const presentedBy = html.match(/(?:Presented by|presented by|with)\s*<\/span>\s*<span[^>]*>([^<]+)<\/span>/i)
+      || html.match(/(?:Presented by|with)\s+([^<.,|]{2,80})/i);
+    if (presentedBy?.[1]) {
+      hosts.push(cleanText(presentedBy[1]));
+    }
+  }
+
+  return uniqueCleanList(hosts).slice(0, 6);
+}
 
 function parsePublishedDateIso(input) {
   const text = cleanText(input || "");
@@ -400,47 +704,147 @@ function hhmmToMinutes(hhmm) {
   return (Number.isFinite(h) && Number.isFinite(m)) ? h * 60 + m : null;
 }
 
+function buildBroadcastSlotGroups(broadcasts) {
+  const groups = new Map();
+
+  for (const item of broadcasts) {
+    const start = toDublinDate(item.startDate);
+    const end = toDublinDate(item.endDate);
+    if (!start || !end) {
+      continue;
+    }
+
+    const startInfo = toUtcDayAndTime(start);
+    const endInfo = toUtcDayAndTime(end);
+    const startMin = hhmmToMinutes(startInfo.hhmm);
+    const endMin = hhmmToMinutes(endInfo.hhmm);
+    if (startMin == null || endMin == null) {
+      continue;
+    }
+
+    const key = `${startInfo.dayIndex}|${startInfo.hhmm}-${endInfo.hhmm}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        dayIndex: startInfo.dayIndex,
+        start: startInfo.hhmm,
+        end: endInfo.hhmm,
+        startMin,
+        endMin,
+        count: 0,
+        firstSeenAt: Number.isFinite(Date.parse(item.startDate)) ? Date.parse(item.startDate) : Number.MAX_SAFE_INTEGER
+      });
+    }
+    groups.get(key).count += 1;
+  }
+
+  return Array.from(groups.values())
+    .sort((a, b) => {
+      if (a.firstSeenAt !== b.firstSeenAt) {
+        return a.firstSeenAt - b.firstSeenAt;
+      }
+      if (a.dayIndex !== b.dayIndex) {
+        return a.dayIndex - b.dayIndex;
+      }
+      return a.startMin - b.startMin;
+    });
+}
+
+function mergeDstSlotGroups(slotGroups) {
+  const used = new Set();
+  const merged = [];
+
+  for (let i = 0; i < slotGroups.length; i += 1) {
+    if (used.has(i)) {
+      continue;
+    }
+
+    const base = { ...slotGroups[i] };
+    for (let j = i + 1; j < slotGroups.length; j += 1) {
+      if (used.has(j)) {
+        continue;
+      }
+      const candidate = slotGroups[j];
+      if (base.dayIndex !== candidate.dayIndex) {
+        continue;
+      }
+      if (Math.abs(base.startMin - candidate.startMin) !== 60) {
+        continue;
+      }
+      if (Math.abs(base.endMin - candidate.endMin) !== 60) {
+        continue;
+      }
+
+      base.count += candidate.count;
+      used.add(j);
+    }
+
+    used.add(i);
+    merged.push(base);
+  }
+
+  return merged;
+}
+
+function filterRecurringSlotGroups(slotGroups) {
+  if (slotGroups.length <= 1) {
+    return slotGroups;
+  }
+
+  const maxCount = Math.max(...slotGroups.map((group) => group.count || 0));
+  if (maxCount < 3) {
+    return slotGroups;
+  }
+
+  const threshold = Math.max(2, Math.ceil(maxCount / 2));
+  const filtered = slotGroups.filter((group) => group.count >= threshold);
+  return filtered.length ? filtered : slotGroups;
+}
+
+function buildRunScheduleFromSlotGroups(slotGroups) {
+  const groups = new Map();
+
+  for (const slot of slotGroups) {
+    const key = `${slot.start}-${slot.end}`;
+    if (!groups.has(key)) {
+      groups.set(key, { start: slot.start, end: slot.end, days: [] });
+    }
+    groups.get(key).days.push(slot.dayIndex);
+  }
+
+  return Array.from(groups.values())
+    .sort((a, b) => {
+      const aDay = Math.min(...a.days);
+      const bDay = Math.min(...b.days);
+      if (aDay !== bDay) {
+        return aDay - bDay;
+      }
+      return hhmmToMinutes(a.start) - hhmmToMinutes(b.start);
+    })
+    .map((group) => {
+      const dayExpr = formatDayGroup(group.days);
+      if (!dayExpr) {
+        return "";
+      }
+      return `${dayExpr} \u2022 ${group.start} - ${group.end}`;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
 /** Identical to buildRunScheduleFromBroadcasts but merges groups whose times differ by
  *  exactly 60 minutes and cover the same weekdays — caused by DST transitions (UK GMT/BST). */
 function buildRunScheduleFromBroadcastsDst(broadcasts) {
-  const raw = buildRunScheduleFromBroadcasts(broadcasts);
-  if (!raw) return raw;
-
-  // Parse each segment back into { days: Set, startMin, endMin }
-  const segments = raw.split(/\s*,\s*/g).map((seg) => {
-    const m = seg.match(/^(.*?)\s*[•]\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
-    if (!m) return null;
-    const dayExpr = m[1].trim();
-    const startMin = hhmmToMinutes(m[2]);
-    const endMin = hhmmToMinutes(m[3]);
-    return { dayExpr, startMin, endMin, original: seg };
-  }).filter(Boolean);
-
-  // Merge pairs where dayExpr matches and times differ by exactly 60 minutes
-  const used = new Set();
-  const merged = [];
-  for (let i = 0; i < segments.length; i++) {
-    if (used.has(i)) continue;
-    let best = segments[i];
-    for (let j = i + 1; j < segments.length; j++) {
-      if (used.has(j)) continue;
-      const a = segments[i];
-      const b = segments[j];
-      if (a.dayExpr !== b.dayExpr) continue;
-      const diff = Math.abs(a.startMin - b.startMin);
-      if (diff === 60) {
-        // Keep the one with more broadcasts (if indeterminate, keep the earlier occurrence)
-        best = a; // keep first seen
-        used.add(j);
-      }
-    }
-    used.add(i);
-    merged.push(best.original);
+  const slotGroups = buildBroadcastSlotGroups(broadcasts);
+  if (!slotGroups.length) {
+    return "";
   }
-  return merged.join(", ");
+
+  const mergedDstGroups = mergeDstSlotGroups(slotGroups);
+  const recurringGroups = filterRecurringSlotGroups(mergedDstGroups);
+  return buildRunScheduleFromSlotGroups(recurringGroups);
 }
 
-function buildRunScheduleFromBroadcasts(broadcasts) {
+function _buildRunScheduleFromBroadcasts(broadcasts) {
   const groups = new Map();
 
   for (const item of broadcasts) {
@@ -558,6 +962,7 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
   let description;
   let image;
   let genres = [];
+  let hosts = [];
 
   try {
     const html = await fetchText(normalizedUrl);
@@ -574,6 +979,7 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
       /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i,
       /<meta\s+name=["']twitter:image(?::src)?["']\s+content=["']([^"']+)["']/i
     ]);
+    hosts = extractBbcHostsFromHtml(html);
     // Try to extract genres from JSON-LD schema.org markup
     for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
       try {
@@ -628,6 +1034,7 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
     title: title || "BBC Program",
     description: description || "",
     image: normalizeImageUrl(image),
+    hosts,
     genres: [...new Set(genres)].slice(0, 6),
     runSchedule: schedule.runSchedule || "",
     nextBroadcastAt: schedule.nextBroadcastAt || "",
@@ -742,7 +1149,23 @@ async function searchBbcPrograms(query, runYtDlpJson) {
     }
   }));
 
-  return summaries.sort((a, b) => String(a.title).localeCompare(String(b.title), "en"));
+  const normalizedQuery = q.toLowerCase();
+  const results = summaries
+    .map((item) => ({ ...item, _score: scoreBbcProgramResult(item, normalizedQuery) }))
+    .filter((item) => item._score > 0)
+    .sort((a, b) => {
+      if (b._score !== a._score) {
+        return b._score - a._score;
+      }
+      return String(a.title).localeCompare(String(b.title), "en");
+    })
+    .map((item) => {
+      const copy = { ...item };
+      delete copy._score;
+      return copy;
+    });
+  rememberBbcDiscoveryTerms(results);
+  return results;
 }
 
 async function getBbcProgramEpisodes(programUrl, runYtDlpJson, page = 1) {
@@ -814,6 +1237,13 @@ async function getBbcProgramEpisodes(programUrl, runYtDlpJson, page = 1) {
 
   const cadenceInfo = inferCadence(mapped);
   const summary = await getBbcProgramSummary(normalizedProgramUrl, runYtDlpJson);
+  mapped = mapped.map((episode) => ({
+    ...episode,
+    description: episode.description || summary.description || "",
+    image: episode.image || summary.image || "",
+    hosts: Array.isArray(episode.hosts) && episode.hosts.length ? episode.hosts : (summary.hosts || []),
+    genres: Array.isArray(episode.genres) && episode.genres.length ? episode.genres : (summary.genres || [])
+  }));
   const safePage = Math.max(1, Number(page) || 1);
   // Program image: prefer summary, fall back to first episode's image
   const programImage = summary.image || mapped.find((e) => e.image)?.image || "";
@@ -823,6 +1253,7 @@ async function getBbcProgramEpisodes(programUrl, runYtDlpJson, page = 1) {
     title: summary.title || cleanText(payload?.title || "BBC Program"),
     description: summary.description || cleanText(payload?.description || ""),
     image: programImage,
+    hosts: summary.hosts || [],
     genres: summary.genres || [],
     episodes: mapped,
     totalItems: mapped.length,
@@ -847,22 +1278,55 @@ async function getBbcEpisodePlaylist(episodeUrl) {
 }
 
 async function getBbcDiscovery(count = 5) {
-  const TERMS = ["music", "arts", "jazz", "soul", "world", "electronic", "dance", "classical", "comedy", "culture", "documentary"];
-  const shuffled = [...TERMS].sort(() => Math.random() - 0.5);
-  // Run 2 random terms in parallel to build a large enough pool
-  const [a, b] = await Promise.allSettled([
-    searchBbcPrograms(shuffled[0]),
-    searchBbcPrograms(shuffled[1])
-  ]);
-  const aResults = a.status === "fulfilled" ? a.value : [];
-  const bResults = b.status === "fulfilled" ? b.value : [];
+  const desiredCount = Math.max(1, Number(count) || 5);
+  const termBudget = Math.min(12, Math.max(6, desiredCount * 2));
+  const terms = pickDiscoveryTerms(termBudget);
   const seen = new Set();
   const pool = [];
-  for (const r of [...aResults, ...bResults]) {
-    const key = r.programUrl || r.url || r.title;
-    if (key && !seen.has(key)) { seen.add(key); pool.push(r); }
+  const searchedTerms = [];
+
+  for (let index = 0; index < terms.length; index += 2) {
+    const batch = terms.slice(index, index + 2);
+    if (!batch.length) {
+      break;
+    }
+    searchedTerms.push(...batch);
+    const settled = await Promise.allSettled(batch.map((term) => searchBbcPrograms(term)));
+    const results = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+    rememberBbcDiscoveryTerms(results);
+    for (const row of results) {
+      const key = row.programUrl || row.url || row.title;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        pool.push(row);
+      }
+    }
+    if (pool.length >= Math.max(desiredCount * 2, desiredCount + 2)) {
+      break;
+    }
   }
-  return pool.sort(() => Math.random() - 0.5).slice(0, count);
+
+  if (pool.length < desiredCount) {
+    const fallbackTerms = pickDiscoveryTerms(termBudget, searchedTerms);
+    for (let index = 0; index < fallbackTerms.length; index += 2) {
+      const batch = fallbackTerms.slice(index, index + 2);
+      const settled = await Promise.allSettled(batch.map((term) => searchBbcPrograms(term)));
+      const results = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+      rememberBbcDiscoveryTerms(results);
+      for (const row of results) {
+        const key = row.programUrl || row.url || row.title;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          pool.push(row);
+        }
+      }
+      if (pool.length >= desiredCount) {
+        break;
+      }
+    }
+  }
+
+  return pickDiscoveryResults(pool, desiredCount);
 }
 
 module.exports = {

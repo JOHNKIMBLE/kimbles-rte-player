@@ -21,7 +21,12 @@ function createDownloadHistory(historyFilePath, maxEntries = 500) {
 
   function append(entry) {
     load();
-    cache.unshift({ id: crypto.randomBytes(4).toString("hex"), savedAt: new Date().toISOString(), ...entry });
+    cache.unshift({
+      id: crypto.randomBytes(4).toString("hex"),
+      savedAt: new Date().toISOString(),
+      status: "downloaded",
+      ...(entry || {})
+    });
     if (cache.length > maxEntries) cache = cache.slice(0, maxEntries);
     save();
   }

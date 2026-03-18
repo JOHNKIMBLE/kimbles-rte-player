@@ -106,6 +106,66 @@ async function fetchJson(url) {
   return JSON.parse(text);
 }
 
+function uniqueCleanList(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = cleanText(value || "");
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function collectNtsPeople(value, bucket) {
+  if (!value) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectNtsPeople(entry, bucket));
+    return;
+  }
+  if (typeof value === "string") {
+    const text = cleanText(value);
+    if (text) {
+      bucket.push(text);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    const directName = cleanText(
+      value.name
+      || value.title
+      || value.label
+      || value.value
+      || [value.first_name, value.last_name].filter(Boolean).join(" ")
+    );
+    if (directName) {
+      bucket.push(directName);
+    }
+  }
+}
+
+function extractNtsHosts(obj) {
+  if (!obj || typeof obj !== "object") {
+    return [];
+  }
+  const hosts = [];
+  for (const field of ["hosts", "host", "presenters", "presenter", "residents", "resident", "artists", "artist", "djs", "dj", "people", "contributors", "authors"]) {
+    if (obj[field]) {
+      collectNtsPeople(obj[field], hosts);
+    }
+  }
+  return uniqueCleanList(hosts).slice(0, 6);
+}
+
 /** GET /api/v2/shows?offset=&limit= — paginated list of shows. */
 async function fetchNtsShowsFromApi(offset = 0, limit = 50) {
   const url = `${NTS_API_BASE}/shows?offset=${Number(offset)}&limit=${Number(limit)}`;
@@ -307,6 +367,7 @@ function mapApiShowToSummary(apiShow, episodes) {
   const media = apiShow?.media || {};
   const image = media.picture_medium || media.picture_large || media.background_medium || media.background_large || "";
   const genres = Array.isArray(apiShow?.genres) ? apiShow.genres.map((g) => g?.value || "").filter(Boolean) : [];
+  const hosts = extractNtsHosts(apiShow);
   const location = cleanText(apiShow?.location_short || apiShow?.location_long || "")
     || (Array.isArray(episodes) && episodes.length ? cleanText(episodes[0]?.location_short || episodes[0]?.location_long || "") : "");
 
@@ -327,6 +388,7 @@ function mapApiShowToSummary(apiShow, episodes) {
     nextBroadcastTitle: "",
     cadence: schedInfo.cadence || "irregular",
     genres: genres.length ? genres : undefined,
+    hosts: hosts.length ? hosts : undefined,
     location: location || undefined
   };
 }
@@ -347,6 +409,7 @@ function mapApiEpisodeToExplorer(apiEpisode, showAlias) {
   }
   const location = cleanText(apiEpisode?.location_short || apiEpisode?.location_long || "");
   const genres = Array.isArray(apiEpisode?.genres) ? apiEpisode.genres.map((g) => g?.value || "").filter(Boolean) : [];
+  const hosts = extractNtsHosts(apiEpisode);
   return {
     clipId: episodeAlias || episodeUrl,
     id: episodeAlias || episodeUrl,
@@ -357,7 +420,8 @@ function mapApiEpisodeToExplorer(apiEpisode, showAlias) {
     publishedTime,
     image,
     location,
-    genres: genres.length ? genres : undefined
+    genres: genres.length ? genres : undefined,
+    hosts: hosts.length ? hosts : undefined
   };
 }
 
@@ -456,40 +520,70 @@ function parseEpisodesFromShowHtml(html, showUrl) {
 }
 
 /** Parse tracklist from episode page. Format: "0:00:10 Artist Title" or "Artist - Title" (no timestamp = supporter only). */
+function extractTracklistHtml(html) {
+  const raw = String(html || "");
+  const match = raw.match(/<ul[^>]+class=["'][^"']*tracklist__tracks[^"']*["'][^>]*>([\s\S]*?)<\/ul>/i);
+  return String(match?.[1] || "");
+}
+
+function decodeNtsHtmlText(input) {
+  return cleanText(
+    String(input || "")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, "\"")
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&nbsp;/g, " ")
+  );
+}
+
+function looksLikeNtsErrorPage(html) {
+  const raw = String(html || "");
+  const title = decodeNtsHtmlText(raw.match(/<title>([^<]+)<\/title>/i)?.[1] || "");
+  const description = decodeNtsHtmlText(raw.match(/<meta\s+(?:name|property)=["'](?:description|og:description)["']\s+content=["']([^"']+)["']/i)?.[1] || "");
+  return /page not found/i.test(title) || /\b404\b/i.test(description);
+}
+
 function parseTracklistFromEpisodeHtml(html) {
-  const tracks = [];
-  const block = html.replace(/<[^>]+>/g, "\n");
-  const regex = /(\d{1,2}):(\d{2}):(\d{2})\s*\n+([\s\S]*?)(?=\n\s*\d{1,2}:\d{2}:\d{2}\s*\n|\n\n####|$)/g;
-  let m;
-  while ((m = regex.exec(block)) !== null) {
-    const startSeconds = parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
-    const raw = String(m[4] || "").trim();
-    const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-    let artist = "";
-    let title = "";
-    if (lines.length >= 2) {
-      artist = lines[0].replace(/(\S+)\s+\1/, "$1").trim();
-      title = lines.slice(1).join(" ").trim();
-    } else if (lines.length === 1) {
-      const line = lines[0];
-      const dashMatch = line.match(/\s+[-–—]\s+/);
-      if (dashMatch) {
-        const idx = line.indexOf(dashMatch[0]);
-        artist = line.slice(0, idx).trim();
-        title = line.slice(idx + dashMatch[0].length).trim();
-      } else {
-        title = line;
-      }
-    }
-    if (title || artist) {
-      tracks.push({
-        startSeconds,
-        title: title || "Unknown",
-        artist,
-        image: ""
-      });
-    }
+  if (looksLikeNtsErrorPage(html)) {
+    return [];
   }
+
+  const listHtml = extractTracklistHtml(html);
+  if (!listHtml) {
+    return [];
+  }
+
+  const tracks = [];
+  const itemPattern = /<li[^>]+class=["'][^"']*\btrack\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi;
+  let m;
+  while ((m = itemPattern.exec(listHtml)) !== null) {
+    const itemHtml = String(m[1] || "");
+    const timestampText = decodeNtsHtmlText(itemHtml.match(/<span[^>]+class=["'][^"']*track__timestamp[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] || "");
+    const artistMatches = Array.from(itemHtml.matchAll(/<span[^>]+class=["'][^"']*track__artist(?:\s|--|[^"'])*["'][^>]*>([\s\S]*?)<\/span>/gi));
+    const artists = artistMatches
+      .map((entry) => decodeNtsHtmlText(stripHtml(entry[1] || "")))
+      .filter(Boolean);
+    const title = decodeNtsHtmlText(stripHtml(itemHtml.match(/<div[^>]+class=["'][^"']*track__title[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] || ""));
+    const timeMatch = timestampText.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+    const startSeconds = timeMatch
+      ? Number(timeMatch[1]) * 3600 + Number(timeMatch[2]) * 60 + Number(timeMatch[3])
+      : undefined;
+
+    if (!title && !artists.length) {
+      continue;
+    }
+
+    tracks.push({
+      startSeconds,
+      title: title || "Unknown",
+      artist: Array.from(new Set(artists)).join(", "),
+      image: ""
+    });
+  }
+
   return tracks;
 }
 
@@ -501,6 +595,24 @@ function tracklistToPlaylistTracks(tracklist) {
     image: t.image || "",
     startSeconds: t.startSeconds
   }));
+}
+
+function parseTrackOffsetSeconds(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, value);
+  }
+  const text = cleanText(value);
+  if (!text) {
+    return undefined;
+  }
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    return Math.max(0, Number(text));
+  }
+  const match = text.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.\d+)?$/);
+  if (!match) {
+    return undefined;
+  }
+  return Math.max(0, Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0));
 }
 
 async function getNtsEpisodeInfo(episodeUrl) {
@@ -736,7 +848,12 @@ async function fetchAllNtsShows(useCache = true) {
       const alias = s?.show_alias || "";
       if (alias && !seen.has(alias)) {
         seen.add(alias);
-        shows.push({ alias, name: (s?.name || "").toLowerCase(), desc: (s?.description || "").toLowerCase() });
+        shows.push({
+          alias,
+          name: (s?.name || "").toLowerCase(),
+          desc: (s?.description || "").toLowerCase(),
+          hosts: extractNtsHosts(s).join(" ").toLowerCase()
+        });
       }
     }
     // Fetch remaining pages in parallel batches of 10
@@ -751,7 +868,12 @@ async function fetchAllNtsShows(useCache = true) {
           const alias = s?.show_alias || "";
           if (alias && !seen.has(alias)) {
             seen.add(alias);
-            shows.push({ alias, name: (s?.name || "").toLowerCase(), desc: (s?.description || "").toLowerCase() });
+            shows.push({
+              alias,
+              name: (s?.name || "").toLowerCase(),
+              desc: (s?.description || "").toLowerCase(),
+              hosts: extractNtsHosts(s).join(" ").toLowerCase()
+            });
           }
         }
       }
@@ -870,6 +992,7 @@ async function searchNtsPrograms(query, options) {
         alias,
         name: (show.name || "").toLowerCase(),
         desc: (show.description || "").toLowerCase(),
+        hosts: extractNtsHosts(show).join(" ").toLowerCase(),
         recentRank: -1 // prioritise direct hits
       });
     }
@@ -884,6 +1007,7 @@ async function searchNtsPrograms(query, options) {
         alias: slug,
         name: (ep.title || slug.replace(/-/g, " ")).toLowerCase(),
         desc: "",
+        hosts: "",
         recentRank: rank++
       });
     }
@@ -897,6 +1021,7 @@ async function searchNtsPrograms(query, options) {
       const existing = byAlias.get(s.alias);
       if (!existing.desc && s.desc) existing.desc = s.desc;
       if (existing.name.length < s.name.length) existing.name = s.name;
+      if (!existing.hosts && s.hosts) existing.hosts = s.hosts;
     }
   }
 
@@ -906,7 +1031,7 @@ async function searchNtsPrograms(query, options) {
   if (q) {
     const words = q.split(/\s+/).filter(Boolean);
     matched = matched.filter((s) => {
-      const combined = [s.alias.replace(/-/g, " "), s.name, s.desc].join(" ");
+      const combined = [s.alias.replace(/-/g, " "), s.name, s.desc, s.hosts || ""].join(" ");
       return words.every((w) => combined.includes(w));
     });
   }
@@ -926,7 +1051,84 @@ async function searchNtsPrograms(query, options) {
   const results = await Promise.all(
     matched.slice(0, 30).map((s) => getNtsProgramSummary(`${BASE_URL}/shows/${s.alias}`))
   );
-  return results;
+  if (!q) {
+    return results;
+  }
+
+  function scoreTextMatch(value, queryText, exactWeight, prefixWeight, includesWeight) {
+    const text = cleanText(value || "").toLowerCase();
+    if (!text || !queryText) {
+      return 0;
+    }
+    if (text === queryText) {
+      return exactWeight;
+    }
+    if (text.startsWith(queryText)) {
+      return prefixWeight;
+    }
+    if (text.includes(queryText)) {
+      return includesWeight;
+    }
+    return 0;
+  }
+
+  function scoreListMatch(values, queryText, exactWeight, prefixWeight, includesWeight) {
+    let best = 0;
+    for (const value of values || []) {
+      best = Math.max(best, scoreTextMatch(value, queryText, exactWeight, prefixWeight, includesWeight));
+    }
+    return best;
+  }
+
+  function buildSearchText(item) {
+    return [
+      item.title,
+      item.description,
+      item.location,
+      item.runSchedule,
+      item.nextBroadcastTitle,
+      ...(item.hosts || []),
+      ...(item.genres || [])
+    ]
+      .map((value) => cleanText(value || "").toLowerCase())
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function scoreResult(item, queryText) {
+    let score = 0;
+    score += scoreTextMatch(item.title, queryText, 240, 190, 140);
+    score += scoreTextMatch(item.description, queryText, 95, 0, 60);
+    score += scoreTextMatch(item.location, queryText, 180, 145, 115);
+    score += scoreTextMatch(item.runSchedule, queryText, 40, 30, 20);
+    score += scoreTextMatch(item.nextBroadcastTitle, queryText, 35, 25, 15);
+    score += scoreListMatch(item.hosts, queryText, 230, 190, 150);
+    score += scoreListMatch(item.genres, queryText, 170, 145, 115);
+
+    const tokens = queryText.split(/\s+/g).filter(Boolean);
+    if (tokens.length > 1) {
+      const searchText = buildSearchText(item);
+      if (tokens.every((token) => searchText.includes(token))) {
+        score += 70;
+      }
+    }
+    return score;
+  }
+
+  return results
+    .map((item) => ({ ...item, _score: scoreResult(item, q) }))
+    .filter((item) => item._score > 0)
+    .sort((a, b) => {
+      if (b._score !== a._score) {
+        return b._score - a._score;
+      }
+      return String(a.title || "").localeCompare(String(b.title || ""), "en");
+    })
+    .map((item) => {
+      const copy = { ...item };
+      delete copy._score;
+      return copy;
+    });
 }
 
 /** Fetch tracklist from NTS API (preferred) with HTML fallback. */
@@ -945,17 +1147,23 @@ async function getNtsEpisodePlaylist(episodeUrl) {
           title: cleanText(t.title || "Unknown"),
           artist: cleanText(t.artist || ""),
           image: "",
-          startSeconds: t.offset != null ? Number(t.offset) : (t.offset_estimate != null ? Number(t.offset_estimate) : undefined)
+          startSeconds: t.offset != null
+            ? parseTrackOffsetSeconds(t.offset)
+            : (t.offset_estimate != null ? parseTrackOffsetSeconds(t.offset_estimate) : undefined)
         }));
         return { episodeUrl: url, tracks };
       }
     } catch {}
   }
   // Fallback to HTML scraping
-  const html = await fetchText(url);
-  const tracklist = parseTracklistFromEpisodeHtml(html);
-  const tracks = tracklistToPlaylistTracks(tracklist);
-  return { episodeUrl: url, tracks };
+  try {
+    const html = await fetchText(url);
+    const tracklist = parseTracklistFromEpisodeHtml(html);
+    const tracks = tracklistToPlaylistTracks(tracklist);
+    return { episodeUrl: url, tracks };
+  } catch {
+    return { episodeUrl: url, tracks: [] };
+  }
 }
 
 function normalizeNtsProgramUrl(input) {
@@ -1121,15 +1329,95 @@ async function getNtsLiveNow(channelId) {
   }
 }
 
+function getNtsMetadataRichnessScore(item) {
+  return [
+    item.image ? 1 : 0,
+    item.description ? 2 : 0,
+    Array.isArray(item.hosts) ? Math.min(item.hosts.length, 3) * 2 : 0,
+    Array.isArray(item.genres) ? Math.min(item.genres.length, 3) : 0,
+    item.location ? 2 : 0,
+    item.runSchedule ? 2 : 0,
+    item.nextBroadcastAt ? 1 : 0
+  ].reduce((sum, value) => sum + value, 0);
+}
+
+function scoreNtsDiscoveryNovelty(item, selected) {
+  const seenHosts = new Set();
+  const seenGenres = new Set();
+  const seenLocations = new Set();
+  const seenTitles = new Set();
+
+  for (const entry of selected || []) {
+    for (const host of entry.hosts || []) {
+      seenHosts.add(cleanText(host || "").toLowerCase());
+    }
+    for (const genre of entry.genres || []) {
+      seenGenres.add(cleanText(genre || "").toLowerCase());
+    }
+    seenLocations.add(cleanText(entry.location || "").toLowerCase());
+    seenTitles.add(cleanText(entry.title || "").toLowerCase());
+  }
+
+  let score = 0;
+  const titleKey = cleanText(item.title || "").toLowerCase();
+  const locationKey = cleanText(item.location || "").toLowerCase();
+  if (titleKey && !seenTitles.has(titleKey)) {
+    score += 2;
+  }
+  if (locationKey && !seenLocations.has(locationKey)) {
+    score += 3;
+  }
+  for (const host of item.hosts || []) {
+    const key = cleanText(host || "").toLowerCase();
+    if (key && !seenHosts.has(key)) {
+      score += 5;
+    }
+  }
+  for (const genre of item.genres || []) {
+    const key = cleanText(genre || "").toLowerCase();
+    if (key && !seenGenres.has(key)) {
+      score += 3;
+    }
+  }
+  return score;
+}
+
+function pickNtsDiscoveryResults(items, count) {
+  const remaining = (items || [])
+    .map((item) => ({
+      item,
+      richness: getNtsMetadataRichnessScore(item) + Math.random()
+    }))
+    .sort((a, b) => b.richness - a.richness)
+    .map((entry) => entry.item);
+
+  const selected = [];
+  while (remaining.length && selected.length < count) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const item = remaining[index];
+      const score = getNtsMetadataRichnessScore(item) + scoreNtsDiscoveryNovelty(item, selected) + Math.random();
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return selected;
+}
+
 async function getNtsDiscovery(count = 5) {
   const shows = await fetchAllNtsShows(true).catch(() => []);
   const shuffled = [...shows].sort(() => Math.random() - 0.5);
-  const sample = shuffled.slice(0, Math.min(count * 2, shuffled.length));
+  const sample = shuffled.slice(0, Math.min(count * 4, shuffled.length));
   const results = [];
   const concurrency = 4;
   let idx = 0;
   async function worker() {
-    while (idx < sample.length && results.length < count) {
+    while (idx < sample.length) {
       const s = sample[idx++];
       const url = `${BASE_URL}/shows/${s.alias}`;
       try {
@@ -1139,7 +1427,7 @@ async function getNtsDiscovery(count = 5) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, sample.length) }, () => worker()));
-  return results.slice(0, count);
+  return pickNtsDiscoveryResults(results, count);
 }
 
 module.exports = {

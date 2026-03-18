@@ -84,8 +84,8 @@ function mapCosmicEpisode(obj) {
   const durationMinutes = durationParts.length === 2
     ? (durationParts[0] || 0) * 60 + (durationParts[1] || 0)
     : (durationParts[0] || 0) * 60;
-  const genres = Array.isArray(meta.genres) ? meta.genres.map((g) => g?.title || String(g || "")).filter(Boolean) : [];
-  const hosts = Array.isArray(meta.regular_hosts) ? meta.regular_hosts.map((h) => h?.title || String(h || "")).filter(Boolean) : [];
+  const genres = normalizeWwfDisplayList(meta.genres);
+  const hosts = normalizeWwfDisplayList(meta.regular_hosts);
   const location = meta.location?.title || "";
   const description = cleanText(stripHtml(meta.description || obj.description || ""));
   const playerUrl = meta.player_url || "";
@@ -340,6 +340,73 @@ function parseTitleParts(title) {
   return { showName: t, episodeName: "" };
 }
 
+function normalizeWwfIdentityText(value) {
+  return cleanText(stripHtml(String(value || "")))
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getWwfEpisodeSortTimestamp(episode) {
+  if (episode?.startTimestamp != null && Number.isFinite(Number(episode.startTimestamp))) {
+    return Number(episode.startTimestamp);
+  }
+  const publishedTime = String(episode?.publishedTime || "").trim();
+  if (publishedTime) {
+    const ts = new Date(`${publishedTime}T12:00:00Z`).getTime();
+    if (Number.isFinite(ts)) {
+      return ts;
+    }
+  }
+  return 0;
+}
+
+function isWwfEpisodeReleased(episode, now = Date.now()) {
+  if (!episode) {
+    return false;
+  }
+  if (episode.startTimestamp != null && Number.isFinite(Number(episode.startTimestamp))) {
+    return Number(episode.startTimestamp) <= now;
+  }
+  const publishedTime = String(episode.publishedTime || "").trim();
+  if (publishedTime) {
+    const today = new Date(now).toISOString().slice(0, 10);
+    return publishedTime <= today;
+  }
+  return true;
+}
+
+function buildHostIdentityNames(hostSlug, displayName) {
+  const names = new Set();
+  const add = (value) => {
+    const normalized = normalizeWwfIdentityText(value);
+    if (normalized) {
+      names.add(normalized);
+    }
+  };
+  add(hostSlug ? String(hostSlug).replace(/-/g, " ") : "");
+  add(displayName || "");
+  return [...names];
+}
+
+function episodeMatchesHostIdentity(episode, hostIdentityNames) {
+  const names = Array.isArray(hostIdentityNames) ? hostIdentityNames.filter(Boolean) : [];
+  if (!names.length) {
+    return true;
+  }
+  const hostNames = Array.isArray(episode?.hosts) ? episode.hosts.map((host) => normalizeWwfIdentityText(host)).filter(Boolean) : [];
+  if (hostNames.some((host) => names.includes(host))) {
+    return true;
+  }
+  const titleFields = [
+    episode?.episodeName,
+    episode?.title,
+    episode?.fullTitle
+  ].map((value) => normalizeWwfIdentityText(value)).filter(Boolean);
+  return titleFields.some((field) => names.some((name) => field === name || field.startsWith(`${name} `) || field.includes(` ${name} `)));
+}
+
 /** Extract DD MMM YYYY from "10 Mar 2026 | 12:00 [GMT] | Chicago" style. */
 function parsePublishedFromMeta(text) {
   const match = String(text || "").match(/\b(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\b/);
@@ -391,6 +458,36 @@ function isCosmicId(val) {
   return /^[0-9a-f]{20,}$/i.test(String(val || "").trim());
 }
 
+function toWwfDisplayLabel(value) {
+  if (value == null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    const text = cleanText(value);
+    return text && !isCosmicId(text) ? text : "";
+  }
+
+  if (typeof value === "object") {
+    const title = cleanText(value.title || value.name || "");
+    if (title && !isCosmicId(title)) {
+      return title;
+    }
+    const slug = cleanText(String(value.slug || "").replace(/-/g, " "));
+    if (slug && !isCosmicId(slug)) {
+      return slug.replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+  }
+
+  return "";
+}
+
+function normalizeWwfDisplayList(values) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => toWwfDisplayLabel(value))
+    .filter(Boolean))];
+}
+
 /** Parse schedule array from WWF schedule page HTML (embedded JSON with escaped quotes). Times are GMT. */
 function parseWwfScheduleFromHtml(html) {
   const startIdx = html.indexOf("[{\\\"show_key\\\"");
@@ -425,10 +522,8 @@ function mapScheduleItemToEpisode(item) {
   const { showName, episodeName } = parseTitleParts(name);
   const picture = String(item.picture || "").trim();
   const image = picture ? picture.replace(/^\/\//, "https://") : "";
-  const tags = Array.isArray(item.tags) ? item.tags : [];
-  const genres = tags.map((t) => String(t || "").trim()).filter((t) => t && !isCosmicId(t));
-  const rawHosts = Array.isArray(item.hosts) ? item.hosts : [];
-  const hostsClean = rawHosts.map((h) => String(h || "").trim()).filter((h) => h && !isCosmicId(h));
+  const genres = normalizeWwfDisplayList(item.tags);
+  const hostsClean = normalizeWwfDisplayList(item.hosts);
   const publishedTime = date; // YYYY-MM-DD
   return {
     clipId: (episodeUrl.split("/episode/")[1] || episodeUrl) || "",
@@ -1107,8 +1202,8 @@ function mergeWwfEpisodeSources(scheduleEpisodes, showsEpisodes) {
   }
   const merged = [...byUrl.values()];
   merged.sort((a, b) => {
-    let aTs = a.startTimestamp != null ? a.startTimestamp : (a.publishedTime ? new Date(a.publishedTime + "T12:00:00Z").getTime() : 0);
-    let bTs = b.startTimestamp != null ? b.startTimestamp : (b.publishedTime ? new Date(b.publishedTime + "T12:00:00Z").getTime() : 0);
+    let aTs = getWwfEpisodeSortTimestamp(a);
+    let bTs = getWwfEpisodeSortTimestamp(b);
     if (!Number.isFinite(aTs)) aTs = 0;
     if (!Number.isFinite(bTs)) bTs = 0;
     return bTs - aTs;
@@ -1134,15 +1229,21 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
   if (isHostUrl) {
     hostSlugFromUrl = (programName.match(/\/hosts\/([^/?#]+)/i) || [])[1] || "";
     if (hostSlugFromUrl) {
-      const hostEpisodes = await fetchWwfHostPageEpisodes(hostSlugFromUrl);
+      const [hostEpisodes, hostMeta] = await Promise.all([
+        fetchWwfHostPageEpisodes(hostSlugFromUrl),
+        fetchWwfHostMetadata(hostSlugFromUrl, true).catch(() => null)
+      ]);
       if (hostEpisodes.length) {
+        const hostIdentityNames = buildHostIdentityNames(hostSlugFromUrl, hostMeta?.displayName);
+        const directHostEpisodes = hostEpisodes.filter((episode) => episodeMatchesHostIdentity(episode, hostIdentityNames));
+        const matchedHostEpisodes = directHostEpisodes.length ? directHostEpisodes : hostEpisodes;
         // Build lookup of schedule/shows episodes for metadata enrichment
         const schedMap = new Map();
         for (const e of all) { if (e.episodeUrl) schedMap.set(e.episodeUrl, e); }
 
         // Enrich host page episodes with schedule metadata (times, genres, etc.)
         const byUrl = new Map();
-        for (const he of hostEpisodes) {
+        for (const he of matchedHostEpisodes) {
           const se = schedMap.get(he.episodeUrl);
           byUrl.set(he.episodeUrl, se ? {
             ...he,
@@ -1152,68 +1253,22 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
             endTimestamp: se.endTimestamp || he.endTimestamp,
             durationMinutes: he.durationMinutes || se.durationMinutes,
             genres: (he.genres && he.genres.length) ? he.genres : se.genres,
+            hosts: (he.hosts && he.hosts.length) ? he.hosts : se.hosts,
+            location: he.location || se.location,
             image: he.image || se.image,
           } : he);
         }
 
-        // Supplement with schedule/shows episodes matching this host's show name
-        // (host pages may lag behind; schedule/shows have the very latest episodes)
-        const hostShowName = (hostEpisodes[0]?.showName || hostSlugFromUrl.replace(/-/g, " ")).toLowerCase();
+        // Supplement with schedule/shows episodes that match the host identity.
+        // Host pages can lag behind the newest published episodes, but host identity
+        // matters more than show-name matches for rotating-host programs.
         for (const e of all) {
           if (e.episodeUrl && !byUrl.has(e.episodeUrl)) {
-            const show = (e.showName || "").toLowerCase();
-            const full = (e.fullTitle || "").toLowerCase();
-            if (show === hostShowName || full.startsWith(hostShowName + ":") || full.startsWith(hostShowName + " ")) {
+            if (episodeMatchesHostIdentity(e, hostIdentityNames) && isWwfEpisodeReleased(e)) {
               byUrl.set(e.episodeUrl, e);
             }
           }
         }
-
-        // Supplement with sub-host pages — shows like "Breakfast Club Coco" have
-        // rotating sub-hosts (e.g. "Coco Maria", "Palo Santo Discos") whose own host
-        // pages contain episodes not listed on the main host page.  Collect unique
-        // sub-host names from the `hosts` field, generate slug guesses, and fetch
-        // their host pages in parallel.  Only include episodes whose title matches
-        // the main show name.
-        try {
-          const mainHostLower = hostSlugFromUrl.replace(/-/g, " ");
-          const subHostNames = new Set();
-          for (const ep of [...byUrl.values()]) {
-            if (ep.hosts) {
-              for (const h of ep.hosts) {
-                const hl = h.toLowerCase().trim();
-                if (hl && hl !== mainHostLower && hl !== hostShowName) subHostNames.add(hl);
-              }
-            }
-          }
-          if (subHostNames.size > 0) {
-            // Generate slug guesses and fetch up to 6 sub-host pages in parallel
-            const subSlugs = [...subHostNames].slice(0, 6).map(
-              (name) => name.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-            ).filter((s) => s.length > 2);
-            const subResults = await Promise.all(
-              subSlugs.map((slug) => fetchWwfHostPageEpisodes(slug).catch(() => []))
-            );
-            for (const subEps of subResults) {
-              for (const se2 of subEps) {
-                if (se2.episodeUrl && !byUrl.has(se2.episodeUrl)) {
-                  const show = (se2.showName || "").toLowerCase();
-                  const full = (se2.fullTitle || "").toLowerCase();
-                  if (show === hostShowName || full.startsWith(hostShowName + ":") || full.startsWith(hostShowName + " ")) {
-                    const schedE = schedMap.get(se2.episodeUrl);
-                    byUrl.set(se2.episodeUrl, schedE ? {
-                      ...se2,
-                      showTime: se2.showTime || schedE.showTime,
-                      durationMinutes: se2.durationMinutes || schedE.durationMinutes,
-                      genres: (se2.genres && se2.genres.length) ? se2.genres : schedE.genres,
-                      image: se2.image || schedE.image,
-                    } : se2);
-                  }
-                }
-              }
-            }
-          }
-        } catch {}
 
         // Supplement with the most recent episode's detail page archive.
         // Episode detail pages embed the full show episode list in their RSC data,
@@ -1229,29 +1284,27 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
             const epHtml = await fetchText(newestUrl);
             const archiveEps = parseRscEpisodeArchive(epHtml);
             for (const ae of archiveEps) {
-              if (ae.episodeUrl && !byUrl.has(ae.episodeUrl)) {
-                const show = (ae.showName || "").toLowerCase();
-                const full = (ae.fullTitle || "").toLowerCase();
-                if (show === hostShowName || full.startsWith(hostShowName + ":") || full.startsWith(hostShowName + " ")) {
-                  const schedE = schedMap.get(ae.episodeUrl);
-                  byUrl.set(ae.episodeUrl, schedE ? {
-                    ...ae,
-                    showTime: ae.showTime || schedE.showTime,
-                    durationMinutes: ae.durationMinutes || schedE.durationMinutes,
-                    genres: (ae.genres && ae.genres.length) ? ae.genres : schedE.genres,
-                    image: ae.image || schedE.image,
-                  } : ae);
-                }
+              if (ae.episodeUrl && !byUrl.has(ae.episodeUrl)
+                && episodeMatchesHostIdentity(ae, hostIdentityNames)
+                && isWwfEpisodeReleased(ae)) {
+                const schedE = schedMap.get(ae.episodeUrl);
+                byUrl.set(ae.episodeUrl, schedE ? {
+                  ...ae,
+                  showTime: ae.showTime || schedE.showTime,
+                  durationMinutes: ae.durationMinutes || schedE.durationMinutes,
+                  genres: (ae.genres && ae.genres.length) ? ae.genres : schedE.genres,
+                  hosts: (ae.hosts && ae.hosts.length) ? ae.hosts : schedE.hosts,
+                  location: ae.location || schedE.location,
+                  image: ae.image || schedE.image,
+                } : ae);
               }
             }
           }
         } catch {}
 
-        hostFilteredEpisodes = [...byUrl.values()].sort((a, b) => {
-          const aTs = a.startTimestamp != null ? a.startTimestamp : (a.publishedTime ? new Date(a.publishedTime + "T12:00:00Z").getTime() : 0);
-          const bTs = b.startTimestamp != null ? b.startTimestamp : (b.publishedTime ? new Date(b.publishedTime + "T12:00:00Z").getTime() : 0);
-          return bTs - aTs;
-        });
+        hostFilteredEpisodes = [...byUrl.values()]
+          .filter((episode) => isWwfEpisodeReleased(episode))
+          .sort((a, b) => getWwfEpisodeSortTimestamp(b) - getWwfEpisodeSortTimestamp(a));
       }
     }
   }
@@ -1278,7 +1331,7 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
   let discoveredHostMeta = null;
   if (!isShowsUrl && !isHostUrl && programName && filtered.length > 0) {
     try {
-      const firstEp = filtered[0];
+      const firstEp = filtered.find((episode) => isWwfEpisodeReleased(episode)) || filtered[0];
       discoveredHostSlug = await discoverHostSlug(firstEp.episodeUrl);
       if (discoveredHostSlug) {
         const [hostEpisodes, hostMeta] = await Promise.all([
@@ -1291,11 +1344,7 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
           const byUrl = new Map();
           for (const e of filtered) { if (e.episodeUrl) byUrl.set(e.episodeUrl, e); }
           for (const e of hostEpisodes) { if (e.episodeUrl && !byUrl.has(e.episodeUrl)) byUrl.set(e.episodeUrl, e); }
-          enrichedFiltered = [...byUrl.values()].sort((a, b) => {
-            const aTs = a.startTimestamp != null ? a.startTimestamp : (a.publishedTime ? new Date(a.publishedTime + "T12:00:00Z").getTime() : 0);
-            const bTs = b.startTimestamp != null ? b.startTimestamp : (b.publishedTime ? new Date(b.publishedTime + "T12:00:00Z").getTime() : 0);
-            return bTs - aTs;
-          });
+          enrichedFiltered = [...byUrl.values()].sort((a, b) => getWwfEpisodeSortTimestamp(b) - getWwfEpisodeSortTimestamp(a));
         }
       }
     } catch {}
@@ -1307,9 +1356,10 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
     hostUrlMeta = await fetchWwfHostMetadata(hostSlugFromUrl, true).catch(() => null);
   }
 
+  const visibleEpisodes = enrichedFiltered.filter((episode) => isWwfEpisodeReleased(episode));
   const perPage = 20;
   const start = (Math.max(1, Number(page) || 1) - 1) * perPage;
-  const episodes = enrichedFiltered.slice(start, start + perPage);
+  const episodes = visibleEpisodes.slice(start, start + perPage);
 
   // Compute cadence/runSchedule from enriched episodes (includes host page data)
   // which is more accurate than the summary (which only uses schedule + shows page)
@@ -1338,7 +1388,7 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
 
   // Compute top weighted genres from episodes (top 4 by frequency)
   const genreCount = new Map();
-  for (const ep of enrichedFiltered) {
+  for (const ep of visibleEpisodes) {
     if (ep.genres) for (const g of ep.genres) { genreCount.set(g, (genreCount.get(g) || 0) + 1); }
   }
   const topGenres = [...genreCount.entries()]
@@ -1356,9 +1406,9 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
     hostSlug: effectiveHostSlug,
     genres: topGenres.length ? topGenres : undefined,
     episodes,
-    totalItems: enrichedFiltered.length,
+    totalItems: visibleEpisodes.length,
     page: Math.max(1, Number(page) || 1),
-    numPages: Math.max(1, Math.ceil(enrichedFiltered.length / perPage)),
+    numPages: Math.max(1, Math.ceil(visibleEpisodes.length / perPage)),
     cadence: effectiveMeta?.typeSlug || enrichedSchedInfo?.cadence || summary?.cadence || "irregular",
     averageDaysBetween: enrichedSchedInfo?.averageDaysBetween || summary?.averageDaysBetween || null,
     runSchedule: enrichedSchedInfo?.runSchedule || summary?.runSchedule || "",
@@ -1524,13 +1574,92 @@ async function searchWwfPrograms(query) {
     results.push(r);
   }
 
-  return results.slice(0, 30).sort((a, b) => {
-    // Hosts with descriptions/hostSlug first, then alphabetical
-    const aHost = (a.hostSlug || a.description) ? 0 : 1;
-    const bHost = (b.hostSlug || b.description) ? 0 : 1;
-    if (aHost !== bHost) return aHost - bHost;
-    return a.title.localeCompare(b.title, "en");
-  });
+  const baseResults = results.slice(0, 30);
+  if (!q) {
+    return baseResults.sort((a, b) => {
+      const aHost = (a.hostSlug || a.description) ? 0 : 1;
+      const bHost = (b.hostSlug || b.description) ? 0 : 1;
+      if (aHost !== bHost) return aHost - bHost;
+      return a.title.localeCompare(b.title, "en");
+    });
+  }
+
+  function scoreTextMatch(value, queryText, exactWeight, prefixWeight, includesWeight) {
+    const text = normalizeWwfIdentityText(value).toLowerCase();
+    if (!text || !queryText) {
+      return 0;
+    }
+    if (text === queryText) {
+      return exactWeight;
+    }
+    if (text.startsWith(queryText)) {
+      return prefixWeight;
+    }
+    if (text.includes(queryText)) {
+      return includesWeight;
+    }
+    return 0;
+  }
+
+  function scoreListMatch(values, queryText, exactWeight, prefixWeight, includesWeight) {
+    let best = 0;
+    for (const value of values || []) {
+      best = Math.max(best, scoreTextMatch(value, queryText, exactWeight, prefixWeight, includesWeight));
+    }
+    return best;
+  }
+
+  function buildSearchText(item) {
+    return [
+      item.title,
+      item.description,
+      item.location,
+      item.cadence,
+      item.airtime,
+      item.runSchedule,
+      ...(item.hosts || []),
+      ...(item.genres || [])
+    ]
+      .map((value) => normalizeWwfIdentityText(value).toLowerCase())
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function scoreResult(item, queryText) {
+    let score = 0;
+    score += scoreTextMatch(item.title, queryText, 240, 190, 140);
+    score += scoreTextMatch(item.description, queryText, 95, 0, 60);
+    score += scoreTextMatch(item.location, queryText, 180, 145, 115);
+    score += scoreTextMatch(item.cadence, queryText, 35, 25, 15);
+    score += scoreTextMatch(item.airtime, queryText, 70, 55, 35);
+    score += scoreTextMatch(item.runSchedule, queryText, 35, 25, 15);
+    score += scoreListMatch(item.hosts, queryText, 230, 190, 150);
+    score += scoreListMatch(item.genres, queryText, 170, 145, 115);
+
+    const tokens = queryText.split(/\s+/g).filter(Boolean);
+    if (tokens.length > 1) {
+      const searchText = buildSearchText(item);
+      if (tokens.every((token) => searchText.includes(token))) {
+        score += 70;
+      }
+    }
+    return score;
+  }
+
+  return baseResults
+    .map((item) => ({ ...item, _score: scoreResult(item, q) }))
+    .filter((item) => item._score > 0)
+    .sort((a, b) => {
+      if (b._score !== a._score) {
+        return b._score - a._score;
+      }
+      return String(a.title || "").localeCompare(String(b.title || ""), "en");
+    })
+    .map((item) => {
+      const copy = { ...item };
+      delete copy._score;
+      return copy;
+    });
 }
 
 async function getWwfEpisodePlaylist(episodeUrl) {
@@ -1851,6 +1980,86 @@ function normalizeWwfProgramUrl(input) {
   return raw;
 }
 
+function getWwfMetadataRichnessScore(item) {
+  return [
+    item.image ? 1 : 0,
+    item.description ? 2 : 0,
+    Array.isArray(item.hosts) ? Math.min(item.hosts.length, 3) * 2 : 0,
+    Array.isArray(item.genres) ? Math.min(item.genres.length, 3) : 0,
+    item.location ? 2 : 0,
+    item.runSchedule ? 2 : 0,
+    item.airtime ? 1 : 0
+  ].reduce((sum, value) => sum + value, 0);
+}
+
+function scoreWwfDiscoveryNovelty(item, selected) {
+  const seenHosts = new Set();
+  const seenGenres = new Set();
+  const seenLocations = new Set();
+  const seenTitles = new Set();
+
+  for (const entry of selected || []) {
+    for (const host of entry.hosts || []) {
+      seenHosts.add(normalizeWwfIdentityText(host).toLowerCase());
+    }
+    for (const genre of entry.genres || []) {
+      seenGenres.add(normalizeWwfIdentityText(genre).toLowerCase());
+    }
+    seenLocations.add(normalizeWwfIdentityText(entry.location || "").toLowerCase());
+    seenTitles.add(normalizeWwfIdentityText(entry.title || "").toLowerCase());
+  }
+
+  let score = 0;
+  const titleKey = normalizeWwfIdentityText(item.title || "").toLowerCase();
+  const locationKey = normalizeWwfIdentityText(item.location || "").toLowerCase();
+  if (titleKey && !seenTitles.has(titleKey)) {
+    score += 2;
+  }
+  if (locationKey && !seenLocations.has(locationKey)) {
+    score += 3;
+  }
+  for (const host of item.hosts || []) {
+    const key = normalizeWwfIdentityText(host).toLowerCase();
+    if (key && !seenHosts.has(key)) {
+      score += 5;
+    }
+  }
+  for (const genre of item.genres || []) {
+    const key = normalizeWwfIdentityText(genre).toLowerCase();
+    if (key && !seenGenres.has(key)) {
+      score += 3;
+    }
+  }
+  return score;
+}
+
+function pickWwfDiscoveryResults(items, count) {
+  const remaining = (items || [])
+    .map((item) => ({
+      item,
+      richness: getWwfMetadataRichnessScore(item) + Math.random()
+    }))
+    .sort((a, b) => b.richness - a.richness)
+    .map((entry) => entry.item);
+
+  const selected = [];
+  while (remaining.length && selected.length < count) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const item = remaining[index];
+      const score = getWwfMetadataRichnessScore(item) + scoreWwfDiscoveryNovelty(item, selected) + Math.random();
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return selected;
+}
+
 async function getWwfDiscovery(count = 5) {
   const hosts = await fetchWwfHostSlugs(true).catch(() => []);
   const shuffled = [...hosts].sort(() => Math.random() - 0.5);
@@ -1859,7 +2068,7 @@ async function getWwfDiscovery(count = 5) {
   const concurrency = 4;
   let idx = 0;
   async function worker() {
-    while (idx < sample.length && results.length < count) {
+    while (idx < sample.length) {
       const h = sample[idx++];
       // Use /hosts/ URL so getWwfProgramSummary fetches real host metadata
       const hostUrl = `${BASE_URL}/hosts/${h.slug}`;
@@ -1877,13 +2086,14 @@ async function getWwfDiscovery(count = 5) {
           airtime: meta.timeSlot || "",
           runSchedule: meta.runSchedule || "",
           location: meta.location || "",
-          genres: meta.genres || []
+          genres: meta.genres || [],
+          hosts: (meta.hosts && meta.hosts.length) ? meta.hosts : [title]
         });
       } catch { /* skip */ }
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, sample.length) }, () => worker()));
-  return results.slice(0, count);
+  return pickWwfDiscoveryResults(results, count);
 }
 
 module.exports = {
@@ -1905,5 +2115,10 @@ module.exports = {
   discoverHostSlug,
   normalizeWwfProgramUrl,
   normalizeEpisodeUrl,
-  parseTitleParts
+  parseTitleParts,
+  episodeMatchesHostIdentity,
+  isWwfEpisodeReleased,
+  buildHostIdentityNames,
+  normalizeWwfDisplayList,
+  toWwfDisplayLabel
 };

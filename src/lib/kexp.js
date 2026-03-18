@@ -127,12 +127,20 @@ function mapSplixerProgram(p) {
   const image = String(
     (p.branding && p.branding.thumbnailImageUrl) || p.image_url || ""
   );
+  const hosts = normalizeUniqueList([
+    p.host_name,
+    p.hosts,
+    p.host?.name,
+    p._host?.name,
+    ...(Array.isArray(p.host_names) ? p.host_names : [])
+  ]);
   return {
     id: String(p.uid || ""),
     programUrl: `${SPLIXER_SITE}/library/shows/${p.uid}`,
     title: String(p.name || ""),
     description: String(p.description || p.tag_line || ""),
     genres,
+    hosts,
     image: image.includes("__") ? image.replace(/__.*$/, "") : image,
     isActive: Number(p.status || 0) === 100,
     location: "Seattle, WA",
@@ -142,14 +150,31 @@ function mapSplixerProgram(p) {
 
 function mapSplixerMix(m) {
   const broadcastedAt = String(m.broadcasted_at || "");
-  const date = broadcastedAt.slice(0, 10); // YYYY-MM-DD
   const streamUrl = cloudfrontUrlFromTs(broadcastedAt);
-  const hostName = String(m.host_name || (m._host && m._host.name) || "");
+  const hosts = normalizeUniqueList([
+    m.host_name,
+    m.hosts,
+    m.host?.name,
+    m._host?.name,
+    ...((Array.isArray(m.host_names) ? m.host_names : []))
+  ]);
   const programTitle = String((m._program && m._program.name) || m.name || "");
   const title = String(m.name || "");
   const tagLine = String(m.tag_line || "");
   const image = String(
     (m._program && m._program.image_url) || ""
+  );
+  const description = String(
+    m.description
+    || m.notes
+    || m.summary
+    || (m._program && (m._program.description || m._program.tag_line))
+    || ""
+  );
+  const genres = normalizeUniqueList(
+    parseGenres(
+      (m._program && (m._program.tags || (m._program.branding && m._program.branding.keyword))) || ""
+    )
   );
   return {
     episodeUrl: splixerMixUrl(m.uid),
@@ -158,12 +183,14 @@ function mapSplixerMix(m) {
     title: tagLine || title,
     fullTitle: programTitle + (tagLine ? ` – ${tagLine}` : ""),
     programTitle,
-    hosts: hostName,
+    description,
+    hosts,
     publishedTime: broadcastedAt,
     duration: Number(m.duration || 0),
     image,
     streamUrl,
-    genres: [],
+    genres,
+    location: "Seattle, WA",
     source: "kexp-extended"
   };
 }
@@ -204,8 +231,9 @@ function mapShow(s) {
     endTime: String(s.end_time || ""),
     description: String(s.description || ""),
     image: String(s.image_uri || ""),
-    hosts: Array.isArray(s.host_names) ? s.host_names.join(", ") : String(s.host_names || ""),
-    genres: parseGenres(s.program_tags)
+    hosts: normalizeUniqueList(Array.isArray(s.host_names) ? s.host_names : [s.host_names]),
+    genres: parseGenres(s.program_tags),
+    location: "Seattle, WA"
   };
 }
 
@@ -244,6 +272,81 @@ function mapTimeslot(t, month) {
     runSchedule: startUtc,
     duration: String(t.duration || ""),
     genres: parseGenres(t.program_tags)
+  };
+}
+
+function normalizeUniqueList(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = String(value || "").trim();
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function buildKexpProgramMetaMap(timeslots) {
+  const byProgram = new Map();
+  for (const slot of Array.isArray(timeslots) ? timeslots : []) {
+    const programId = String(slot?.programId || "").trim();
+    if (!programId) {
+      continue;
+    }
+    const entry = byProgram.get(programId) || {
+      hosts: [],
+      genres: [],
+      timeslots: []
+    };
+    if (slot.hosts) {
+      entry.hosts.push(slot.hosts);
+    }
+    if (Array.isArray(slot.genres)) {
+      entry.genres.push(...slot.genres);
+    }
+    entry.timeslots.push(slot);
+    byProgram.set(programId, entry);
+  }
+  for (const entry of byProgram.values()) {
+    entry.hosts = normalizeUniqueList(entry.hosts);
+    entry.genres = normalizeUniqueList(entry.genres);
+  }
+  return byProgram;
+}
+
+async function getKexpScheduleMetaMap() {
+  const byDay = await getKexpSchedule();
+  const slots = Object.values(byDay || {}).flat();
+  return buildKexpProgramMetaMap(slots);
+}
+
+function enrichKexpProgramSummary(program, scheduleMeta) {
+  const meta = scheduleMeta || {};
+  const timeslots = Array.isArray(meta.timeslots) ? meta.timeslots : [];
+  const uniqueDays = new Set(timeslots.map((slot) => slot.weekday));
+  let cadence = String(program?.cadence || "").trim();
+  if (!cadence) {
+    if (uniqueDays.size >= 5) {
+      cadence = "daily";
+    } else if (uniqueDays.size > 0) {
+      cadence = "weekly";
+    }
+  }
+  return {
+    ...program,
+    hosts: normalizeUniqueList([...(program?.hosts || []), ...(meta.hosts || [])]),
+    genres: normalizeUniqueList([...(program?.genres || []), ...(meta.genres || [])]),
+    cadence: cadence || program?.cadence || "irregular",
+    runSchedule: String(program?.runSchedule || timeslots[0]?.runSchedule || "").trim(),
+    airtime: String(program?.airtime || timeslots[0]?.startTimePacific || "").trim(),
+    timeslots: Array.isArray(program?.timeslots) && program.timeslots.length ? program.timeslots : timeslots
   };
 }
 
@@ -350,10 +453,13 @@ async function getAllPrograms() {
 
 async function searchKexpPrograms(query) {
   const all = await getAllPrograms();
+  const scheduleMeta = await getKexpScheduleMetaMap().catch(() => new Map());
+  const enriched = all.map((program) => enrichKexpProgramSummary(program, scheduleMeta.get(String(program.id || ""))));
   const q = String(query || "").toLowerCase().trim();
-  if (!q) return all.slice(0, 20).map((p) => ({ ...p, programUrl: p.programUrl }));
-  return all.filter((p) =>
+  if (!q) return enriched.slice(0, 20).map((p) => ({ ...p, programUrl: p.programUrl }));
+  return enriched.filter((p) =>
     p.title.toLowerCase().includes(q) ||
+    (Array.isArray(p.hosts) && p.hosts.some((host) => host.toLowerCase().includes(q))) ||
     p.genres.some((g) => g.toLowerCase().includes(q)) ||
     p.description.toLowerCase().includes(q)
   );
@@ -361,7 +467,10 @@ async function searchKexpPrograms(query) {
 
 async function getKexpDiscovery(count = 12) {
   const all = await getAllPrograms();
-  const active = all.filter((p) => p.isActive);
+  const scheduleMeta = await getKexpScheduleMetaMap().catch(() => new Map());
+  const active = all
+    .map((program) => enrichKexpProgramSummary(program, scheduleMeta.get(String(program.id || ""))))
+    .filter((p) => p.isActive);
   const shuffled = active.slice().sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
@@ -378,15 +487,7 @@ async function getKexpProgramSummary(programUrl) {
   const mapped = mapProgram(program);
   const month = new Date().getMonth() + 1;
   const timeslots = (slotsRes.results || []).map((t) => mapTimeslot(t, month));
-
-  // Derive cadence from unique weekdays
-  const uniqueDays = new Set(timeslots.map((t) => t.weekday));
-  let cadence = "irregular";
-  if (uniqueDays.size >= 5) cadence = "daily";
-  else if (uniqueDays.size > 0) cadence = "weekly";
-  const runSchedule = timeslots[0]?.runSchedule || "";
-
-  return {
+  return enrichKexpProgramSummary({
     source: "kexp",
     programUrl: `${API_BASE}/programs/${id}/`,
     title: mapped.title,
@@ -394,10 +495,9 @@ async function getKexpProgramSummary(programUrl) {
     image: mapped.image,
     genres: mapped.genres,
     location: mapped.location,
-    cadence,
-    runSchedule,
+    hosts: [],
     timeslots
-  };
+  }, buildKexpProgramMetaMap(timeslots).get(String(id)) || { timeslots });
 }
 
 // ── Episodes ──────────────────────────────────────────────────────────────────
@@ -415,7 +515,7 @@ function computeKexpNextBroadcast(timeslots) {
     if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
     // timeslot.weekday: 1=Mon…7=Sun → JS day: Mon=1…Sun=0
     const slotJsDay = slot.weekday === 7 ? 0 : slot.weekday;
-    let daysUntil = (slotJsDay - nowDayJs + 7) % 7;
+    const daysUntil = (slotJsDay - nowDayJs + 7) % 7;
     const candidate = new Date(now);
     candidate.setUTCDate(candidate.getUTCDate() + daysUntil);
     candidate.setUTCHours(h, m, 0, 0);
@@ -475,14 +575,28 @@ async function getKexpProgramEpisodes(programUrl, page = 1) {
   }
 
   const timeslots = cache.timeslots || [];
+  const summary = await getKexpProgramSummary(programUrl).catch(() => null);
   const uniqueDays = new Set(timeslots.map((t) => t.weekday));
   const cadence = uniqueDays.size >= 5 ? "daily" : uniqueDays.size > 0 ? "weekly" : "irregular";
   const runSchedule = timeslots[0]?.runSchedule || "";
   const nextBroadcastAt = computeKexpNextBroadcast(timeslots);
 
   const start = (pageNum - 1) * perPage;
+  const visibleEpisodes = cache.episodes.slice(start, start + perPage).map((episode) => ({
+    ...episode,
+    description: episode.description || summary?.description || "",
+    genres: Array.isArray(episode.genres) && episode.genres.length ? episode.genres : (summary?.genres || []),
+    hosts: Array.isArray(episode.hosts) && episode.hosts.length ? episode.hosts : (summary?.hosts || []),
+    location: episode.location || summary?.location || ""
+  }));
   return {
-    episodes: cache.episodes.slice(start, start + perPage),
+    title: summary?.title || "",
+    description: summary?.description || "",
+    image: summary?.image || "",
+    genres: summary?.genres || [],
+    hosts: summary?.hosts || [],
+    location: summary?.location || "",
+    episodes: visibleEpisodes,
     total: cache.exhausted ? cache.episodes.length : 0,
     page: pageNum,
     hasMore: cache.episodes.length > start + perPage || !cache.exhausted,
@@ -636,7 +750,8 @@ async function searchKexpExtendedPrograms(query) {
   return all.filter((p) =>
     p.title.toLowerCase().includes(q) ||
     p.description.toLowerCase().includes(q) ||
-    p.genres.some((g) => g.toLowerCase().includes(q))
+    p.genres.some((g) => g.toLowerCase().includes(q)) ||
+    (Array.isArray(p.hosts) && p.hosts.some((host) => host.toLowerCase().includes(q)))
   );
 }
 
@@ -666,6 +781,7 @@ async function getKexpExtendedProgramSummary(programUrl) {
     description: mapped.description,
     image: mapped.image,
     genres: mapped.genres,
+    hosts: mapped.hosts,
     location: mapped.location,
     cadence: totalMixes >= 200 ? "daily" : totalMixes >= 50 ? "weekly" : "irregular",
     runSchedule: "",
@@ -695,7 +811,17 @@ async function getKexpExtendedEpisodes(programUrl, page = 1) {
   const data = await fetchSplixer(
     `/mixes?station_id=${SPLIXER_STATION_ID}&program_id=${uid}&per_page=${perPage}&page=${pageNum}&include=program,host`
   );
-  const mixes = (data.data || []).map(mapSplixerMix);
+  const summary = await getKexpExtendedProgramSummary(programUrl).catch(() => null);
+  const mixes = (data.data || []).map((mix) => {
+    const mapped = mapSplixerMix(mix);
+    return {
+      ...mapped,
+      description: mapped.description || summary?.description || "",
+      genres: mapped.genres?.length ? mapped.genres : (summary?.genres || []),
+      hosts: mapped.hosts?.length ? mapped.hosts : (summary?.hosts || []),
+      location: mapped.location || summary?.location || ""
+    };
+  });
   const total = (data.slicing && data.slicing.totalRows) || 0;
 
   return {
@@ -731,7 +857,11 @@ async function getKexpExtendedEpisodeStream(episodeUrl) {
     programTitle,
     image,
     broadcastedAt,
-    duration: Number(mix.duration || 0)
+    duration: Number(mix.duration || 0),
+    description: String(mix.description || mix.notes || mix.summary || ""),
+    hosts: normalizeUniqueList([mix.host_name, mix.host?.name, mix._host?.name]),
+    genres: normalizeUniqueList(parseGenres((mix._program && (mix._program.tags || (mix._program.branding && mix._program.branding.keyword))) || "")),
+    location: "Seattle, WA"
   };
 }
 
