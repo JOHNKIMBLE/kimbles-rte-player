@@ -1,6 +1,5 @@
 const path = require("node:path");
 const fs = require("node:fs");
-const os = require("node:os");
 const { Readable } = require("node:stream");
 const express = require("express");
 const {
@@ -80,14 +79,45 @@ const {
   getKexpExtendedEpisodeTracklist,
   ISO_DAY_NAMES: KEXP_ISO_DAY_NAMES
 } = require("./lib/kexp");
-const { runYtDlpDownload, runYtDlpJson, runYtDlpGetUrl, spawnYtDlpPipe } = require("./lib/downloader");
+const { runYtDlpDownload, runYtDlpJson, spawnYtDlpPipe, resolveYtDlpCommand } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
-const { writeProgramFeedFiles } = require("./lib/feeds");
+const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
+const {
+  buildMetadataIndex,
+  buildScheduleMetadataDocs,
+  buildFeedMetadataDocs,
+  buildHistoryMetadataDocs,
+  sortMetadataDocs,
+  searchMetadataIndex,
+  discoverMetadataIndex,
+  buildCollectionRecommendations
+} = require("./lib/metadata-index");
+const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
+const { createCollectionsStore } = require("./lib/collections-store");
+const { createMetadataHarvestStore } = require("./lib/metadata-harvest-store");
+const {
+  MATERIALIZED_METADATA_SCHEMA_VERSION,
+  createMaterializedMetadataStore
+} = require("./lib/materialized-metadata-store");
+const {
+  deriveHarvestSearchTerms,
+  harvestMetadataDocs,
+  mergeHarvestDocs,
+  planMetadataHarvest
+} = require("./lib/metadata-harvester");
+const {
+  createDefaultSettings,
+  normalizeSettings: normalizeSharedSettings,
+  shouldGenerateEmbeddedChapters,
+  shouldWriteCueSidecar
+} = require("./lib/app-settings");
+const { collectRuntimeDiagnostics } = require("./lib/runtime-diagnostics");
+const { runVendorBootstrap } = require("./lib/vendor-bootstrap");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -106,9 +136,17 @@ const DOWNLOAD_ARCHIVE_PATH = path.join(DATA_DIR, "download-archive.txt");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+app.use("/feeds/rte", express.static(path.join(DATA_DIR, "feeds")));
+app.use("/feeds/bbc", express.static(path.join(DATA_DIR, "bbc", "feeds")));
+app.use("/feeds/wwf", express.static(path.join(DATA_DIR, "wwf", "feeds")));
+app.use("/feeds/nts", express.static(path.join(DATA_DIR, "nts", "feeds")));
+app.use("/feeds/fip", express.static(path.join(DATA_DIR, "fip", "feeds")));
+app.use("/feeds/kexp", express.static(path.join(DATA_DIR, "kexp", "feeds")));
 
 const { createDiskCache } = require("./lib/disk-cache");
 const { createDownloadHistory } = require("./lib/download-history");
+const { createRecentErrorsLog } = require("./lib/recent-errors-log");
+const collectionsStore = createCollectionsStore(path.join(DATA_DIR, "collections.json"));
 
 const CACHE_DIR = path.join(DATA_DIR, "cache");
 const diskCache = createDiskCache(CACHE_DIR);
@@ -118,6 +156,13 @@ configureFip({ diskCache });
 
 const DOWNLOAD_HISTORY_PATH = path.join(DATA_DIR, "download-history.json");
 const downloadHistory = createDownloadHistory(DOWNLOAD_HISTORY_PATH);
+const RECENT_ERRORS_PATH = path.join(DATA_DIR, "recent-errors.json");
+const recentErrorsLog = createRecentErrorsLog(RECENT_ERRORS_PATH);
+const metadataHarvestStore = createMetadataHarvestStore(path.join(DATA_DIR, "metadata-harvest.json"));
+const materializedMetadataStore = createMaterializedMetadataStore(path.join(DATA_DIR, "materialized-metadata.json"));
+let materializedMetadataCache = null;
+let materializedMetadataDirty = true;
+let materializedMetadataRefreshPromise = null;
 
 const globalEventSubscribers = new Set();
 function broadcastGlobalEvent(payload) {
@@ -180,67 +225,30 @@ function absolutizeInternalMediaUrl(inputUrl) {
 }
 
 function getDefaultSettings() {
-  return {
-    timeFormat: "24h",
-    downloadDir: DOWNLOAD_DIR,
-    pathFormat: "{radio}/{program}/{episode_short} {release_date}",
-    cueAutoGenerate: false,
-    maxConcurrentDownloads: 2,
-    outputFormat: "m4a",
-    outputQuality: "128K",
-    normalizeLoudness: true,
-    dedupeMode: "source-id",
-    id3Tagging: true,
-    feedExportEnabled: true,
-    webhookUrl: "",
-    auddTrackMatching: false,
-    auddApiToken: "",
-    fingerprintTrackMatching: false,
-    acoustidApiKey: "",
-    songrecTrackMatching: false,
-    songrecSampleSeconds: 20,
-    ffmpegCueSilenceDetect: true,
-    ffmpegCueLoudnessDetect: true,
-    ffmpegCueSpectralDetect: true
-  };
+  return createDefaultSettings(DOWNLOAD_DIR);
 }
 
 let cachedSettings = null;
 function normalizeSettings(input) {
-  const defaults = getDefaultSettings();
-  const raw = input && typeof input === "object" ? input : {};
-  const legacyRte = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim() ? raw.rteDownloadDir.trim() : "";
-  const dedupeModeRaw = String(raw.dedupeMode || defaults.dedupeMode).toLowerCase();
-  return {
-    timeFormat: raw.timeFormat === "12h" ? "12h" : "24h",
-    downloadDir: typeof raw.downloadDir === "string" && raw.downloadDir.trim()
-      ? raw.downloadDir.trim()
-      : (legacyRte ? path.dirname(legacyRte) : defaults.downloadDir),
-    pathFormat: typeof raw.pathFormat === "string" && raw.pathFormat.trim()
-      ? raw.pathFormat.trim()
-      : defaults.pathFormat,
-    cueAutoGenerate: Boolean(raw.cueAutoGenerate),
-    maxConcurrentDownloads: Math.max(1, Math.min(8, Math.floor(Number(raw.maxConcurrentDownloads || defaults.maxConcurrentDownloads)))),
-    outputFormat: String(raw.outputFormat || defaults.outputFormat).trim().toLowerCase() === "mp3" ? "mp3" : "m4a",
-    outputQuality: String(raw.outputQuality || defaults.outputQuality).trim() || defaults.outputQuality,
-    normalizeLoudness: raw.normalizeLoudness == null ? defaults.normalizeLoudness : Boolean(raw.normalizeLoudness),
-    dedupeMode: ["source-id", "title-date", "none"].includes(dedupeModeRaw) ? dedupeModeRaw : defaults.dedupeMode,
-    id3Tagging: raw.id3Tagging == null ? defaults.id3Tagging : Boolean(raw.id3Tagging),
-    feedExportEnabled: raw.feedExportEnabled == null ? defaults.feedExportEnabled : Boolean(raw.feedExportEnabled),
-    webhookUrl: typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "",
-    auddTrackMatching: raw.auddTrackMatching == null ? defaults.auddTrackMatching : Boolean(raw.auddTrackMatching),
-    auddApiToken: typeof raw.auddApiToken === "string" ? raw.auddApiToken.trim() : "",
-    fingerprintTrackMatching: raw.fingerprintTrackMatching == null ? defaults.fingerprintTrackMatching : Boolean(raw.fingerprintTrackMatching),
-    acoustidApiKey: typeof raw.acoustidApiKey === "string" ? raw.acoustidApiKey.trim() : "",
-    songrecTrackMatching: raw.songrecTrackMatching == null ? defaults.songrecTrackMatching : Boolean(raw.songrecTrackMatching),
-    songrecSampleSeconds: Math.max(8, Math.min(45, Math.floor(Number(raw.songrecSampleSeconds || defaults.songrecSampleSeconds)))),
-    ffmpegCueSilenceDetect: raw.ffmpegCueSilenceDetect == null ? defaults.ffmpegCueSilenceDetect : Boolean(raw.ffmpegCueSilenceDetect),
-    ffmpegCueLoudnessDetect: raw.ffmpegCueLoudnessDetect == null ? defaults.ffmpegCueLoudnessDetect : Boolean(raw.ffmpegCueLoudnessDetect),
-    ffmpegCueSpectralDetect: raw.ffmpegCueSpectralDetect == null ? defaults.ffmpegCueSpectralDetect : Boolean(raw.ffmpegCueSpectralDetect)
-  };
+  return normalizeSharedSettings(input, {
+    defaultDownloadDir: getDefaultSettings().downloadDir
+  });
 }
 
-const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
+const downloadQueue = createDownloadQueue(
+  () => readSettings().maxConcurrentDownloads || 2,
+  {
+    getStoragePath: () => path.join(DATA_DIR, "download-queue.json"),
+    restoreTask: (persisted) => restoreDownloadQueueTask(persisted)
+  }
+);
+const restoredQueueItems = downloadQueue.restorePending();
+if (restoredQueueItems > 0) {
+  broadcastGlobalEvent({
+    type: "download.queue.restored",
+    count: restoredQueueItems
+  });
+}
 
 function readSettings() {
   if (cachedSettings) {
@@ -322,6 +330,543 @@ function inferTitleFromUrl(inputUrl, fallback = "audio") {
   return fallback;
 }
 
+function normalizeMetadataList(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(/,\s*/g)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeMetadataText(value) {
+  return String(value || "").trim();
+}
+
+function parseTrackStartSeconds(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, value);
+  }
+  const text = String(value || "").trim();
+  if (!text) {
+    return undefined;
+  }
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    return Math.max(0, Number(text));
+  }
+  const match = text.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.\d+)?$/);
+  if (!match) {
+    return undefined;
+  }
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  return Math.max(0, hours * 3600 + minutes * 60 + seconds);
+}
+
+function normalizeCueTracks(tracks = [], options = {}) {
+  const offsetSeconds = Number(options.offsetSeconds || 0) || 0;
+  return (Array.isArray(tracks) ? tracks : [])
+    .map((track, index) => {
+      const title = String(track?.title || "").trim();
+      const artist = String(track?.artist || "").trim();
+      if (!title && !artist) {
+        return null;
+      }
+      const startSeconds = parseTrackStartSeconds(track?.startSeconds);
+      return {
+        title: title || `Track ${index + 1}`,
+        artist,
+        startSeconds: Number.isFinite(startSeconds) ? Math.max(0, startSeconds + offsetSeconds) : undefined
+      };
+    })
+    .filter(Boolean);
+}
+
+async function getPrefetchedCueTracks({ sourceType = "", episodeUrl = "", tracklistUrl = "", fileStartOffset = 0 } = {}) {
+  const safeSourceType = String(sourceType || "").trim().toLowerCase();
+  const safeEpisodeUrl = String(episodeUrl || "").trim();
+  if (!safeSourceType || !safeEpisodeUrl) {
+    return [];
+  }
+  try {
+    if (safeSourceType === "rte") {
+      const payload = await getEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "bbc") {
+      const payload = await getBbcEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "wwf") {
+      const payload = await getWwfEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "nts") {
+      const payload = await getNtsEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "fip") {
+      const tracks = await getFipEpisodeTracklist(safeEpisodeUrl);
+      return normalizeCueTracks(tracks);
+    }
+    if (safeSourceType === "kexp") {
+      const tracks = await getKexpEpisodeTracklist(safeEpisodeUrl);
+      return normalizeCueTracks(tracks, { offsetSeconds: Number(fileStartOffset || 0) || 0 });
+    }
+  } catch {}
+  if (tracklistUrl) {
+    return [];
+  }
+  return [];
+}
+
+function buildMetadata(options = {}) {
+  return {
+    description: normalizeMetadataText(options.description),
+    location: normalizeMetadataText(options.location),
+    hosts: normalizeMetadataList(options.hosts),
+    genres: normalizeMetadataList(options.genres)
+  };
+}
+
+function createPersistentDownloadPayload({ job, postProcess = {} }) {
+  const metadata = buildMetadata(postProcess);
+  return {
+    type: "manifest-download-v1",
+    job,
+    postProcess: {
+      sourceType: String(postProcess.sourceType || job.sourceType || ""),
+      episodeTitle: String(postProcess.episodeTitle || ""),
+      programTitle: String(postProcess.programTitle || ""),
+      publishedTime: String(postProcess.publishedTime || ""),
+      sourceUrl: String(postProcess.sourceUrl || job.sourceUrl || ""),
+      artworkUrl: String(postProcess.artworkUrl || ""),
+      episodeUrl: String(postProcess.episodeUrl || job.episodeUrl || ""),
+      clipId: String(postProcess.clipId || ""),
+      description: metadata.description,
+      location: metadata.location,
+      hosts: metadata.hosts,
+      genres: metadata.genres,
+      tracklistUrl: String(postProcess.tracklistUrl || ""),
+      fileStartOffset: Number(postProcess.fileStartOffset || 0)
+    }
+  };
+}
+
+function appendDownloadHistoryEntry(entry) {
+  try {
+    downloadHistory.append(entry);
+    patchMaterializedHistory();
+    broadcastGlobalEvent({
+      type: "download.history.updated",
+      source: entry.sourceType,
+      programTitle: entry.programTitle,
+      episodeTitle: entry.episodeTitle
+    });
+  } catch {}
+}
+
+function appendDownloadHistoryFromPayload(payload, result) {
+  if (!payload || payload.type !== "manifest-download-v1" || result?.existing) {
+    return;
+  }
+  const job = payload.job || {};
+  appendDownloadHistoryEntry({
+    sourceType: String(job.sourceType || "rte"),
+    programTitle: String(payload.postProcess?.programTitle || ""),
+    episodeTitle: String(payload.postProcess?.episodeTitle || job.title || ""),
+    filePath: result?.fileName ? path.join(result.outputDir || job.outputDir || "", result.fileName) : "",
+    outputDir: result?.outputDir || job.outputDir || "",
+    fileName: result?.fileName || "",
+    episodeUrl: String(payload.postProcess?.episodeUrl || job.episodeUrl || job.sourceUrl || ""),
+    sourceUrl: String(payload.postProcess?.sourceUrl || job.sourceUrl || ""),
+    artworkUrl: String(payload.postProcess?.artworkUrl || ""),
+    clipId: String(payload.postProcess?.clipId || ""),
+    publishedTime: String(payload.postProcess?.publishedTime || ""),
+    tracklistUrl: String(payload.postProcess?.tracklistUrl || ""),
+    fileStartOffset: Number(payload.postProcess?.fileStartOffset || 0),
+    description: String(payload.postProcess?.description || ""),
+    location: String(payload.postProcess?.location || ""),
+    hosts: normalizeMetadataList(payload.postProcess?.hosts),
+    genres: normalizeMetadataList(payload.postProcess?.genres)
+  });
+}
+
+function buildLibraryMetadataDataset() {
+  return {
+    schedulesBySource: {
+      rte: scheduler?.list?.() || [],
+      bbc: bbcScheduler?.list?.() || [],
+      wwf: wwfScheduler?.list?.() || [],
+      nts: ntsScheduler?.list?.() || [],
+      fip: fipScheduler?.list?.() || [],
+      kexp: kexpScheduler?.list?.() || []
+    },
+    feeds: listAllProgramFeeds(),
+    history: downloadHistory.list(),
+    harvested: metadataHarvestStore.list()
+  };
+}
+
+function createEmptyMaterializedMetadataSnapshot() {
+  return {
+    schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
+    updatedAt: "",
+    index: [],
+    graph: {
+      entities: [],
+      relations: [],
+      metrics: {
+        entityCount: 0,
+        relationCount: 0,
+        sourceCount: 0
+      }
+    }
+  };
+}
+
+function getMaterializedMetadataSnapshot() {
+  if (materializedMetadataCache) {
+    return materializedMetadataCache;
+  }
+  const stored = materializedMetadataStore.get();
+  if (!materializedMetadataStore.isCompatible(stored)) {
+    materializedMetadataCache = createEmptyMaterializedMetadataSnapshot();
+    materializedMetadataDirty = true;
+    return materializedMetadataCache;
+  }
+  materializedMetadataCache = stored;
+  return materializedMetadataCache;
+}
+
+function buildMaterializedMetadataSnapshot() {
+  const index = buildMetadataIndex(buildLibraryMetadataDataset());
+  const graph = buildEntityGraph(index);
+  return {
+    schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    index,
+    graph
+  };
+}
+
+function replaceMaterializedMetadataSections(sectionKinds, nextDocs) {
+  const snapshot = getMaterializedMetadataSnapshot();
+  const removeKinds = new Set((Array.isArray(sectionKinds) ? sectionKinds : [sectionKinds]).map((kind) => String(kind || "").trim().toLowerCase()).filter(Boolean));
+  const filtered = (Array.isArray(snapshot?.index) ? snapshot.index : []).filter((doc) => !removeKinds.has(String(doc?.kind || "").trim().toLowerCase()));
+  const index = sortMetadataDocs([
+    ...filtered,
+    ...(Array.isArray(nextDocs) ? nextDocs : [])
+  ]);
+  const graph = buildEntityGraph(index);
+  const updated = {
+    schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    index,
+    graph
+  };
+  materializedMetadataStore.replace(updated);
+  materializedMetadataCache = updated;
+  materializedMetadataDirty = false;
+  return updated;
+}
+
+function patchMaterializedSubscriptions() {
+  return replaceMaterializedMetadataSections("subscription", buildScheduleMetadataDocs(buildLibraryMetadataDataset().schedulesBySource));
+}
+
+function patchMaterializedFeeds() {
+  return replaceMaterializedMetadataSections("feed", buildFeedMetadataDocs(listAllProgramFeeds()));
+}
+
+function patchMaterializedHistory() {
+  return replaceMaterializedMetadataSections("history", buildHistoryMetadataDocs(downloadHistory.list()));
+}
+
+function markMaterializedMetadataDirty(options = {}) {
+  materializedMetadataDirty = true;
+  if (options.refreshInBackground) {
+    void refreshMaterializedMetadataSnapshot().catch(() => {});
+  }
+}
+
+async function refreshMaterializedMetadataSnapshot(_options = {}) {
+  if (materializedMetadataRefreshPromise) {
+    return materializedMetadataRefreshPromise;
+  }
+  materializedMetadataRefreshPromise = Promise.resolve().then(() => {
+    const snapshot = buildMaterializedMetadataSnapshot();
+    materializedMetadataStore.replace(snapshot);
+    materializedMetadataCache = snapshot;
+    materializedMetadataDirty = false;
+    return snapshot;
+  }).finally(() => {
+    materializedMetadataRefreshPromise = null;
+  });
+  return materializedMetadataRefreshPromise;
+}
+
+async function ensureMaterializedMetadata(options = {}) {
+  const forceRebuild = Boolean(options.forceRebuild);
+  const allowStale = options.allowStale !== false;
+  const refreshInBackground = options.refreshInBackground !== false;
+  const snapshot = getMaterializedMetadataSnapshot();
+  const hasMaterializedData = Array.isArray(snapshot?.index) && snapshot.index.length > 0;
+  if (!forceRebuild && !materializedMetadataDirty && hasMaterializedData) {
+    return snapshot;
+  }
+  if (!forceRebuild && allowStale && hasMaterializedData) {
+    if (refreshInBackground) {
+      void refreshMaterializedMetadataSnapshot().catch(() => {});
+    }
+    return snapshot;
+  }
+  return refreshMaterializedMetadataSnapshot({ forceRebuild: true });
+}
+
+function getMetadataHarvestSources() {
+  return [
+    {
+      sourceType: "rte",
+      getDiscovery: () => getRteDiscovery(12),
+      search: (term) => searchPrograms(term),
+      getSummary: (programUrl) => getProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 4,
+      maxEpisodePages: 3
+    },
+    {
+      sourceType: "bbc",
+      getDiscovery: () => getBbcDiscovery(12),
+      search: (term) => searchBbcPrograms(term, runYtDlpJson),
+      getSummary: (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson, { includeSchedule: false }),
+      getEpisodes: (programUrl, page = 1) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 6,
+      maxEpisodePages: 3
+    },
+    {
+      sourceType: "wwf",
+      getDiscovery: () => getWwfDiscovery(12),
+      search: (term) => searchWwfPrograms(term),
+      getSummary: (programUrl) => getWwfProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getWwfProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 4,
+      maxEpisodePages: 4
+    },
+    {
+      sourceType: "nts",
+      getDiscovery: () => getNtsDiscovery(12),
+      search: (term) => searchNtsPrograms(term, { sort: "recent" }),
+      getSummary: (programUrl) => getNtsProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getNtsProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 4,
+      maxEpisodePages: 4
+    },
+    {
+      sourceType: "fip",
+      getDiscovery: () => getFipDiscovery(12),
+      search: (term) => searchFipPrograms(term),
+      getSummary: (programUrl) => getFipProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getFipProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 8,
+      maxEpisodePages: 3
+    },
+    {
+      sourceType: "kexp",
+      getDiscovery: () => getKexpDiscovery(12),
+      search: (term) => searchKexpPrograms(term),
+      getSummary: (programUrl) => getKexpProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getKexpProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 6,
+      maxEpisodePages: 3
+    }
+  ];
+}
+
+async function refreshMetadataHarvestCache(force = false) {
+  const existing = metadataHarvestStore.list();
+  const priorState = metadataHarvestStore.getState();
+  const localSnapshot = await ensureMaterializedMetadata({
+    allowStale: true,
+    refreshInBackground: false
+  });
+  const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
+  const harvestPlan = planMetadataHarvest(
+    getMetadataHarvestSources(),
+    priorState,
+    force,
+    Date.now()
+  );
+  if (!force && existing.length && !harvestPlan.plannedSources.length) {
+    return existing;
+  }
+  const docs = await harvestMetadataDocs({
+    sources: harvestPlan.plannedSources,
+    searchTerms: deriveHarvestSearchTerms(localIndex)
+  });
+  const merged = mergeHarvestDocs(existing, docs);
+  metadataHarvestStore.replace(merged, new Date().toISOString(), harvestPlan.nextState);
+  markMaterializedMetadataDirty({ refreshInBackground: true });
+  return merged;
+}
+
+async function rebuildDownloadedFileMetadata(payload = {}) {
+  const outputDir = String(payload.outputDir || "").trim();
+  const fileName = String(payload.fileName || "").trim();
+  if (!outputDir || !fileName) {
+    throw new Error("A downloaded file is required.");
+  }
+
+  const audioPath = path.join(outputDir, fileName);
+  if (!fs.existsSync(audioPath)) {
+    throw new Error("Downloaded file not found.");
+  }
+
+  const sourceType = String(payload.sourceType || "rte").trim().toLowerCase();
+  const cue = await maybeGenerateCue({
+    force: true,
+    writeCueFile: false,
+    revealErrors: false,
+    sourceType,
+    episodeUrl: String(payload.episodeUrl || "").trim(),
+    episodeTitle: String(payload.episodeTitle || fileName).trim(),
+    programTitle: String(payload.programTitle || "").trim(),
+    tracklistUrl: String(payload.tracklistUrl || "").trim(),
+    fileStartOffset: Number(payload.fileStartOffset || 0),
+    downloadResult: { outputDir, fileName }
+  });
+
+  const tags = await applyId3Tags({
+    audioPath,
+    title: String(payload.episodeTitle || fileName).trim(),
+    programTitle: String(payload.programTitle || "").trim(),
+    sourceType,
+    publishedTime: String(payload.publishedTime || "").trim(),
+    sourceUrl: String(payload.sourceUrl || payload.episodeUrl || "").trim(),
+    artworkUrl: String(payload.artworkUrl || "").trim(),
+    episodeUrl: String(payload.episodeUrl || "").trim(),
+    clipId: String(payload.clipId || "").trim(),
+    description: String(payload.description || "").trim(),
+    location: String(payload.location || "").trim(),
+    hosts: normalizeMetadataList(payload.hosts),
+    genres: normalizeMetadataList(payload.genres),
+    chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
+    durationSeconds: Number(cue?.durationSeconds || 0)
+  });
+
+  return { ok: true, cue, tags };
+}
+
+function restoreDownloadQueueTask(payload, _item, options = {}) {
+  if (!payload || payload.type !== "manifest-download-v1" || !payload.job) {
+    return null;
+  }
+  if (options.mode === "current-settings") {
+    const job = payload.job;
+    return {
+      run: async () => downloadFromManifest({
+        manifestUrl: job.manifestUrl,
+        sourceUrl: job.sourceUrl,
+        title: payload.postProcess?.episodeTitle || job.title,
+        programTitle: payload.postProcess?.programTitle || "",
+        publishedTime: payload.postProcess?.publishedTime || "",
+        clipId: payload.postProcess?.clipId || "",
+        episodeUrl: payload.postProcess?.episodeUrl || job.episodeUrl || job.sourceUrl || "",
+        sourceType: payload.postProcess?.sourceType || job.sourceType || "rte",
+        forceDownload: true,
+        postProcess: payload.postProcess || null
+      }),
+      meta: {
+        label: payload.postProcess?.episodeTitle || payload.job.title,
+        sourceType: payload.postProcess?.sourceType || payload.job.sourceType,
+        programTitle: payload.postProcess?.programTitle || "",
+        episodeUrl: payload.postProcess?.episodeUrl || payload.job.episodeUrl || "",
+        description: payload.postProcess?.description || "",
+        location: payload.postProcess?.location || "",
+        hosts: normalizeMetadataList(payload.postProcess?.hosts),
+        genres: normalizeMetadataList(payload.postProcess?.genres),
+        persisted: payload
+      }
+    };
+  }
+  return {
+    run: async (queueTask) => {
+      const job = payload.job;
+      const result = await runYtDlpDownload({
+        manifestUrl: job.manifestUrl,
+        sourceUrl: job.sourceUrl,
+        title: job.title,
+        outputDir: job.outputDir,
+        archivePath: job.archivePath,
+        registerCancel: queueTask?.registerCancel,
+        onProgress: null,
+        forceDownload: Boolean(job.forceDownload),
+        audioFormat: job.audioFormat,
+        audioQuality: job.audioQuality,
+        normalizeLoudness: Boolean(job.normalizeLoudness),
+        dedupeMode: job.dedupeMode,
+        fetchThumbnail: Boolean(job.fetchThumbnail)
+      });
+      appendDownloadHistoryFromPayload(payload, result);
+      const cue = await maybeGenerateCue({
+        downloadResult: result,
+        sourceType: payload.postProcess?.sourceType || job.sourceType || "rte",
+        episodeUrl: payload.postProcess?.episodeUrl || job.episodeUrl || "",
+        episodeTitle: payload.postProcess?.episodeTitle || job.title || "",
+        programTitle: payload.postProcess?.programTitle || "",
+        tracklistUrl: payload.postProcess?.tracklistUrl || "",
+        fileStartOffset: Number(payload.postProcess?.fileStartOffset || 0),
+        onProgress: null
+      });
+      await maybeApplyId3({
+        downloadResult: result,
+        sourceType: payload.postProcess?.sourceType || job.sourceType || "rte",
+        episodeTitle: payload.postProcess?.episodeTitle || job.title || "",
+        programTitle: payload.postProcess?.programTitle || "",
+        publishedTime: payload.postProcess?.publishedTime || "",
+        sourceUrl: payload.postProcess?.sourceUrl || job.sourceUrl || "",
+        artworkUrl: payload.postProcess?.artworkUrl || "",
+        episodeUrl: payload.postProcess?.episodeUrl || job.episodeUrl || "",
+        clipId: payload.postProcess?.clipId || "",
+        description: payload.postProcess?.description || "",
+        location: payload.postProcess?.location || "",
+        hosts: normalizeMetadataList(payload.postProcess?.hosts),
+        genres: normalizeMetadataList(payload.postProcess?.genres),
+        cue
+      });
+      return result;
+    },
+    meta: {
+      label: payload.job.title,
+      sourceType: payload.job.sourceType,
+      programTitle: payload.postProcess?.programTitle || "",
+      episodeUrl: payload.postProcess?.episodeUrl || payload.job.episodeUrl || "",
+      description: payload.postProcess?.description || "",
+      location: payload.postProcess?.location || "",
+      hosts: normalizeMetadataList(payload.postProcess?.hosts),
+      genres: normalizeMetadataList(payload.postProcess?.genres),
+      persisted: payload
+    }
+  };
+}
+
 async function downloadFromManifest({
   manifestUrl,
   sourceUrl,
@@ -332,7 +877,8 @@ async function downloadFromManifest({
   episodeUrl,
   progressToken,
   sourceType = "rte",
-  forceDownload = false
+  forceDownload = false,
+  postProcess = null
 }) {
   const settings = readSettings();
   const target = buildDownloadTarget({
@@ -347,6 +893,33 @@ async function downloadFromManifest({
   });
   const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
+  const persistedPayload = createPersistentDownloadPayload({
+    job: {
+      manifestUrl,
+      sourceUrl,
+      title: target.fileStem,
+      outputDir,
+      archivePath: DOWNLOAD_ARCHIVE_PATH,
+      forceDownload: Boolean(forceDownload),
+      audioFormat: settings.outputFormat,
+      audioQuality: settings.outputQuality,
+      normalizeLoudness: settings.normalizeLoudness,
+      dedupeMode: settings.dedupeMode,
+      fetchThumbnail: Boolean(settings.id3Tagging),
+      sourceType,
+      episodeUrl: episodeUrl || sourceUrl || manifestUrl
+    },
+    postProcess: {
+      ...(postProcess || {}),
+      sourceType,
+      episodeTitle: postProcess?.episodeTitle || title,
+      programTitle: postProcess?.programTitle || programTitle,
+      publishedTime: postProcess?.publishedTime || publishedTime,
+      sourceUrl: postProcess?.sourceUrl || sourceUrl || manifestUrl,
+      episodeUrl: postProcess?.episodeUrl || episodeUrl || sourceUrl || manifestUrl,
+      clipId: postProcess?.clipId || clipId
+    }
+  });
 
   function emitProgress(payload) {
     emitProgressEvent(progressToken, payload);
@@ -370,23 +943,17 @@ async function downloadFromManifest({
     }),
     {
       label: target.fileStem,
-      sourceType
+      sourceType,
+      programTitle: postProcess?.programTitle || programTitle || "",
+      episodeUrl: episodeUrl || sourceUrl || manifestUrl || "",
+      description: postProcess?.description || "",
+      location: postProcess?.location || "",
+      hosts: normalizeMetadataList(postProcess?.hosts),
+      genres: normalizeMetadataList(postProcess?.genres),
+      persisted: persistedPayload
     }
   );
-
-  if (!result?.existing) {
-    try {
-      downloadHistory.append({
-        sourceType: sourceType || "rte",
-        programTitle: String(programTitle || ""),
-        episodeTitle: String(title || ""),
-        filePath: result?.fileName ? path.join(result.outputDir || outputDir, result.fileName) : "",
-        outputDir: result?.outputDir || outputDir,
-        fileName: result?.fileName || "",
-        episodeUrl: String(episodeUrl || sourceUrl || "")
-      });
-    } catch {}
-  }
+  appendDownloadHistoryFromPayload(persistedPayload, result);
 
   return {
     ...result,
@@ -404,7 +971,11 @@ async function maybeApplyId3({
   artworkUrl,
   episodeUrl = "",
   clipId = "",
-  description = ""
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  cue = null
 }) {
   const settings = readSettings();
   if (!settings.id3Tagging) {
@@ -432,7 +1003,12 @@ async function maybeApplyId3({
       artworkPath: String(downloadResult?.artworkPath || ""),
       episodeUrl,
       clipId,
-      description
+      description,
+      location,
+      hosts,
+      genres,
+      chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
+      durationSeconds: Number(cue?.durationSeconds || 0)
     });
   } catch {
     return null;
@@ -454,12 +1030,16 @@ async function maybeGenerateCue({
   programTitle,
   tracklistUrl = "",
   fileStartOffset = 0,
+  prefetchedTracks = [],
+  writeCueFile = false,
   force = false,
   revealErrors = false,
   onProgress = null
 }) {
   const settings = readSettings();
-  if (!force && !settings.cueAutoGenerate) {
+  const generateEmbeddedChapters = shouldGenerateEmbeddedChapters(settings, { force });
+  const generateCueSidecar = writeCueFile && shouldWriteCueSidecar(settings, { force });
+  if (!generateEmbeddedChapters && !generateCueSidecar) {
     return null;
   }
 
@@ -470,9 +1050,15 @@ async function maybeGenerateCue({
   }
 
   const audioPath = path.join(outputDir, fileName);
+  const resolvedPrefetchedTracks = normalizeCueTracks(
+    Array.isArray(prefetchedTracks) && prefetchedTracks.length
+      ? prefetchedTracks
+      : await getPrefetchedCueTracks({ sourceType, episodeUrl, tracklistUrl, fileStartOffset }),
+    { offsetSeconds: 0 }
+  );
   try {
     return await runCueTaskInChild({
-      mode: "generate",
+      mode: generateCueSidecar ? "generate" : "preview",
       onProgress,
       options: {
       audioPath,
@@ -481,6 +1067,8 @@ async function maybeGenerateCue({
       episodeTitle,
       programTitle,
       tracklistUrl,
+      fileStartOffset: Number(fileStartOffset) || 0,
+      prefetchedTracks: resolvedPrefetchedTracks,
       fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
       auddTrackMatching: Boolean(settings.auddTrackMatching),
       auddApiToken: String(settings.auddApiToken || ""),
@@ -489,8 +1077,7 @@ async function maybeGenerateCue({
       songrecSampleSeconds: Number(settings.songrecSampleSeconds || 20),
       ffmpegCueSilenceDetect: settings.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect),
       ffmpegCueLoudnessDetect: settings.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect),
-      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect),
-      fileStartOffset: Number(fileStartOffset) || 0
+      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect)
       }
     });
   } catch (error) {
@@ -537,6 +1124,12 @@ async function previewCue({
   } else {
     inputSource = (await resolveBbcEpisodeStream(episodeUrl)).streamUrl;
   }
+  const prefetchedTracks = await getPrefetchedCueTracks({
+    sourceType: safeSourceType,
+    episodeUrl,
+    tracklistUrl,
+    fileStartOffset
+  });
 
   return runCueTaskInChild({
     mode: "preview",
@@ -549,6 +1142,8 @@ async function previewCue({
       programTitle: String(programTitle || "").trim(),
       tracklistUrl: String(tracklistUrl || "").trim(),
       durationSecondsHint: Number(durationSeconds || 0),
+      fileStartOffset: Number(fileStartOffset) || 0,
+      prefetchedTracks,
       fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
       auddTrackMatching: Boolean(settings.auddTrackMatching),
       auddApiToken: String(settings.auddApiToken || ""),
@@ -557,10 +1152,9 @@ async function previewCue({
       songrecSampleSeconds: Number(settings.songrecSampleSeconds || 20),
       ffmpegCueSilenceDetect: settings.ffmpegCueSilenceDetect == null ? true : Boolean(settings.ffmpegCueSilenceDetect),
       ffmpegCueLoudnessDetect: settings.ffmpegCueLoudnessDetect == null ? true : Boolean(settings.ffmpegCueLoudnessDetect),
-      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect),
-      fileStartOffset: Number(fileStartOffset) || 0
-    }
-  });
+      ffmpegCueSpectralDetect: settings.ffmpegCueSpectralDetect == null ? true : Boolean(settings.ffmpegCueSpectralDetect)
+      }
+    });
 }
 
 async function resolveBbcArtwork(episodeUrl) {
@@ -579,7 +1173,20 @@ async function resolveBbcArtwork(episodeUrl) {
   }
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+async function downloadEpisodeByClip({
+  clipId,
+  title,
+  episodeUrl,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  progressToken,
+  forceDownload = false
+}) {
   const playlist = await getPlaylist(String(clipId));
   const resolvedTitle = title || `rte-episode-${clipId}`;
   const download = await downloadFromManifest({
@@ -591,7 +1198,18 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     episodeUrl,
     progressToken,
     sourceType: "rte",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...buildMetadata({ description, location, hosts, genres }),
+      sourceType: "rte",
+      episodeTitle: resolvedTitle,
+      programTitle,
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl: episodeUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
+      episodeUrl,
+      clipId: String(clipId || "")
+    }
   });
   const cue = await maybeGenerateCue({
     downloadResult: download,
@@ -610,7 +1228,12 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     sourceUrl: episodeUrl,
     artworkUrl: String(artworkUrl || "").trim(),
     episodeUrl,
-    clipId: String(clipId || "")
+    clipId: String(clipId || ""),
+    description,
+    location,
+    hosts,
+    genres,
+    cue
   });
 
   return {
@@ -709,7 +1332,25 @@ function feedDataDirFor(sourceType) {
   if (sourceType === "wwf") return path.join(DATA_DIR, "wwf");
   if (sourceType === "nts") return path.join(DATA_DIR, "nts");
   if (sourceType === "fip") return path.join(DATA_DIR, "fip");
+  if (sourceType === "kexp") return path.join(DATA_DIR, "kexp");
   return DATA_DIR;
+}
+
+function getFeedSourceConfigs() {
+  return [
+    { sourceType: "rte", dataDir: feedDataDirFor("rte"), publicBasePath: "/feeds/rte" },
+    { sourceType: "bbc", dataDir: feedDataDirFor("bbc"), publicBasePath: "/feeds/bbc" },
+    { sourceType: "wwf", dataDir: feedDataDirFor("wwf"), publicBasePath: "/feeds/wwf" },
+    { sourceType: "nts", dataDir: feedDataDirFor("nts"), publicBasePath: "/feeds/nts" },
+    { sourceType: "fip", dataDir: feedDataDirFor("fip"), publicBasePath: "/feeds/fip" },
+    { sourceType: "kexp", dataDir: feedDataDirFor("kexp"), publicBasePath: "/feeds/kexp" }
+  ];
+}
+
+function listAllProgramFeeds() {
+  return getFeedSourceConfigs()
+    .flatMap((config) => listProgramFeedFiles(config))
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
 
 async function resolveWwfEpisodeStream(episodeUrl) {
@@ -725,17 +1366,39 @@ async function resolveWwfEpisodeStream(episodeUrl) {
     sourceUrl = mixcloudUrl || url;
   }
 
+  if (/mixcloud\.com\//i.test(sourceUrl)) {
+    resolveYtDlpCommand();
+  }
+
   // Mixcloud uses AES-128 encrypted HLS — pipe yt-dlp decoded output for fast
   // playback start (~5-10s). No seek support.
   return { episodeUrl: url, streamUrl: `/api/wwf/ytdlp-pipe?url=${encodeURIComponent(sourceUrl)}`, title: "", image: "" };
 }
 
-async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+async function downloadWwfEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  progressToken,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const info = await getWwfEpisodeInfo(sourceUrl).catch(() => ({}));
   const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "wwf-episode");
   const ytDlpUrl = (info.mixcloudUrl && info.mixcloudUrl.trim()) || (await getWwfEpisodeMixcloudUrl(sourceUrl).catch(() => "")) || sourceUrl;
+  const metadata = buildMetadata({
+    description: description || info.description,
+    location: location || info.location,
+    hosts: normalizeMetadataList(hosts).length ? hosts : info.hosts,
+    genres: normalizeMetadataList(genres).length ? genres : info.genres
+  });
   const download = await downloadFromManifest({
     sourceUrl: ytDlpUrl,
     manifestUrl: ytDlpUrl,
@@ -746,9 +1409,28 @@ async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTi
     clipId: info.clipId || sourceUrl,
     progressToken,
     sourceType: "wwf",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "wwf",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || info.showName || "Worldwide FM",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || info.image || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: String(info.clipId || sourceUrl)
+    }
   });
   const resolvedArtwork = String(artworkUrl || info.image || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "wwf",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || info.showName || "Worldwide FM",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "wwf",
@@ -758,15 +1440,12 @@ async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: String(info.clipId || sourceUrl)
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "wwf",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || info.showName || "Worldwide FM",
-    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+    clipId: String(info.clipId || sourceUrl),
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
@@ -782,11 +1461,29 @@ async function resolveNtsEpisodeStream(episodeUrl) {
   return { episodeUrl: url, streamUrl: direct, title: String(json?.title || "").trim(), image: String(json?.thumbnail || "").trim() };
 }
 
-async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+async function downloadNtsEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  progressToken,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const info = await getNtsEpisodeInfo(sourceUrl).catch(() => ({}));
   const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "nts-episode");
+  const metadata = buildMetadata({
+    description: description || info.description,
+    location: location || info.location,
+    hosts: normalizeMetadataList(hosts).length ? hosts : info.hosts,
+    genres: normalizeMetadataList(genres).length ? genres : info.genres
+  });
   const download = await downloadFromManifest({
     sourceUrl,
     manifestUrl: sourceUrl,
@@ -797,9 +1494,28 @@ async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTi
     clipId: info.clipId || sourceUrl,
     progressToken,
     sourceType: "nts",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "nts",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || "NTS",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || info.image || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: String(info.clipId || sourceUrl)
+    }
   });
   const resolvedArtwork = String(artworkUrl || info.image || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "nts",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "NTS",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "nts",
@@ -809,23 +1525,33 @@ async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: String(info.clipId || sourceUrl)
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "nts",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || "NTS",
-    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+    clipId: String(info.clipId || sourceUrl),
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
-async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+async function downloadFipEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  progressToken,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const metadata = buildMetadata({ description, location, hosts, genres });
   const download = await downloadFromManifest({
     sourceUrl,
     manifestUrl: sourceUrl,
@@ -836,9 +1562,28 @@ async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTi
     clipId: sourceUrl,
     progressToken,
     sourceType: "fip",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "fip",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || "FIP",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: sourceUrl
+    }
   });
   const resolvedArtwork = String(artworkUrl || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "fip",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "fip",
@@ -848,23 +1593,33 @@ async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: sourceUrl
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "fip",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || "FIP",
-    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+    clipId: sourceUrl,
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
-async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", progressToken, forceDownload = false }) {
+async function downloadKexpEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  progressToken,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "kexp-episode");
+  const metadata = buildMetadata({ description, location, hosts, genres });
 
   // If already a direct CDN URL (e.g. CloudFront from KEXP Extended), use it directly
   let sgUrl, sgOffset;
@@ -877,24 +1632,40 @@ async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedT
     sgOffset = Number(streamInfo.startOffset) || 0;
   }
 
-  let download;
-  try {
-    download = await downloadFromManifest({
-      sourceUrl: sgUrl,
-      manifestUrl: sgUrl,
-      title: resolvedTitle,
+  const download = await downloadFromManifest({
+    sourceUrl: sgUrl,
+    manifestUrl: sgUrl,
+    title: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    publishedTime: publishedTime || resolvedTitle,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl,
+    progressToken,
+    sourceType: "kexp",
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "kexp",
+      episodeTitle: resolvedTitle,
       programTitle: programTitle || "KEXP",
       publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
       episodeUrl: sourceUrl,
       clipId: sourceUrl,
-      progressToken,
-      sourceType: "kexp",
-      forceDownload
-    });
-  } catch (err) {
-    throw err;
-  }
+      fileStartOffset: sgOffset
+    }
+  });
   const resolvedArtwork = String(artworkUrl || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "kexp",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    fileStartOffset: sgOffset,
+    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "kexp",
@@ -904,16 +1675,12 @@ async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedT
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: String(sourceUrl)
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "kexp",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || "KEXP",
-    fileStartOffset: sgOffset,
-    onProgress: (progress) => emitProgressEvent(progressToken, progress)
+    clipId: String(sourceUrl),
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
@@ -936,10 +1703,17 @@ async function onScheduleRefreshed(sourceType, schedule, latest) {
   if (!readSettings().feedExportEnabled) {
     return;
   }
-  writeProgramFeedFiles({
+  const feed = writeProgramFeedFiles({
     dataDir: feedDataDirFor(sourceType),
     schedule,
     latest
+  });
+  patchMaterializedFeeds();
+  broadcastGlobalEvent({
+    type: "feeds.updated",
+    source: sourceType,
+    title: schedule?.title || "",
+    slug: feed?.slug || ""
   });
 }
 
@@ -964,10 +1738,21 @@ async function onScheduleComplete(sourceType, schedule, downloaded) {
 }
 
 async function onScheduleError(sourceType, schedule, error) {
+  recentErrorsLog.append({
+    sourceType,
+    title: schedule?.title || "",
+    error: String(error?.message || error || "Unknown error")
+  });
   await sendWebhookIfConfigured({
     event: "download.error",
     source: sourceType,
     scheduleId: schedule?.id || "",
+    title: schedule?.title || "",
+    error: String(error?.message || error || "Unknown error")
+  });
+  broadcastGlobalEvent({
+    type: "download.error",
+    source: sourceType,
     title: schedule?.title || "",
     error: String(error?.message || error || "Unknown error")
   });
@@ -988,6 +1773,10 @@ const scheduler = createSchedulerStore({
       episodeUrl: episode.episodeUrl,
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
       forceDownload: episode.forceDownload || false
     })
 });
@@ -1010,7 +1799,30 @@ const bbcScheduler = createSchedulerStore({
         clipId: episode.clipId,
         episodeUrl: String(episode.episodeUrl || ""),
         sourceType: "bbc",
-        forceDownload: episode.forceDownload || false
+        forceDownload: episode.forceDownload || false,
+        postProcess: {
+          ...buildMetadata({
+            description: episode.description || "",
+            location: episode.location || "",
+            hosts: episode.hosts || [],
+            genres: episode.genres || []
+          }),
+          sourceType: "bbc",
+          episodeTitle: String(episode.title || "bbc-episode"),
+          programTitle: String(episode.programTitle || "BBC"),
+          publishedTime: String(episode.publishedTime || episode.title || ""),
+          sourceUrl: String(episode.episodeUrl || ""),
+          artworkUrl: String(episode.image || ""),
+          episodeUrl: String(episode.episodeUrl || ""),
+          clipId: String(episode.clipId || "")
+        }
+      });
+      const cue = await maybeGenerateCue({
+        downloadResult: download,
+        sourceType: "bbc",
+        episodeUrl: String(episode.episodeUrl || ""),
+        episodeTitle: String(episode.title || "bbc-episode"),
+        programTitle: String(episode.programTitle || "BBC")
       });
       const tags = await maybeApplyId3({
         downloadResult: download,
@@ -1021,14 +1833,12 @@ const bbcScheduler = createSchedulerStore({
         sourceUrl: String(episode.episodeUrl || ""),
         artworkUrl: String(episode.image || ""),
         episodeUrl: String(episode.episodeUrl || ""),
-        clipId: String(episode.clipId || "")
-      });
-      const cue = await maybeGenerateCue({
-        downloadResult: download,
-        sourceType: "bbc",
-        episodeUrl: String(episode.episodeUrl || ""),
-        episodeTitle: String(episode.title || "bbc-episode"),
-        programTitle: String(episode.programTitle || "BBC")
+        clipId: String(episode.clipId || ""),
+        description: String(episode.description || ""),
+        location: String(episode.location || ""),
+        hosts: episode.hosts || [],
+        genres: episode.genres || [],
+        cue
       });
       return { ...download, tags, cue };
     })()
@@ -1048,6 +1858,10 @@ const wwfScheduler = createSchedulerStore({
       programTitle: episode.programTitle || episode.showName,
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
       forceDownload: episode.forceDownload || false
     })
 });
@@ -1066,6 +1880,10 @@ const ntsScheduler = createSchedulerStore({
       programTitle: episode.programTitle || "NTS",
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
       forceDownload: episode.forceDownload || false
     })
 });
@@ -1084,6 +1902,10 @@ const fipScheduler = createSchedulerStore({
       programTitle: episode.programTitle || "FIP",
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
       forceDownload: episode.forceDownload || false
     })
 });
@@ -1102,9 +1924,21 @@ const kexpScheduler = createSchedulerStore({
       programTitle: episode.programTitle || "KEXP",
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
       forceDownload: episode.forceDownload || false
     })
 });
+
+if (process.env.NODE_ENV !== "test") {
+  materializedMetadataCache = getMaterializedMetadataSnapshot();
+  setTimeout(() => {
+    refreshMetadataHarvestCache(false).catch(() => {});
+    refreshMaterializedMetadataSnapshot().catch(() => {});
+  }, 2500);
+}
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
@@ -1191,12 +2025,25 @@ app.get("/api/wwf/ytdlp-pipe", (req, res) => {
   if (!/mixcloud\.com\//i.test(url)) {
     return res.status(400).json({ error: "Invalid URL: must be a Mixcloud URL" });
   }
+  let child;
+  try {
+    child = spawnYtDlpPipe(url);
+  } catch (error) {
+    return res.status(503).json({ error: String(error?.message || error || "yt-dlp pipe failed") });
+  }
   res.setHeader("Content-Type", "audio/mpeg");
   res.setHeader("Transfer-Encoding", "chunked");
-  const child = spawnYtDlpPipe(url);
   child.stdout.pipe(res);
   req.on("close", () => { try { child.kill(); } catch {} });
-  child.on("error", () => { try { res.end(); } catch {} });
+  child.on("error", () => {
+    try {
+      if (!res.headersSent) {
+        res.status(503).json({ error: "yt-dlp pipe failed" });
+      } else {
+        res.end();
+      }
+    } catch {}
+  });
 });
 
 app.get("/api/wwf/temp-audio/:token", (req, res) => {
@@ -1410,12 +2257,17 @@ app.post("/api/download/fip/url", async (req, res) => {
     const providedProgramTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const providedImage = String(req.body.image || "").trim();
+    const { description, location, hosts, genres } = buildMetadata(req.body || {});
     const data = await downloadFipEpisode({
       episodeUrl: pageUrl,
       title: providedTitle,
       programTitle: providedProgramTitle,
       publishedTime,
       artworkUrl: providedImage,
+      description,
+      location,
+      hosts,
+      genres,
       progressToken,
       forceDownload
     });
@@ -1611,6 +2463,7 @@ app.post("/api/download/url", async (req, res) => {
     const pageUrl = String(req.body.pageUrl || "");
     const progressToken = String(req.body.progressToken || "");
     const forceDownload = Boolean(req.body.forceDownload);
+    const metadata = buildMetadata(req.body || {});
     const info = await extractRteInfo(pageUrl);
     const download = await downloadFromManifest({
       manifestUrl: info.m3u8Url,
@@ -1621,7 +2474,18 @@ app.post("/api/download/url", async (req, res) => {
       episodeUrl: pageUrl,
       progressToken,
       sourceType: "rte",
-      forceDownload
+      forceDownload,
+      postProcess: {
+        ...metadata,
+        sourceType: "rte",
+        episodeTitle: info.title,
+        programTitle: inferProgramNameFromUrl(pageUrl),
+        publishedTime: info.title,
+        sourceUrl: pageUrl,
+        artworkUrl: String(info.image || "").trim(),
+        episodeUrl: pageUrl,
+        clipId: String(info.clipId || "")
+      }
     });
     const cue = await maybeGenerateCue({
       downloadResult: download,
@@ -1640,7 +2504,12 @@ app.post("/api/download/url", async (req, res) => {
       sourceUrl: pageUrl,
       artworkUrl: String(info.image || "").trim(),
       episodeUrl: pageUrl,
-      clipId: String(info.clipId || "")
+      clipId: String(info.clipId || ""),
+      description: metadata.description,
+      location: metadata.location,
+      hosts: metadata.hosts,
+      genres: metadata.genres,
+      cue
     });
     res.json({ ...info, tags, cue, ...download });
   } catch (error) {
@@ -1657,6 +2526,7 @@ app.post("/api/download/bbc/url", async (req, res) => {
     const providedProgramTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const providedImage = String(req.body.image || "").trim();
+    const metadata = buildMetadata(req.body || {});
     const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
     const canonicalUrl = toCanonicalBbcEpisodeUrl(pageUrl);
     const attemptUrls = Array.from(new Set([canonicalUrl, String(pageUrl).trim()].filter(Boolean)));
@@ -1676,7 +2546,17 @@ app.post("/api/download/bbc/url", async (req, res) => {
           episodeUrl: candidate,
           progressToken,
           sourceType: "bbc",
-          forceDownload
+          forceDownload,
+          postProcess: {
+            ...metadata,
+            sourceType: "bbc",
+            episodeTitle: inferredTitle,
+            programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+            publishedTime: publishedTime || inferredTitle,
+            sourceUrl: candidate,
+            artworkUrl: providedImage,
+            episodeUrl: candidate
+          }
         });
         usedUrl = candidate;
         break;
@@ -1709,7 +2589,12 @@ app.post("/api/download/bbc/url", async (req, res) => {
       publishedTime: publishedTime || inferredTitle,
       sourceUrl: usedUrl,
       artworkUrl: resolvedArtwork,
-      episodeUrl: usedUrl
+      episodeUrl: usedUrl,
+      description: metadata.description,
+      location: metadata.location,
+      hosts: metadata.hosts,
+      genres: metadata.genres,
+      cue
     });
     res.json({ pageUrl, sourceUrlUsed: usedUrl, title: inferredTitle, tags, cue, ...download });
   } catch (error) {
@@ -1726,12 +2611,17 @@ app.post("/api/download/wwf/url", async (req, res) => {
     const programTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const image = String(req.body.image || "").trim();
+    const { description, location, hosts, genres } = buildMetadata(req.body || {});
     const data = await downloadWwfEpisode({
       episodeUrl: pageUrl,
       title: title || undefined,
       programTitle: programTitle || undefined,
       publishedTime: publishedTime || undefined,
       artworkUrl: image,
+      description,
+      location,
+      hosts,
+      genres,
       progressToken,
       forceDownload
     });
@@ -1750,12 +2640,17 @@ app.post("/api/download/nts/url", async (req, res) => {
     const programTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const image = String(req.body.image || "").trim();
+    const { description, location, hosts, genres } = buildMetadata(req.body || {});
     const data = await downloadNtsEpisode({
       episodeUrl: pageUrl,
       title: title || undefined,
       programTitle: programTitle || undefined,
       publishedTime: publishedTime || undefined,
       artworkUrl: image,
+      description,
+      location,
+      hosts,
+      genres,
       progressToken,
       forceDownload
     });
@@ -1775,7 +2670,21 @@ app.post("/api/download/episode", async (req, res) => {
     const artworkUrl = String(req.body.artworkUrl || "");
     const progressToken = String(req.body.progressToken || "");
     const forceDownload = Boolean(req.body.forceDownload);
-    const data = await downloadEpisodeByClip({ clipId, title, programTitle, episodeUrl, publishedTime, artworkUrl, progressToken, forceDownload });
+    const { description, location, hosts, genres } = buildMetadata(req.body || {});
+    const data = await downloadEpisodeByClip({
+      clipId,
+      title,
+      programTitle,
+      episodeUrl,
+      publishedTime,
+      artworkUrl,
+      description,
+      location,
+      hosts,
+      genres,
+      progressToken,
+      forceDownload
+    });
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1870,7 +2779,211 @@ app.get("/api/download-history", (_req, res) => {
 
 app.delete("/api/download-history", (_req, res) => {
   downloadHistory.clear();
+  patchMaterializedHistory();
+  broadcastGlobalEvent({ type: "download.history.cleared" });
   res.json({ ok: true });
+});
+
+app.get("/api/feeds", (_req, res) => {
+  res.json({ feeds: listAllProgramFeeds() });
+});
+
+app.get("/api/metadata/search", async (req, res) => {
+  try {
+    const snapshot = await ensureMaterializedMetadata();
+    const result = searchMetadataIndex(
+      snapshot.index,
+      {
+        query: String(req.query.q || ""),
+        sourceType: String(req.query.sourceType || ""),
+        kind: String(req.query.kind || ""),
+        limit: Number(req.query.limit || 50)
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/entity-graph/search", async (req, res) => {
+  try {
+    const forceRefresh = String(req.query.forceRefresh || "").trim().toLowerCase() === "true";
+    await refreshMetadataHarvestCache(forceRefresh);
+    const snapshot = await ensureMaterializedMetadata({
+      forceRebuild: forceRefresh,
+      allowStale: !forceRefresh
+    });
+    const result = searchEntityGraph(
+      snapshot.graph,
+      {
+        query: String(req.query.q || ""),
+        type: String(req.query.type || ""),
+        sourceType: String(req.query.sourceType || ""),
+        limit: Number(req.query.limit || 24)
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/entity-graph/entity", async (req, res) => {
+  try {
+    const forceRefresh = String(req.query.forceRefresh || "").trim().toLowerCase() === "true";
+    await refreshMetadataHarvestCache(forceRefresh);
+    const snapshot = await ensureMaterializedMetadata({
+      forceRebuild: forceRefresh,
+      allowStale: !forceRefresh
+    });
+    const result = getEntityGraphEntity(
+      snapshot.graph,
+      {
+        entityId: String(req.query.entityId || "")
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/metadata/discover", async (req, res) => {
+  try {
+    const forceRefresh = String(req.query.forceRefresh || "").trim().toLowerCase() === "true";
+    await refreshMetadataHarvestCache(forceRefresh);
+    const snapshot = await ensureMaterializedMetadata({
+      forceRebuild: forceRefresh,
+      allowStale: !forceRefresh
+    });
+    const result = discoverMetadataIndex(
+      snapshot.index,
+      {
+        query: String(req.query.q || ""),
+        sourceType: String(req.query.sourceType || ""),
+        kind: String(req.query.kind || ""),
+        limit: Number(req.query.limit || 12)
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/metadata/harvest-refresh", async (_req, res) => {
+  try {
+    const items = await refreshMetadataHarvestCache(true);
+    res.json({ ok: true, count: items.length, updatedAt: metadataHarvestStore.getUpdatedAt() });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/collections", (_req, res) => {
+  res.json({ collections: collectionsStore.list() });
+});
+
+app.post("/api/collections", (req, res) => {
+  try {
+    collectionsStore.create(String(req.body.name || ""));
+    res.json({ collections: collectionsStore.list() });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/collections/:id", (req, res) => {
+  collectionsStore.remove(String(req.params.id || ""));
+  res.json({ collections: collectionsStore.list() });
+});
+
+app.post("/api/collections/:id/entries", (req, res) => {
+  try {
+    collectionsStore.addEntry(String(req.params.id || ""), req.body || {});
+    res.json({ collections: collectionsStore.list() });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/collections/:id/entries/batch", (req, res) => {
+  try {
+    const result = collectionsStore.addEntries(String(req.params.id || ""), req.body?.entries || []);
+    res.json({
+      collections: collectionsStore.list(),
+      addedCount: Number(result?.addedCount || 0)
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete("/api/collections/:id/entries/:entryId", (req, res) => {
+  collectionsStore.removeEntry(String(req.params.id || ""), String(req.params.entryId || ""));
+  res.json({ collections: collectionsStore.list() });
+});
+
+app.get("/api/collections/:id/recommendations", async (req, res) => {
+  try {
+    const forceRefresh = String(req.query.forceRefresh || "").trim().toLowerCase() === "true";
+    await refreshMetadataHarvestCache(forceRefresh);
+    const snapshot = await ensureMaterializedMetadata({
+      forceRebuild: forceRefresh,
+      allowStale: !forceRefresh
+    });
+    const collection = collectionsStore.list().find((item) => item.id === String(req.params.id || ""));
+    if (!collection) {
+      res.status(404).json({ error: "Collection not found." });
+      return;
+    }
+    const result = buildCollectionRecommendations(
+      snapshot.index,
+      collection,
+      {
+        query: String(req.query.q || ""),
+        sourceType: String(req.query.sourceType || ""),
+        limit: Number(req.query.limit || 12)
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/history/postprocess", async (req, res) => {
+  try {
+    const result = await rebuildDownloadedFileMetadata(req.body || {});
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/diagnostics", async (_req, res) => {
+  const settings = readSettings();
+  const snapshot = await ensureMaterializedMetadata();
+  res.json(collectRuntimeDiagnostics({
+    dataDir: DATA_DIR,
+    downloadDir: settings.downloadDir,
+    projectRoot: path.join(__dirname, ".."),
+    recentErrors: recentErrorsLog.list(),
+    settings,
+    harvestUpdatedAt: metadataHarvestStore.getUpdatedAt(),
+    harvestState: metadataHarvestStore.getState(),
+    harvestedItems: metadataHarvestStore.list(),
+    metadataIndex: snapshot.index,
+    entityGraph: snapshot.graph
+  }));
+});
+
+app.post("/api/diagnostics/repair", async (_req, res) => {
+  const result = await runVendorBootstrap({
+    projectRoot: path.join(__dirname, "..")
+  });
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 app.get("/api/download-queue/stats", (_req, res) => {
@@ -1899,6 +3012,22 @@ app.post("/api/download-queue/cancel", (req, res) => {
   });
 });
 
+app.post("/api/download-queue/rerun", (req, res) => {
+  const taskId = String(req.body.taskId || "").trim();
+  const mode = String(req.body.mode || "exact").trim().toLowerCase() === "current-settings"
+    ? "current-settings"
+    : "exact";
+  const rerun = downloadQueue.rerun(taskId, {
+    restoreTask: restoreDownloadQueueTask,
+    mode
+  });
+  if (!rerun) {
+    res.status(400).json({ ok: false, error: "Task cannot be rerun.", snapshot: downloadQueue.snapshot() });
+    return;
+  }
+  res.json({ ok: true, taskId: rerun.id, snapshot: downloadQueue.snapshot() });
+});
+
 app.post("/api/download-queue/clear-pending", (_req, res) => {
   downloadQueue.clearPending();
   res.json(downloadQueue.snapshot());
@@ -1911,12 +3040,14 @@ app.post("/api/cue/generate", async (req, res) => {
     const progressToken = String(req.body.progressToken || "");
     const cue = await maybeGenerateCue({
       force: true,
+      writeCueFile: true,
       revealErrors: true,
       sourceType,
       episodeUrl: String(req.body.episodeUrl || ""),
       episodeTitle: String(req.body.title || ""),
       programTitle: String(req.body.programTitle || ""),
       tracklistUrl: String(req.body.tracklistUrl || ""),
+      fileStartOffset: Number(req.body.fileStartOffset || 0),
       downloadResult: {
         outputDir: String(req.body.outputDir || ""),
         fileName: String(req.body.fileName || "")
@@ -1961,6 +3092,7 @@ app.post("/api/scheduler", async (req, res) => {
     const programUrl = normalizeProgramUrl(String(req.body.programUrl || ""));
     const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
     const data = await scheduler.add(programUrl, { backfillCount });
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1971,6 +3103,7 @@ app.patch("/api/scheduler/:id", (req, res) => {
   try {
     const enabled = Boolean(req.body.enabled);
     const data = scheduler.setEnabled(req.params.id, enabled);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1980,6 +3113,7 @@ app.patch("/api/scheduler/:id", (req, res) => {
 app.post("/api/scheduler/:id/run", async (req, res) => {
   try {
     const data = await scheduler.checkOne(req.params.id);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -1988,6 +3122,7 @@ app.post("/api/scheduler/:id/run", async (req, res) => {
 
 app.delete("/api/scheduler/:id", (req, res) => {
   scheduler.remove(req.params.id);
+  patchMaterializedSubscriptions();
   res.json({ ok: true });
 });
 
@@ -2000,6 +3135,7 @@ app.post("/api/bbc/scheduler", async (req, res) => {
     const programUrl = normalizeBbcProgramUrl(String(req.body.programUrl || ""));
     const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
     const data = await bbcScheduler.add(programUrl, { backfillCount });
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2010,6 +3146,7 @@ app.patch("/api/bbc/scheduler/:id", (req, res) => {
   try {
     const enabled = Boolean(req.body.enabled);
     const data = bbcScheduler.setEnabled(req.params.id, enabled);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2019,6 +3156,7 @@ app.patch("/api/bbc/scheduler/:id", (req, res) => {
 app.post("/api/bbc/scheduler/:id/run", async (req, res) => {
   try {
     const data = await bbcScheduler.checkOne(req.params.id);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2027,6 +3165,7 @@ app.post("/api/bbc/scheduler/:id/run", async (req, res) => {
 
 app.delete("/api/bbc/scheduler/:id", (req, res) => {
   bbcScheduler.remove(req.params.id);
+  patchMaterializedSubscriptions();
   res.json({ ok: true });
 });
 
@@ -2040,6 +3179,7 @@ app.post("/api/wwf/scheduler", async (req, res) => {
     const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
     const normalized = normalizeWwfProgramUrl(programUrl || "");
     const data = await wwfScheduler.add(normalized, { backfillCount });
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2050,6 +3190,7 @@ app.patch("/api/wwf/scheduler/:id", (req, res) => {
   try {
     const enabled = Boolean(req.body.enabled);
     const data = wwfScheduler.setEnabled(req.params.id, enabled);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2059,6 +3200,7 @@ app.patch("/api/wwf/scheduler/:id", (req, res) => {
 app.post("/api/wwf/scheduler/:id/run", async (req, res) => {
   try {
     const data = await wwfScheduler.checkOne(req.params.id);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2067,6 +3209,7 @@ app.post("/api/wwf/scheduler/:id/run", async (req, res) => {
 
 app.delete("/api/wwf/scheduler/:id", (req, res) => {
   wwfScheduler.remove(req.params.id);
+  patchMaterializedSubscriptions();
   res.json({ ok: true });
 });
 
@@ -2080,6 +3223,7 @@ app.post("/api/nts/scheduler", async (req, res) => {
     const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
     const normalized = normalizeNtsProgramUrl(programUrl || "");
     const data = await ntsScheduler.add(normalized, { backfillCount });
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2090,6 +3234,7 @@ app.patch("/api/nts/scheduler/:id", (req, res) => {
   try {
     const enabled = Boolean(req.body.enabled);
     const data = ntsScheduler.setEnabled(req.params.id, enabled);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2099,6 +3244,7 @@ app.patch("/api/nts/scheduler/:id", (req, res) => {
 app.post("/api/nts/scheduler/:id/run", async (req, res) => {
   try {
     const data = await ntsScheduler.checkOne(req.params.id);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2107,6 +3253,7 @@ app.post("/api/nts/scheduler/:id/run", async (req, res) => {
 
 app.delete("/api/nts/scheduler/:id", (req, res) => {
   ntsScheduler.remove(req.params.id);
+  patchMaterializedSubscriptions();
   res.json({ ok: true });
 });
 
@@ -2120,6 +3267,7 @@ app.post("/api/fip/scheduler", async (req, res) => {
     const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
     const normalized = normalizeFipProgramUrl(programUrl || "");
     const data = await fipScheduler.add(normalized, { backfillCount });
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2130,6 +3278,7 @@ app.patch("/api/fip/scheduler/:id", (req, res) => {
   try {
     const enabled = Boolean(req.body.enabled);
     const data = fipScheduler.setEnabled(req.params.id, enabled);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2139,6 +3288,7 @@ app.patch("/api/fip/scheduler/:id", (req, res) => {
 app.post("/api/fip/scheduler/:id/run", async (req, res) => {
   try {
     const data = await fipScheduler.checkOne(req.params.id);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2147,6 +3297,7 @@ app.post("/api/fip/scheduler/:id/run", async (req, res) => {
 
 app.delete("/api/fip/scheduler/:id", (req, res) => {
   fipScheduler.remove(req.params.id);
+  patchMaterializedSubscriptions();
   res.json({ ok: true });
 });
 
@@ -2180,7 +3331,7 @@ app.get("/api/kexp/discovery", async (req, res) => {
     const count = Math.min(24, Math.max(1, parseInt(req.query.count || "12", 10)));
     const data = await getKexpDiscovery(count);
     res.json(data);
-  } catch (error) {
+  } catch {
     res.json([]);
   }
 });
@@ -2307,6 +3458,7 @@ app.post("/api/download/kexp-extended/url", async (req, res) => {
     const providedProgramTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const providedImage = String(req.body.image || "").trim();
+    const { description, location, hosts, genres } = buildMetadata(req.body || {});
     // Resolve stream URL directly from Splixer/CloudFront
     const streamInfo = await getKexpExtendedEpisodeStream(pageUrl);
     const streamUrl = streamInfo.streamUrl;
@@ -2320,6 +3472,10 @@ app.post("/api/download/kexp-extended/url", async (req, res) => {
       programTitle,
       publishedTime: broadcastedAt,
       artworkUrl,
+      description,
+      location,
+      hosts,
+      genres,
       progressToken,
       forceDownload
     });
@@ -2338,12 +3494,17 @@ app.post("/api/download/kexp/url", async (req, res) => {
     const providedProgramTitle = String(req.body.programTitle || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const providedImage = String(req.body.image || "").trim();
+    const { description, location, hosts, genres } = buildMetadata(req.body || {});
     const data = await downloadKexpEpisode({
       episodeUrl: pageUrl,
       title: providedTitle,
       programTitle: providedProgramTitle,
       publishedTime,
       artworkUrl: providedImage,
+      description,
+      location,
+      hosts,
+      genres,
       progressToken,
       forceDownload
     });
@@ -2363,6 +3524,7 @@ app.post("/api/kexp/scheduler", async (req, res) => {
     const backfillCount = Math.max(0, Math.floor(Number(req.body.backfillCount || 0)));
     const normalized = normalizeKexpProgramUrl(programUrl || "");
     const data = await kexpScheduler.add(normalized, { backfillCount });
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2373,6 +3535,7 @@ app.patch("/api/kexp/scheduler/:id", (req, res) => {
   try {
     const enabled = Boolean(req.body.enabled);
     const data = kexpScheduler.setEnabled(req.params.id, enabled);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2382,6 +3545,7 @@ app.patch("/api/kexp/scheduler/:id", (req, res) => {
 app.post("/api/kexp/scheduler/:id/run", async (req, res) => {
   try {
     const data = await kexpScheduler.checkOne(req.params.id);
+    patchMaterializedSubscriptions();
     res.json(data);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -2390,6 +3554,7 @@ app.post("/api/kexp/scheduler/:id/run", async (req, res) => {
 
 app.delete("/api/kexp/scheduler/:id", (req, res) => {
   kexpScheduler.remove(req.params.id);
+  patchMaterializedSubscriptions();
   res.json({ ok: true });
 });
 

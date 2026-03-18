@@ -12,8 +12,14 @@ const translationCache = new Map();
 let _diskCache = null;
 function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 async function translateFr(text) {
-  if (!text || text.length < 10) return text;
-  const key = text.slice(0, 450);
+  let minLength = 10;
+  let value = text;
+  if (text && typeof text === "object") {
+    minLength = Number(text.minLength || 10);
+    value = text.text;
+  }
+  if (!value || String(value).length < minLength) return value;
+  const key = String(value).slice(0, 450);
   if (!translationCache.has(key) && _diskCache) {
     const cached = _diskCache.get("fip:trans:" + key, 0); // permanent
     if (cached != null) translationCache.set(key, cached);
@@ -25,13 +31,29 @@ async function translateFr(text) {
     const json = await res.json();
     const translated = (json?.responseData?.translatedText || "").trim();
     // Reject if translation looks like an error message or is too short
-    const result = (translated.length > 10 && !translated.toLowerCase().includes("mymemory")) ? translated : text;
+    const result = (translated.length > 2 && !translated.toLowerCase().includes("mymemory")) ? translated : value;
     translationCache.set(key, result);
     if (_diskCache) _diskCache.set("fip:trans:" + key, result);
     return result;
   } catch {
-    return text;
+    return value;
   }
+}
+
+async function translateMetadataList(values, minLength = 2) {
+  const translated = await Promise.all((Array.isArray(values) ? values : []).map((value) => translateFr({ text: value, minLength })));
+  const out = [];
+  const seen = new Set();
+  for (const value of translated) {
+    const text = cleanText(value || "");
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
 }
 
 const LIVE_STATIONS = [
@@ -71,7 +93,7 @@ const STATION_LIVE_API_SLUG = {
 
 // Map station IDs to their current/live song-history slug: /fip/{slug}/api/songs
 // Used for live now-playing context; for episode tracklists use STATION_SONGS_API_ID + /api/songs instead.
-const STATION_SONGS_SLUG = {
+const _STATION_SONGS_SLUG = {
   fip:              "fip",
   fiprock:          "radio-rock",
   fipjazz:          "radio-jazz",
@@ -360,6 +382,7 @@ async function fetchPageData(slug, cursor = null) {
     description: cleanText(stripHtml(conceptObj.standFirst || conceptObj.description || "")),
     image: resolveImageUrl(conceptObj.visual_400x400?.src || conceptObj.visual?.src || ""),
     genres: extractGenres(conceptObj),
+    hosts: extractHosts(conceptObj),
     airtime: String(conceptObj.airtime || "").trim()
   } : null;
 
@@ -394,6 +417,66 @@ function extractGenres(obj) {
   return genres;
 }
 
+function uniqueCleanList(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = cleanText(value || "");
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function collectFipPeople(value, bucket) {
+  if (!value) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectFipPeople(entry, bucket));
+    return;
+  }
+  if (typeof value === "string") {
+    const text = cleanText(value);
+    if (text) {
+      bucket.push(text);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    const directName = cleanText(
+      value.name
+      || value.title
+      || value.label
+      || [value.firstName, value.lastName].filter(Boolean).join(" ")
+      || value?.path?.taxonomy?.label
+    );
+    if (directName) {
+      bucket.push(directName);
+    }
+  }
+}
+
+function extractHosts(obj) {
+  if (!obj || typeof obj !== "object") {
+    return [];
+  }
+  const hosts = [];
+  for (const field of ["authors", "author", "hosts", "host", "personalities", "personality", "presenters", "presenter", "contributors", "contributor", "guests", "guest", "tagsAndPersonalities"]) {
+    if (obj[field]) {
+      collectFipPeople(obj[field], hosts);
+    }
+  }
+  return uniqueCleanList(hosts).slice(0, 6);
+}
+
 function mapPageItem(item, showSlug) {
   if (!item || typeof item !== "object") return null;
 
@@ -422,6 +505,7 @@ function mapPageItem(item, showSlug) {
 
   // Genres from conceptId + item taxonomies (none usually at item level)
   const genres = extractGenres(item);
+  const hosts = extractHosts(item);
 
   // id: prefer item.id, fall back to last path segment
   const id = String(item.id || linkPath.split("/").filter(Boolean).pop() || "").trim();
@@ -441,6 +525,7 @@ function mapPageItem(item, showSlug) {
     image,
     duration,
     genres: genres.length ? genres : undefined,
+    hosts: hosts.length ? hosts : undefined,
     programUrl: `${BASE_URL}/fip/podcasts/${showSlug}`
   };
 }
@@ -595,16 +680,18 @@ async function fetchShowMeta(slug) {
     const { concept } = await fetchPageData(slug);
     if (concept && concept.title) {
       const { english: airtimeEn, cadence, runSchedule } = parseFipAirtime(concept.airtime);
-      const [titleEn, descEn] = await Promise.all([
+      const [titleEn, descEn, genresEn] = await Promise.all([
         translateFr(concept.title || ""),
-        translateFr((concept.description || "").slice(0, 450))
+        translateFr((concept.description || "").slice(0, 450)),
+        translateMetadataList(concept.genres || [], 2)
       ]);
       const meta = {
         uuid: concept.id,
         title: titleEn || concept.title,
         description: descEn || concept.description,
         image: concept.image,
-        genres: concept.genres || [],
+        genres: genresEn.length ? genresEn : (concept.genres || []),
+        hosts: concept.hosts || [],
         airtime: concept.airtime || "",
         airtimeEn,
         cadence,
@@ -614,13 +701,13 @@ async function fetchShowMeta(slug) {
       return meta;
     }
   } catch {}
-  const fallback = { uuid: "", title: slug.replace(/-/g, " "), description: "", image: "", genres: [], airtime: "", airtimeEn: "", cadence: "irregular", runSchedule: "" };
+  const fallback = { uuid: "", title: slug.replace(/-/g, " "), description: "", image: "", genres: [], hosts: [], airtime: "", airtimeEn: "", cadence: "irregular", runSchedule: "" };
   return fallback;
 }
 
 async function getFipProgramSummary(showUrl) {
   const url = normalizeFipProgramUrl(showUrl);
-  if (!url) return { source: "fip", programUrl: "", title: "FIP", description: "", image: "", runSchedule: "", cadence: "irregular", genres: [] };
+  if (!url) return { source: "fip", programUrl: "", title: "FIP", description: "", image: "", runSchedule: "", cadence: "irregular", genres: [], hosts: [] };
 
   const slug = getSlugFromUrl(url);
   try {
@@ -636,10 +723,11 @@ async function getFipProgramSummary(showUrl) {
       cadence: meta.cadence || "irregular",
       nextBroadcastAt: "",
       genres: meta.genres,
+      hosts: meta.hosts || [],
       airtime: meta.airtimeEn || meta.airtime || ""
     };
   } catch {
-    return { source: "fip", programUrl: url, title: slug.replace(/-/g, " "), description: "", image: "", uuid: "", runSchedule: "", cadence: "irregular", nextBroadcastAt: "", genres: [] };
+    return { source: "fip", programUrl: url, title: slug.replace(/-/g, " "), description: "", image: "", uuid: "", runSchedule: "", cadence: "irregular", nextBroadcastAt: "", genres: [], hosts: [] };
   }
 }
 
@@ -667,7 +755,7 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
       const { concept, nextCursor } = await fetchPageData(slug, prevCursor);
       // Cache the concept from first page fetch
       if (concept && !summaryCache.has(slug)) {
-        summaryCache.set(slug, { uuid: concept.id, title: concept.title, description: concept.description, image: concept.image, genres: concept.genres || [] });
+        summaryCache.set(slug, { uuid: concept.id, title: concept.title, description: concept.description, image: concept.image, genres: concept.genres || [], hosts: concept.hosts || [] });
       }
       cursors.push(nextCursor !== null ? nextCursor : undefined);
       cursorCache.set(slug, cursors);
@@ -700,12 +788,24 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
   // Get show meta (may already be cached) — always use fetchShowMeta so airtime/cadence are populated
   const cachedMeta = summaryCache.get(slug);
   const meta = (cachedMeta && cachedMeta.cadence) ? cachedMeta : await fetchShowMeta(slug).catch(() =>
-    cachedMeta || (concept ? { uuid: concept.id, title: concept.title, description: concept.description, image: concept.image, genres: concept.genres || [], cadence: "irregular", runSchedule: "", airtime: "", airtimeEn: "" } : null)
+    cachedMeta || (concept ? { uuid: concept.id, title: concept.title, description: concept.description, image: concept.image, genres: concept.genres || [], hosts: concept.hosts || [], cadence: "irregular", runSchedule: "", airtime: "", airtimeEn: "" } : null)
   );
 
   // Translate episode descriptions in parallel (cached, so no re-fetch on same text)
   await Promise.all(episodes.map(async (ep) => {
-    if (ep && ep.description) ep.description = await translateFr(ep.description.slice(0, 450));
+    if (!ep) {
+      return;
+    }
+    const [titleEn, fullTitleEn, descEn, genresEn] = await Promise.all([
+      ep.title ? translateFr({ text: ep.title, minLength: 4 }) : "",
+      ep.fullTitle ? translateFr({ text: ep.fullTitle, minLength: 4 }) : "",
+      ep.description ? translateFr({ text: ep.description.slice(0, 450), minLength: 8 }) : "",
+      translateMetadataList(ep.genres || [], 2)
+    ]);
+    if (titleEn) ep.title = titleEn;
+    if (fullTitleEn) ep.fullTitle = fullTitleEn;
+    if (descEn) ep.description = descEn;
+    if (genresEn.length) ep.genres = genresEn;
   }));
 
   const numPages = nextCursor ? safePage + 1 : safePage;
@@ -719,6 +819,24 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
   const topGenres = (meta?.genres?.length)
     ? meta.genres
     : [...genreCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([g]) => g);
+  const hostCount = new Map();
+  for (const ep of episodes) {
+    if (ep?.hosts) {
+      for (const host of ep.hosts) {
+        hostCount.set(host, (hostCount.get(host) || 0) + 1);
+      }
+    }
+  }
+  const topHosts = (meta?.hosts?.length)
+    ? meta.hosts
+    : [...hostCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([host]) => host);
+  const enrichedEpisodes = episodes.map((ep) => ({
+    ...ep,
+    description: ep?.description || meta?.description || "",
+    image: ep?.image || meta?.image || "",
+    genres: ep?.genres?.length ? ep.genres : topGenres,
+    hosts: ep?.hosts?.length ? ep.hosts : topHosts
+  }));
 
   return {
     source: "fip",
@@ -726,7 +844,7 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
     title: meta?.title || slug.replace(/-/g, " "),
     description: meta?.description || "",
     image: meta?.image || "",
-    episodes,
+    episodes: enrichedEpisodes,
     totalItems,
     page: safePage,
     numPages,
@@ -735,18 +853,84 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
     runSchedule: meta?.runSchedule || "",
     airtime: meta?.airtimeEn || meta?.airtime || "",
     nextBroadcastAt: "",
-    genres: topGenres.length ? topGenres : undefined
+    genres: topGenres.length ? topGenres : undefined,
+    hosts: topHosts.length ? topHosts : undefined
   };
 }
 
 // ── Search ───────────────────────────────────────────────────────────────────
+
+function scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight) {
+  const text = cleanText(value || "").toLowerCase();
+  if (!text || !query) {
+    return 0;
+  }
+  if (text === query) {
+    return exactWeight;
+  }
+  if (text.startsWith(query)) {
+    return prefixWeight;
+  }
+  if (text.includes(query)) {
+    return includesWeight;
+  }
+  return 0;
+}
+
+function scoreListMatch(values, query, exactWeight, prefixWeight, includesWeight) {
+  let best = 0;
+  for (const value of values || []) {
+    best = Math.max(best, scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight));
+  }
+  return best;
+}
+
+function buildFipSearchText(item) {
+  return [
+    item.title,
+    item.description,
+    item.cadence,
+    item.airtime,
+    item.runSchedule,
+    ...(item.hosts || []),
+    ...(item.genres || [])
+  ]
+    .map((value) => cleanText(value || "").toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function scoreFipProgramResult(item, query) {
+  if (!query) {
+    return 0;
+  }
+
+  let score = 0;
+  score += scoreTextMatch(item.title, query, 240, 190, 140);
+  score += scoreTextMatch(item.description, query, 95, 0, 60);
+  score += scoreTextMatch(item.airtime, query, 80, 65, 45);
+  score += scoreTextMatch(item.runSchedule, query, 35, 25, 15);
+  score += scoreTextMatch(item.cadence, query, 30, 20, 15);
+  score += scoreListMatch(item.hosts, query, 230, 190, 150);
+  score += scoreListMatch(item.genres, query, 170, 145, 115);
+
+  const tokens = query.split(/\s+/g).filter(Boolean);
+  if (tokens.length > 1) {
+    const searchText = buildFipSearchText(item);
+    if (tokens.every((token) => searchText.includes(token))) {
+      score += 70;
+    }
+  }
+
+  return score;
+}
 
 async function searchFipPrograms(query) {
   const q = cleanText(query || "").toLowerCase();
   const shows = await fetchFipShowList(true).catch(() => []);
 
   const matched = q
-    ? shows.filter((s) => s.title.toLowerCase().includes(q) || s.slug.includes(q.replace(/\s+/g, "-")))
+    ? shows
     : shows.slice(0, 20);
 
   // Enrich matched shows with metadata (parallel, limited concurrency)
@@ -767,19 +951,36 @@ async function searchFipPrograms(query) {
           description: meta.description,
           image: meta.image,
           genres: meta.genres,
+          hosts: meta.hosts || [],
           cadence: meta.cadence || "irregular",
           airtime: meta.airtimeEn || meta.airtime || "",
           runSchedule: meta.runSchedule || ""
         });
       } catch {
         const titleEn = await translateFr(s.title || "").catch(() => "");
-        results.push({ source: "fip", programUrl: showUrl, title: titleEn || s.title, description: "", image: "", genres: [], cadence: "irregular", airtime: "", runSchedule: "" });
+        results.push({ source: "fip", programUrl: showUrl, title: titleEn || s.title, description: "", image: "", genres: [], hosts: [], cadence: "irregular", airtime: "", runSchedule: "" });
       }
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, matched.length)) }, () => worker()));
-  return results;
+  if (!q) {
+    return results;
+  }
+  return results
+    .map((item) => ({ ...item, _score: scoreFipProgramResult(item, q) }))
+    .filter((item) => item._score > 0)
+    .sort((a, b) => {
+      if (b._score !== a._score) {
+        return b._score - a._score;
+      }
+      return String(a.title || "").localeCompare(String(b.title || ""), "en");
+    })
+    .map((item) => {
+      const copy = { ...item };
+      delete copy._score;
+      return copy;
+    });
 }
 
 // ── Episode stream (for playback / CUE preview) ───────────────────────────────
@@ -955,6 +1156,79 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
   return tracks;
 }
 
+function getFipMetadataRichnessScore(item) {
+  return [
+    item.image ? 1 : 0,
+    item.description ? 2 : 0,
+    Array.isArray(item.hosts) ? Math.min(item.hosts.length, 3) * 2 : 0,
+    Array.isArray(item.genres) ? Math.min(item.genres.length, 3) : 0,
+    item.runSchedule ? 2 : 0,
+    item.airtime ? 1 : 0
+  ].reduce((sum, value) => sum + value, 0);
+}
+
+function scoreFipDiscoveryNovelty(item, selected) {
+  const seenHosts = new Set();
+  const seenGenres = new Set();
+  const seenTitles = new Set();
+
+  for (const entry of selected || []) {
+    for (const host of entry.hosts || []) {
+      seenHosts.add(cleanText(host || "").toLowerCase());
+    }
+    for (const genre of entry.genres || []) {
+      seenGenres.add(cleanText(genre || "").toLowerCase());
+    }
+    seenTitles.add(cleanText(entry.title || "").toLowerCase());
+  }
+
+  let score = 0;
+  const titleKey = cleanText(item.title || "").toLowerCase();
+  if (titleKey && !seenTitles.has(titleKey)) {
+    score += 2;
+  }
+  for (const host of item.hosts || []) {
+    const key = cleanText(host || "").toLowerCase();
+    if (key && !seenHosts.has(key)) {
+      score += 5;
+    }
+  }
+  for (const genre of item.genres || []) {
+    const key = cleanText(genre || "").toLowerCase();
+    if (key && !seenGenres.has(key)) {
+      score += 3;
+    }
+  }
+  return score;
+}
+
+function pickFipDiscoveryResults(items, count) {
+  const remaining = (items || [])
+    .map((item) => ({
+      item,
+      richness: getFipMetadataRichnessScore(item) + Math.random()
+    }))
+    .sort((a, b) => b.richness - a.richness)
+    .map((entry) => entry.item);
+
+  const selected = [];
+  while (remaining.length && selected.length < count) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const item = remaining[index];
+      const score = getFipMetadataRichnessScore(item) + scoreFipDiscoveryNovelty(item, selected) + Math.random();
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return selected;
+}
+
 async function getFipDiscovery(count = 12) {
   const shows = await fetchFipShowList(true).catch(() => []);
   // Sample more than needed to account for failures and dedup
@@ -966,7 +1240,7 @@ async function getFipDiscovery(count = 12) {
   const concurrency = 4;
   let idx = 0;
   async function worker() {
-    while (idx < sample.length && results.length < count) {
+    while (idx < sample.length) {
       const s = sample[idx++];
       const showUrl = `${BASE_URL}/fip/podcasts/${s.slug}`;
       try {
@@ -984,6 +1258,7 @@ async function getFipDiscovery(count = 12) {
           description: descEn || meta.description,
           image: meta.image,
           genres: meta.genres,
+          hosts: meta.hosts || [],
           cadence: meta.cadence || "irregular",
           airtime: meta.airtimeEn || meta.airtime || "",
           runSchedule: meta.runSchedule || ""
@@ -992,7 +1267,7 @@ async function getFipDiscovery(count = 12) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, sample.length)) }, () => worker()));
-  return results.slice(0, count);
+  return pickFipDiscoveryResults(results, count);
 }
 
 module.exports = {

@@ -1,7 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
-const os = require("node:os");
 const http = require("node:http");
 const https = require("node:https");
 const crypto = require("node:crypto");
@@ -82,14 +81,45 @@ const {
   getKexpExtendedEpisodeStream,
   getKexpExtendedEpisodeTracklist
 } = require("./lib/kexp");
-const { runYtDlpDownload, runYtDlpJson, runYtDlpGetUrl, spawnYtDlpPipe } = require("./lib/downloader");
+const { runYtDlpDownload, runYtDlpJson, spawnYtDlpPipe, resolveYtDlpCommand } = require("./lib/downloader");
 const { createSchedulerStore } = require("./lib/scheduler");
 const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format");
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
-const { writeProgramFeedFiles } = require("./lib/feeds");
+const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
+const {
+  buildMetadataIndex,
+  buildScheduleMetadataDocs,
+  buildFeedMetadataDocs,
+  buildHistoryMetadataDocs,
+  sortMetadataDocs,
+  searchMetadataIndex,
+  discoverMetadataIndex,
+  buildCollectionRecommendations
+} = require("./lib/metadata-index");
+const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
+const { createCollectionsStore } = require("./lib/collections-store");
+const { createMetadataHarvestStore } = require("./lib/metadata-harvest-store");
+const {
+  MATERIALIZED_METADATA_SCHEMA_VERSION,
+  createMaterializedMetadataStore
+} = require("./lib/materialized-metadata-store");
+const {
+  deriveHarvestSearchTerms,
+  harvestMetadataDocs,
+  mergeHarvestDocs,
+  planMetadataHarvest
+} = require("./lib/metadata-harvester");
+const {
+  createDefaultSettings,
+  normalizeSettings: normalizeSharedSettings,
+  shouldGenerateEmbeddedChapters,
+  shouldWriteCueSidecar
+} = require("./lib/app-settings");
+const { collectRuntimeDiagnostics } = require("./lib/runtime-diagnostics");
+const { runVendorBootstrap } = require("./lib/vendor-bootstrap");
 
 let scheduler;
 let bbcScheduler;
@@ -98,11 +128,25 @@ let ntsScheduler;
 let fipScheduler;
 let kexpScheduler;
 let appSettings = null;
-const downloadQueue = createDownloadQueue(() => readSettings().maxConcurrentDownloads || 2);
+const downloadQueue = createDownloadQueue(
+  () => readSettings().maxConcurrentDownloads || 2,
+  {
+    getStoragePath: () => path.join(app.getPath("userData"), "download-queue.json"),
+    restoreTask: (persisted) => restoreDownloadQueueTask(persisted)
+  }
+);
 
 const { createDiskCache } = require("./lib/disk-cache");
 const { createDownloadHistory } = require("./lib/download-history");
+const { createRecentErrorsLog } = require("./lib/recent-errors-log");
 let downloadHistory = null;
+let recentErrorsLog = null;
+let metadataHarvestStore = null;
+let materializedMetadataStore = null;
+let collectionsStore = null;
+let materializedMetadataCache = null;
+let materializedMetadataDirty = true;
+let materializedMetadataRefreshPromise = null;
 
 const streamProxyTokens = new Map();
 const ytDlpPipeTokens = new Map();
@@ -139,11 +183,27 @@ function createStreamProxyServer() {
       const pipeToken = u.searchParams.get("token") || "";
       const pipeEntry = ytDlpPipeTokens.get(pipeToken);
       if (!pipeEntry) { res.writeHead(404); res.end(); return; }
+      let child;
+      try {
+        child = spawnYtDlpPipe(pipeEntry.url);
+      } catch (error) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(error?.message || error || "yt-dlp pipe failed") }));
+        return;
+      }
       res.writeHead(200, { "Content-Type": "audio/mpeg", "Transfer-Encoding": "chunked" });
-      const child = spawnYtDlpPipe(pipeEntry.url);
       child.stdout.pipe(res);
       res.on("close", () => { try { child.kill(); } catch {} });
-      child.on("error", () => { try { res.end(); } catch {} });
+      child.on("error", () => {
+        try {
+          if (!res.headersSent) {
+            res.writeHead(503, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "yt-dlp pipe failed" }));
+          } else {
+            res.end();
+          }
+        } catch {}
+      });
       return;
     }
     // Seekable temp-file serving (WWF episodes downloaded to tmpdir)
@@ -254,6 +314,41 @@ function getDefaultDownloadDir() {
   return app.getPath("downloads");
 }
 
+function broadcastGlobalEvent(payload) {
+  const event = payload && typeof payload === "object" ? payload : {};
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      win.webContents.send("global-event", event);
+    } catch {}
+  }
+}
+
+function feedDataDirFor(sourceType) {
+  if (sourceType === "bbc") return path.join(app.getPath("userData"), "bbc");
+  if (sourceType === "wwf") return path.join(app.getPath("userData"), "wwf");
+  if (sourceType === "nts") return path.join(app.getPath("userData"), "nts");
+  if (sourceType === "fip") return path.join(app.getPath("userData"), "fip");
+  if (sourceType === "kexp") return path.join(app.getPath("userData"), "kexp");
+  return app.getPath("userData");
+}
+
+function getFeedSourceConfigs() {
+  return [
+    { sourceType: "rte", dataDir: feedDataDirFor("rte"), publicBasePath: "" },
+    { sourceType: "bbc", dataDir: feedDataDirFor("bbc"), publicBasePath: "" },
+    { sourceType: "wwf", dataDir: feedDataDirFor("wwf"), publicBasePath: "" },
+    { sourceType: "nts", dataDir: feedDataDirFor("nts"), publicBasePath: "" },
+    { sourceType: "fip", dataDir: feedDataDirFor("fip"), publicBasePath: "" },
+    { sourceType: "kexp", dataDir: feedDataDirFor("kexp"), publicBasePath: "" }
+  ];
+}
+
+function listAllProgramFeeds() {
+  return getFeedSourceConfigs()
+    .flatMap((config) => listProgramFeedFiles(config))
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+}
+
 function isEphemeralTempDataPath(inputPath) {
   if (!inputPath) {
     return false;
@@ -265,29 +360,7 @@ function isEphemeralTempDataPath(inputPath) {
 }
 
 function getDefaultSettings() {
-  return {
-    timeFormat: "24h",
-    downloadDir: getDefaultDownloadDir(),
-    pathFormat: "{radio}/{program}/{episode_short} {release_date}",
-    cueAutoGenerate: false,
-    maxConcurrentDownloads: 2,
-    outputFormat: "m4a",
-    outputQuality: "128K",
-    normalizeLoudness: true,
-    dedupeMode: "source-id",
-    id3Tagging: true,
-    feedExportEnabled: true,
-    webhookUrl: "",
-    auddTrackMatching: false,
-    auddApiToken: "",
-    fingerprintTrackMatching: false,
-    acoustidApiKey: "",
-    songrecTrackMatching: false,
-    songrecSampleSeconds: 20,
-    ffmpegCueSilenceDetect: true,
-    ffmpegCueLoudnessDetect: true,
-    ffmpegCueSpectralDetect: true
-  };
+  return createDefaultSettings(getDefaultDownloadDir());
 }
 
 function getSettingsPath() {
@@ -300,69 +373,16 @@ function getDownloadArchivePath() {
 
 function normalizeSettings(input) {
   const defaults = getDefaultSettings();
-  const raw = input && typeof input === "object" ? input : {};
-  const timeFormat = raw.timeFormat === "12h" ? "12h" : "24h";
-  const cueAutoGenerate = Boolean(raw.cueAutoGenerate);
-  let downloadDir = typeof raw.downloadDir === "string" && raw.downloadDir.trim()
-    ? raw.downloadDir.trim()
-    : "";
-  if (!downloadDir) {
-    const legacyRte = typeof raw.rteDownloadDir === "string" && raw.rteDownloadDir.trim() ? raw.rteDownloadDir.trim() : "";
-    const legacyBbc = typeof raw.bbcDownloadDir === "string" && raw.bbcDownloadDir.trim() ? raw.bbcDownloadDir.trim() : "";
-    const candidate = legacyRte || legacyBbc;
-    if (candidate) {
-      downloadDir = path.dirname(candidate);
-    }
-  }
+  const normalized = normalizeSharedSettings(input, {
+    defaultDownloadDir: defaults.downloadDir
+  });
+  let downloadDir = normalized.downloadDir;
   if (!downloadDir || isEphemeralTempDataPath(downloadDir)) {
     downloadDir = defaults.downloadDir;
   }
-  const pathFormat = typeof raw.pathFormat === "string" && raw.pathFormat.trim()
-    ? raw.pathFormat.trim()
-    : defaults.pathFormat;
-  const maxConcurrentDownloads = Math.max(1, Math.min(8, Math.floor(Number(raw.maxConcurrentDownloads || defaults.maxConcurrentDownloads))));
-  const outputFormat = String(raw.outputFormat || defaults.outputFormat).trim().toLowerCase() === "mp3" ? "mp3" : "m4a";
-  const outputQuality = String(raw.outputQuality || defaults.outputQuality).trim() || defaults.outputQuality;
-  const normalizeLoudness = raw.normalizeLoudness == null ? defaults.normalizeLoudness : Boolean(raw.normalizeLoudness);
-  const dedupeModeRaw = String(raw.dedupeMode || defaults.dedupeMode).toLowerCase();
-  const dedupeMode = ["source-id", "title-date", "none"].includes(dedupeModeRaw) ? dedupeModeRaw : defaults.dedupeMode;
-  const id3Tagging = raw.id3Tagging == null ? defaults.id3Tagging : Boolean(raw.id3Tagging);
-  const feedExportEnabled = raw.feedExportEnabled == null ? defaults.feedExportEnabled : Boolean(raw.feedExportEnabled);
-  const webhookUrl = typeof raw.webhookUrl === "string" ? raw.webhookUrl.trim() : "";
-  const auddTrackMatching = raw.auddTrackMatching == null ? defaults.auddTrackMatching : Boolean(raw.auddTrackMatching);
-  const auddApiToken = typeof raw.auddApiToken === "string" ? raw.auddApiToken.trim() : "";
-  const fingerprintTrackMatching = raw.fingerprintTrackMatching == null
-    ? defaults.fingerprintTrackMatching
-    : Boolean(raw.fingerprintTrackMatching);
-  const acoustidApiKey = typeof raw.acoustidApiKey === "string" ? raw.acoustidApiKey.trim() : "";
-  const songrecTrackMatching = raw.songrecTrackMatching == null ? defaults.songrecTrackMatching : Boolean(raw.songrecTrackMatching);
-  const songrecSampleSeconds = Math.max(8, Math.min(45, Math.floor(Number(raw.songrecSampleSeconds || defaults.songrecSampleSeconds))));
-  const ffmpegCueSilenceDetect = raw.ffmpegCueSilenceDetect == null ? defaults.ffmpegCueSilenceDetect : Boolean(raw.ffmpegCueSilenceDetect);
-  const ffmpegCueLoudnessDetect = raw.ffmpegCueLoudnessDetect == null ? defaults.ffmpegCueLoudnessDetect : Boolean(raw.ffmpegCueLoudnessDetect);
-  const ffmpegCueSpectralDetect = raw.ffmpegCueSpectralDetect == null ? defaults.ffmpegCueSpectralDetect : Boolean(raw.ffmpegCueSpectralDetect);
-
   return {
-    timeFormat,
-    downloadDir,
-    pathFormat,
-    cueAutoGenerate,
-    maxConcurrentDownloads,
-    outputFormat,
-    outputQuality,
-    normalizeLoudness,
-    dedupeMode,
-    id3Tagging,
-    feedExportEnabled,
-    webhookUrl,
-    auddTrackMatching,
-    auddApiToken,
-    fingerprintTrackMatching,
-    acoustidApiKey,
-    songrecTrackMatching,
-    songrecSampleSeconds,
-    ffmpegCueSilenceDetect,
-    ffmpegCueLoudnessDetect,
-    ffmpegCueSpectralDetect
+    ...normalized,
+    downloadDir
   };
 }
 
@@ -498,6 +518,556 @@ function inferTitleFromUrl(inputUrl, fallback = "audio") {
   return fallback;
 }
 
+function normalizeMetadataList(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(/,\s*/g)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeMetadataText(value) {
+  return String(value || "").trim();
+}
+
+function parseTrackStartSeconds(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, value);
+  }
+  const text = String(value || "").trim();
+  if (!text) {
+    return undefined;
+  }
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    return Math.max(0, Number(text));
+  }
+  const match = text.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.\d+)?$/);
+  if (!match) {
+    return undefined;
+  }
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  return Math.max(0, hours * 3600 + minutes * 60 + seconds);
+}
+
+function normalizeCueTracks(tracks = [], options = {}) {
+  const offsetSeconds = Number(options.offsetSeconds || 0) || 0;
+  return (Array.isArray(tracks) ? tracks : [])
+    .map((track, index) => {
+      const title = String(track?.title || "").trim();
+      const artist = String(track?.artist || "").trim();
+      if (!title && !artist) {
+        return null;
+      }
+      const startSeconds = parseTrackStartSeconds(track?.startSeconds);
+      return {
+        title: title || `Track ${index + 1}`,
+        artist,
+        startSeconds: Number.isFinite(startSeconds) ? Math.max(0, startSeconds + offsetSeconds) : undefined
+      };
+    })
+    .filter(Boolean);
+}
+
+async function getPrefetchedCueTracks({ sourceType = "", episodeUrl = "", tracklistUrl = "", fileStartOffset = 0 } = {}) {
+  const safeSourceType = String(sourceType || "").trim().toLowerCase();
+  const safeEpisodeUrl = String(episodeUrl || "").trim();
+  if (!safeSourceType || !safeEpisodeUrl) {
+    return [];
+  }
+  try {
+    if (safeSourceType === "rte") {
+      const payload = await getEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "bbc") {
+      const payload = await getBbcEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "wwf") {
+      const payload = await getWwfEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "nts") {
+      const payload = await getNtsEpisodePlaylist(safeEpisodeUrl);
+      return normalizeCueTracks(payload?.tracks);
+    }
+    if (safeSourceType === "fip") {
+      const tracks = await getFipEpisodeTracklist(safeEpisodeUrl);
+      return normalizeCueTracks(tracks);
+    }
+    if (safeSourceType === "kexp") {
+      const tracks = await getKexpEpisodeTracklist(safeEpisodeUrl);
+      return normalizeCueTracks(tracks, { offsetSeconds: Number(fileStartOffset || 0) || 0 });
+    }
+  } catch {}
+  if (tracklistUrl) {
+    return [];
+  }
+  return [];
+}
+
+function buildMetadata(options = {}) {
+  return {
+    description: normalizeMetadataText(options.description),
+    location: normalizeMetadataText(options.location),
+    hosts: normalizeMetadataList(options.hosts),
+    genres: normalizeMetadataList(options.genres)
+  };
+}
+
+function createPersistentDownloadPayload({ job, postProcess = {} }) {
+  const metadata = buildMetadata(postProcess);
+  return {
+    type: "manifest-download-v1",
+    job,
+    postProcess: {
+      sourceType: String(postProcess.sourceType || job.sourceType || ""),
+      episodeTitle: String(postProcess.episodeTitle || ""),
+      programTitle: String(postProcess.programTitle || ""),
+      publishedTime: String(postProcess.publishedTime || ""),
+      sourceUrl: String(postProcess.sourceUrl || job.sourceUrl || ""),
+      artworkUrl: String(postProcess.artworkUrl || ""),
+      episodeUrl: String(postProcess.episodeUrl || job.episodeUrl || ""),
+      clipId: String(postProcess.clipId || ""),
+      description: metadata.description,
+      location: metadata.location,
+      hosts: metadata.hosts,
+      genres: metadata.genres,
+      tracklistUrl: String(postProcess.tracklistUrl || "")
+    }
+  };
+}
+
+function appendDownloadHistoryEntry(entry) {
+  try {
+    if (downloadHistory) {
+      downloadHistory.append(entry);
+    }
+    patchMaterializedHistory();
+    broadcastGlobalEvent({
+      type: "download.history.updated",
+      source: entry.sourceType,
+      programTitle: entry.programTitle,
+      episodeTitle: entry.episodeTitle
+    });
+  } catch {}
+}
+
+function appendDownloadHistoryFromPayload(payload, result) {
+  if (!payload || payload.type !== "manifest-download-v1" || result?.existing) {
+    return;
+  }
+  const job = payload.job || {};
+  appendDownloadHistoryEntry({
+    sourceType: String(job.sourceType || "rte"),
+    programTitle: String(payload.postProcess?.programTitle || ""),
+    episodeTitle: String(payload.postProcess?.episodeTitle || job.title || ""),
+    filePath: result?.fileName ? path.join(result.outputDir || job.outputDir || "", result.fileName) : "",
+    outputDir: result?.outputDir || job.outputDir || "",
+    fileName: result?.fileName || "",
+    episodeUrl: String(payload.postProcess?.episodeUrl || job.episodeUrl || job.sourceUrl || ""),
+    sourceUrl: String(payload.postProcess?.sourceUrl || job.sourceUrl || ""),
+    artworkUrl: String(payload.postProcess?.artworkUrl || ""),
+    clipId: String(payload.postProcess?.clipId || ""),
+    publishedTime: String(payload.postProcess?.publishedTime || ""),
+    tracklistUrl: String(payload.postProcess?.tracklistUrl || ""),
+    fileStartOffset: Number(payload.postProcess?.fileStartOffset || 0),
+    description: String(payload.postProcess?.description || ""),
+    location: String(payload.postProcess?.location || ""),
+    hosts: normalizeMetadataList(payload.postProcess?.hosts),
+    genres: normalizeMetadataList(payload.postProcess?.genres)
+  });
+}
+
+function buildLibraryMetadataDataset() {
+  return {
+    schedulesBySource: {
+      rte: scheduler?.list?.() || [],
+      bbc: bbcScheduler?.list?.() || [],
+      wwf: wwfScheduler?.list?.() || [],
+      nts: ntsScheduler?.list?.() || [],
+      fip: fipScheduler?.list?.() || [],
+      kexp: kexpScheduler?.list?.() || []
+    },
+    feeds: listAllProgramFeeds(),
+    history: downloadHistory ? downloadHistory.list() : [],
+    harvested: metadataHarvestStore ? metadataHarvestStore.list() : []
+  };
+}
+
+function createEmptyMaterializedMetadataSnapshot() {
+  return {
+    schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
+    updatedAt: "",
+    index: [],
+    graph: {
+      entities: [],
+      relations: [],
+      metrics: {
+        entityCount: 0,
+        relationCount: 0,
+        sourceCount: 0
+      }
+    }
+  };
+}
+
+function getMaterializedMetadataSnapshot() {
+  if (materializedMetadataCache) {
+    return materializedMetadataCache;
+  }
+  if (!materializedMetadataStore) {
+    materializedMetadataCache = createEmptyMaterializedMetadataSnapshot();
+    return materializedMetadataCache;
+  }
+  const stored = materializedMetadataStore.get();
+  if (!materializedMetadataStore.isCompatible(stored)) {
+    materializedMetadataCache = createEmptyMaterializedMetadataSnapshot();
+    materializedMetadataDirty = true;
+    return materializedMetadataCache;
+  }
+  materializedMetadataCache = stored;
+  return materializedMetadataCache;
+}
+
+function buildMaterializedMetadataSnapshot() {
+  const index = buildMetadataIndex(buildLibraryMetadataDataset());
+  const graph = buildEntityGraph(index);
+  return {
+    schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    index,
+    graph
+  };
+}
+
+function replaceMaterializedMetadataSections(sectionKinds, nextDocs) {
+  if (!materializedMetadataStore) {
+    markMaterializedMetadataDirty({ refreshInBackground: true });
+    return null;
+  }
+  const snapshot = getMaterializedMetadataSnapshot();
+  const removeKinds = new Set((Array.isArray(sectionKinds) ? sectionKinds : [sectionKinds]).map((kind) => String(kind || "").trim().toLowerCase()).filter(Boolean));
+  const filtered = (Array.isArray(snapshot?.index) ? snapshot.index : []).filter((doc) => !removeKinds.has(String(doc?.kind || "").trim().toLowerCase()));
+  const index = sortMetadataDocs([
+    ...filtered,
+    ...(Array.isArray(nextDocs) ? nextDocs : [])
+  ]);
+  const graph = buildEntityGraph(index);
+  const updated = {
+    schemaVersion: MATERIALIZED_METADATA_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    index,
+    graph
+  };
+  materializedMetadataStore.replace(updated);
+  materializedMetadataCache = updated;
+  materializedMetadataDirty = false;
+  return updated;
+}
+
+function patchMaterializedSubscriptions() {
+  return replaceMaterializedMetadataSections("subscription", buildScheduleMetadataDocs(buildLibraryMetadataDataset().schedulesBySource));
+}
+
+function patchMaterializedFeeds() {
+  return replaceMaterializedMetadataSections("feed", buildFeedMetadataDocs(listAllProgramFeeds()));
+}
+
+function patchMaterializedHistory() {
+  return replaceMaterializedMetadataSections("history", buildHistoryMetadataDocs(downloadHistory ? downloadHistory.list() : []));
+}
+
+function markMaterializedMetadataDirty(options = {}) {
+  materializedMetadataDirty = true;
+  if (options.refreshInBackground) {
+    void refreshMaterializedMetadataSnapshot().catch(() => {});
+  }
+}
+
+async function refreshMaterializedMetadataSnapshot(_options = {}) {
+  if (materializedMetadataRefreshPromise) {
+    return materializedMetadataRefreshPromise;
+  }
+  materializedMetadataRefreshPromise = Promise.resolve().then(() => {
+    const snapshot = buildMaterializedMetadataSnapshot();
+    if (materializedMetadataStore) {
+      materializedMetadataStore.replace(snapshot);
+    }
+    materializedMetadataCache = snapshot;
+    materializedMetadataDirty = false;
+    return snapshot;
+  }).finally(() => {
+    materializedMetadataRefreshPromise = null;
+  });
+  return materializedMetadataRefreshPromise;
+}
+
+async function ensureMaterializedMetadata(options = {}) {
+  const forceRebuild = Boolean(options.forceRebuild);
+  const allowStale = options.allowStale !== false;
+  const refreshInBackground = options.refreshInBackground !== false;
+  const snapshot = getMaterializedMetadataSnapshot();
+  const hasMaterializedData = Array.isArray(snapshot?.index) && snapshot.index.length > 0;
+  if (!forceRebuild && !materializedMetadataDirty && hasMaterializedData) {
+    return snapshot;
+  }
+  if (!forceRebuild && allowStale && hasMaterializedData) {
+    if (refreshInBackground) {
+      void refreshMaterializedMetadataSnapshot().catch(() => {});
+    }
+    return snapshot;
+  }
+  return refreshMaterializedMetadataSnapshot({ forceRebuild: true });
+}
+
+function getMetadataHarvestSources() {
+  return [
+    {
+      sourceType: "rte",
+      getDiscovery: () => getRteDiscovery(12),
+      search: (term) => searchPrograms(term),
+      getSummary: (programUrl) => getProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 4,
+      maxEpisodePages: 3
+    },
+    {
+      sourceType: "bbc",
+      getDiscovery: () => getBbcDiscovery(12),
+      search: (term) => searchBbcPrograms(term, runYtDlpJson),
+      getSummary: (programUrl) => getBbcProgramSummary(programUrl, runYtDlpJson, { includeSchedule: false }),
+      getEpisodes: (programUrl, page = 1) => getBbcProgramEpisodes(programUrl, runYtDlpJson, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 6,
+      maxEpisodePages: 3
+    },
+    {
+      sourceType: "wwf",
+      getDiscovery: () => getWwfDiscovery(12),
+      search: (term) => searchWwfPrograms(term),
+      getSummary: (programUrl) => getWwfProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getWwfProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 4,
+      maxEpisodePages: 4
+    },
+    {
+      sourceType: "nts",
+      getDiscovery: () => getNtsDiscovery(12),
+      search: (term) => searchNtsPrograms(term, { sort: "recent" }),
+      getSummary: (programUrl) => getNtsProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getNtsProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 4,
+      maxEpisodePages: 4
+    },
+    {
+      sourceType: "fip",
+      getDiscovery: () => getFipDiscovery(12),
+      search: (term) => searchFipPrograms(term),
+      getSummary: (programUrl) => getFipProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getFipProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 8,
+      maxEpisodePages: 3
+    },
+    {
+      sourceType: "kexp",
+      getDiscovery: () => getKexpDiscovery(12),
+      search: (term) => searchKexpPrograms(term),
+      getSummary: (programUrl) => getKexpProgramSummary(programUrl),
+      getEpisodes: (programUrl, page = 1) => getKexpProgramEpisodes(programUrl, page),
+      perSearchLimit: 6,
+      summaryLimit: 8,
+      harvestCadenceMs: 1000 * 60 * 60 * 6,
+      maxEpisodePages: 3
+    }
+  ];
+}
+
+async function refreshMetadataHarvestCache(force = false) {
+  if (!metadataHarvestStore) {
+    return [];
+  }
+  const existing = metadataHarvestStore.list();
+  const priorState = metadataHarvestStore.getState();
+  const localSnapshot = await ensureMaterializedMetadata({
+    allowStale: true,
+    refreshInBackground: false
+  });
+  const localIndex = Array.isArray(localSnapshot?.index) ? localSnapshot.index : buildMetadataIndex(buildLibraryMetadataDataset());
+  const harvestPlan = planMetadataHarvest(
+    getMetadataHarvestSources(),
+    priorState,
+    force,
+    Date.now()
+  );
+  if (!force && existing.length && !harvestPlan.plannedSources.length) {
+    return existing;
+  }
+  const docs = await harvestMetadataDocs({
+    sources: harvestPlan.plannedSources,
+    searchTerms: deriveHarvestSearchTerms(localIndex)
+  });
+  const merged = mergeHarvestDocs(existing, docs);
+  metadataHarvestStore.replace(merged, new Date().toISOString(), harvestPlan.nextState);
+  patchMaterializedFeeds();
+  return merged;
+}
+
+async function rebuildDownloadedFileMetadata(payload = {}) {
+  const outputDir = String(payload.outputDir || "").trim();
+  const fileName = String(payload.fileName || "").trim();
+  if (!outputDir || !fileName) {
+    throw new Error("A downloaded file is required.");
+  }
+
+  const audioPath = path.join(outputDir, fileName);
+  if (!fs.existsSync(audioPath)) {
+    throw new Error("Downloaded file not found.");
+  }
+
+  const sourceType = String(payload.sourceType || "rte").trim().toLowerCase();
+  const cue = await maybeGenerateCue({
+    force: true,
+    writeCueFile: false,
+    revealErrors: false,
+    sourceType,
+    episodeUrl: String(payload.episodeUrl || "").trim(),
+    episodeTitle: String(payload.episodeTitle || fileName).trim(),
+    programTitle: String(payload.programTitle || "").trim(),
+    tracklistUrl: String(payload.tracklistUrl || "").trim(),
+    fileStartOffset: Number(payload.fileStartOffset || 0),
+    downloadResult: { outputDir, fileName }
+  });
+
+  const tags = await applyId3Tags({
+    audioPath,
+    title: String(payload.episodeTitle || fileName).trim(),
+    programTitle: String(payload.programTitle || "").trim(),
+    sourceType,
+    publishedTime: String(payload.publishedTime || "").trim(),
+    sourceUrl: String(payload.sourceUrl || payload.episodeUrl || "").trim(),
+    artworkUrl: String(payload.artworkUrl || "").trim(),
+    episodeUrl: String(payload.episodeUrl || "").trim(),
+    clipId: String(payload.clipId || "").trim(),
+    description: String(payload.description || "").trim(),
+    location: String(payload.location || "").trim(),
+    hosts: normalizeMetadataList(payload.hosts),
+    genres: normalizeMetadataList(payload.genres),
+    chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
+    durationSeconds: Number(cue?.durationSeconds || 0)
+  });
+
+  return { ok: true, cue, tags };
+}
+
+function restoreDownloadQueueTask(payload, _item, options = {}) {
+  if (!payload || payload.type !== "manifest-download-v1" || !payload.job) {
+    return null;
+  }
+  if (options.mode === "current-settings") {
+    const job = payload.job;
+    return {
+      run: async () => downloadFromManifest({
+        manifestUrl: job.manifestUrl,
+        sourceUrl: job.sourceUrl,
+        title: payload.postProcess?.episodeTitle || job.title,
+        programTitle: payload.postProcess?.programTitle || "",
+        publishedTime: payload.postProcess?.publishedTime || "",
+        clipId: payload.postProcess?.clipId || "",
+        episodeUrl: payload.postProcess?.episodeUrl || job.episodeUrl || job.sourceUrl || "",
+        sourceType: payload.postProcess?.sourceType || job.sourceType || "rte",
+        forceDownload: true,
+        postProcess: payload.postProcess || null
+      }),
+      meta: {
+        label: payload.postProcess?.episodeTitle || payload.job.title,
+        sourceType: payload.postProcess?.sourceType || payload.job.sourceType,
+        programTitle: payload.postProcess?.programTitle || "",
+        episodeUrl: payload.postProcess?.episodeUrl || payload.job.episodeUrl || "",
+        description: payload.postProcess?.description || "",
+        location: payload.postProcess?.location || "",
+        hosts: normalizeMetadataList(payload.postProcess?.hosts),
+        genres: normalizeMetadataList(payload.postProcess?.genres),
+        persisted: payload
+      }
+    };
+  }
+  return {
+    run: async (queueTask) => {
+      const job = payload.job;
+      const result = await runYtDlpDownload({
+        manifestUrl: job.manifestUrl,
+        sourceUrl: job.sourceUrl,
+        title: job.title,
+        outputDir: job.outputDir,
+        archivePath: job.archivePath,
+        registerCancel: queueTask?.registerCancel,
+        onProgress: null,
+        forceDownload: Boolean(job.forceDownload),
+        audioFormat: job.audioFormat,
+        audioQuality: job.audioQuality,
+        normalizeLoudness: Boolean(job.normalizeLoudness),
+        dedupeMode: job.dedupeMode,
+        fetchThumbnail: Boolean(job.fetchThumbnail)
+      });
+      appendDownloadHistoryFromPayload(payload, result);
+      const cue = await maybeGenerateCue({
+        downloadResult: result,
+        sourceType: payload.postProcess?.sourceType || job.sourceType || "rte",
+        episodeUrl: payload.postProcess?.episodeUrl || job.episodeUrl || "",
+        episodeTitle: payload.postProcess?.episodeTitle || job.title || "",
+        programTitle: payload.postProcess?.programTitle || "",
+        tracklistUrl: payload.postProcess?.tracklistUrl || "",
+        fileStartOffset: Number(payload.postProcess?.fileStartOffset || 0)
+      });
+      await maybeApplyId3({
+        downloadResult: result,
+        sourceType: payload.postProcess?.sourceType || job.sourceType || "rte",
+        episodeTitle: payload.postProcess?.episodeTitle || job.title || "",
+        programTitle: payload.postProcess?.programTitle || "",
+        publishedTime: payload.postProcess?.publishedTime || "",
+        sourceUrl: payload.postProcess?.sourceUrl || job.sourceUrl || "",
+        artworkUrl: payload.postProcess?.artworkUrl || "",
+        episodeUrl: payload.postProcess?.episodeUrl || job.episodeUrl || "",
+        clipId: payload.postProcess?.clipId || "",
+        description: payload.postProcess?.description || "",
+        location: payload.postProcess?.location || "",
+        hosts: normalizeMetadataList(payload.postProcess?.hosts),
+        genres: normalizeMetadataList(payload.postProcess?.genres),
+        cue
+      });
+      return result;
+    },
+    meta: {
+      label: payload.job.title,
+      sourceType: payload.job.sourceType,
+      programTitle: payload.postProcess?.programTitle || "",
+      episodeUrl: payload.postProcess?.episodeUrl || payload.job.episodeUrl || "",
+      description: payload.postProcess?.description || "",
+      location: payload.postProcess?.location || "",
+      hosts: normalizeMetadataList(payload.postProcess?.hosts),
+      genres: normalizeMetadataList(payload.postProcess?.genres),
+      persisted: payload
+    }
+  };
+}
+
 function buildEpisodeFileTitle({ episodeTitle, programTitle, clipId }) {
   const safeEpisodeTitle = String(episodeTitle || "").trim();
   const safeProgramTitle = String(programTitle || "").trim();
@@ -515,7 +1085,8 @@ async function downloadFromManifest({
   episodeUrl,
   onProgress,
   sourceType = "rte",
-  forceDownload = false
+  forceDownload = false,
+  postProcess = null
 }) {
   const baseOutputDir = ensureOutputDir(sourceType);
   const settings = readSettings();
@@ -531,6 +1102,33 @@ async function downloadFromManifest({
   });
   const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
+  const persistedPayload = createPersistentDownloadPayload({
+    job: {
+      manifestUrl,
+      sourceUrl,
+      title: target.fileStem,
+      outputDir,
+      archivePath: getDownloadArchivePath(),
+      forceDownload: Boolean(forceDownload),
+      audioFormat: settings.outputFormat,
+      audioQuality: settings.outputQuality,
+      normalizeLoudness: settings.normalizeLoudness,
+      dedupeMode: settings.dedupeMode,
+      fetchThumbnail: Boolean(settings.id3Tagging),
+      sourceType,
+      episodeUrl: episodeUrl || sourceUrl || manifestUrl
+    },
+    postProcess: {
+      ...(postProcess || {}),
+      sourceType,
+      episodeTitle: postProcess?.episodeTitle || title,
+      programTitle: postProcess?.programTitle || programTitle,
+      publishedTime: postProcess?.publishedTime || publishedTime,
+      sourceUrl: postProcess?.sourceUrl || sourceUrl || manifestUrl,
+      episodeUrl: postProcess?.episodeUrl || episodeUrl || sourceUrl || manifestUrl,
+      clipId: postProcess?.clipId || clipId
+    }
+  });
   const result = await downloadQueue.run(
     (queueTask) => runYtDlpDownload({
       manifestUrl,
@@ -549,25 +1147,17 @@ async function downloadFromManifest({
     }),
     {
       label: target.fileStem,
-      sourceType
+      sourceType,
+      programTitle: postProcess?.programTitle || programTitle || "",
+      episodeUrl: episodeUrl || sourceUrl || manifestUrl || "",
+      description: postProcess?.description || "",
+      location: postProcess?.location || "",
+      hosts: normalizeMetadataList(postProcess?.hosts),
+      genres: normalizeMetadataList(postProcess?.genres),
+      persisted: persistedPayload
     }
   );
-
-  if (!result?.existing) {
-    try {
-      if (downloadHistory) {
-        downloadHistory.append({
-          sourceType: sourceType || "rte",
-          programTitle: String(programTitle || ""),
-          episodeTitle: String(title || ""),
-          filePath: result?.fileName ? path.join(result.outputDir || outputDir, result.fileName) : "",
-          outputDir: result?.outputDir || outputDir,
-          fileName: result?.fileName || "",
-          episodeUrl: String(episodeUrl || sourceUrl || "")
-        });
-      }
-    } catch {}
-  }
+  appendDownloadHistoryFromPayload(persistedPayload, result);
 
   return {
     ...result,
@@ -585,7 +1175,11 @@ async function maybeApplyId3({
   artworkUrl,
   episodeUrl = "",
   clipId = "",
-  description = ""
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  cue = null
 }) {
   const settings = readSettings();
   if (!settings.id3Tagging) {
@@ -611,7 +1205,12 @@ async function maybeApplyId3({
       artworkPath: String(downloadResult?.artworkPath || ""),
       episodeUrl,
       clipId,
-      description
+      description,
+      location,
+      hosts,
+      genres,
+      chapters: Array.isArray(cue?.chapters) ? cue.chapters : [],
+      durationSeconds: Number(cue?.durationSeconds || 0)
     });
   } catch {
     return null;
@@ -632,12 +1231,17 @@ async function maybeGenerateCue({
   episodeTitle,
   programTitle,
   tracklistUrl = "",
+  fileStartOffset = 0,
+  prefetchedTracks = [],
+  writeCueFile = false,
   force = false,
   revealErrors = false,
   onProgress = null
 }) {
   const settings = readSettings();
-  if (!force && !settings.cueAutoGenerate) {
+  const generateEmbeddedChapters = shouldGenerateEmbeddedChapters(settings, { force });
+  const generateCueSidecar = writeCueFile && shouldWriteCueSidecar(settings, { force });
+  if (!generateEmbeddedChapters && !generateCueSidecar) {
     return null;
   }
 
@@ -648,9 +1252,15 @@ async function maybeGenerateCue({
   }
 
   const audioPath = path.join(outputDir, fileName);
+  const resolvedPrefetchedTracks = normalizeCueTracks(
+    Array.isArray(prefetchedTracks) && prefetchedTracks.length
+      ? prefetchedTracks
+      : await getPrefetchedCueTracks({ sourceType, episodeUrl, tracklistUrl, fileStartOffset }),
+    { offsetSeconds: 0 }
+  );
   try {
     return await runCueTaskInChild({
-      mode: "generate",
+      mode: generateCueSidecar ? "generate" : "preview",
       onProgress,
       options: {
       audioPath,
@@ -659,6 +1269,8 @@ async function maybeGenerateCue({
       episodeTitle,
       programTitle,
       tracklistUrl,
+      fileStartOffset: Number(fileStartOffset) || 0,
+      prefetchedTracks: resolvedPrefetchedTracks,
       fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
       auddTrackMatching: Boolean(settings.auddTrackMatching),
       auddApiToken: String(settings.auddApiToken || ""),
@@ -716,6 +1328,12 @@ async function previewCue({
   } else {
     inputSource = (await resolveBbcEpisodeStream(episodeUrl)).streamUrl;
   }
+  const prefetchedTracks = await getPrefetchedCueTracks({
+    sourceType: safeSourceType,
+    episodeUrl,
+    tracklistUrl,
+    fileStartOffset
+  });
 
   return runCueTaskInChild({
     mode: "preview",
@@ -729,6 +1347,7 @@ async function previewCue({
       tracklistUrl: String(tracklistUrl || "").trim(),
       durationSecondsHint: Number(durationSeconds || 0),
       fileStartOffset: Number(fileStartOffset) || 0,
+      prefetchedTracks,
       fingerprintTrackMatching: Boolean(settings.fingerprintTrackMatching),
       auddTrackMatching: Boolean(settings.auddTrackMatching),
       auddApiToken: String(settings.auddApiToken || ""),
@@ -768,7 +1387,20 @@ function emitRendererProgress(sender, progressToken, payload) {
   });
 }
 
-async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+async function downloadEpisodeByClip({
+  clipId,
+  title,
+  episodeUrl,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  onProgress,
+  forceDownload = false
+}) {
   if (!clipId) {
     throw new Error("clipId is required.");
   }
@@ -788,7 +1420,26 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     episodeUrl,
     onProgress,
     sourceType: "rte",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...buildMetadata({ description, location, hosts, genres }),
+      sourceType: "rte",
+      episodeTitle: resolvedTitle,
+      programTitle,
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl: episodeUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
+      episodeUrl,
+      clipId: String(clipId || "")
+    }
+  });
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "rte",
+    episodeUrl,
+    episodeTitle: resolvedTitle,
+    programTitle,
+    onProgress
   });
   const tags = await maybeApplyId3({
     downloadResult: download,
@@ -799,15 +1450,12 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
     sourceUrl: episodeUrl,
     artworkUrl: String(artworkUrl || "").trim(),
     episodeUrl,
-    clipId: String(clipId || "")
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "rte",
-    episodeUrl,
-    episodeTitle: resolvedTitle,
-    programTitle,
-    onProgress
+    clipId: String(clipId || ""),
+    description,
+    location,
+    hosts,
+    genres,
+    cue
   });
 
   return {
@@ -822,13 +1470,26 @@ async function downloadEpisodeByClip({ clipId, title, episodeUrl, programTitle, 
   };
 }
 
-async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+async function downloadBbcEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  onProgress,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) {
     throw new Error("episodeUrl is required.");
   }
 
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "bbc-episode");
+  const metadata = buildMetadata({ description, location, hosts, genres });
   const download = await downloadFromManifest({
     sourceUrl,
     manifestUrl: sourceUrl,
@@ -838,9 +1499,27 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTi
     episodeUrl,
     onProgress,
     sourceType: "bbc",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "bbc",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || "BBC",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
+      episodeUrl: sourceUrl
+    }
   });
   const resolvedArtwork = String(artworkUrl || "").trim() || await resolveBbcArtwork(sourceUrl);
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "bbc",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle,
+    onProgress
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "bbc",
@@ -849,15 +1528,12 @@ async function downloadBbcEpisode({ episodeUrl, title, programTitle, publishedTi
     publishedTime: publishedTime || resolvedTitle,
     sourceUrl,
     artworkUrl: resolvedArtwork,
-    episodeUrl: sourceUrl
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "bbc",
     episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle,
-    onProgress
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
 
   return {
@@ -912,7 +1588,7 @@ async function resolveBbcEpisodeStream(episodeUrl) {
   };
 }
 
-ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, forceDownload = false }) => {
+ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, description = "", location = "", hosts = [], genres = [], forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid RTE page URL is required.");
   }
@@ -934,7 +1610,18 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
         ...progress
       });
     },
-    forceDownload: Boolean(forceDownload)
+    forceDownload: Boolean(forceDownload),
+    postProcess: {
+      ...buildMetadata({ description, location, hosts, genres }),
+      sourceType: "rte",
+      episodeTitle: info.title,
+      programTitle: inferProgramNameFromUrl(pageUrl),
+      publishedTime: info.title,
+      sourceUrl: pageUrl,
+      artworkUrl: String(info.image || "").trim(),
+      episodeUrl: pageUrl,
+      clipId: String(info.clipId || "")
+    }
   });
   const cue = await maybeGenerateCue({
     downloadResult: download,
@@ -953,7 +1640,12 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
     sourceUrl: pageUrl,
     artworkUrl: String(info.image || "").trim(),
     episodeUrl: pageUrl,
-    clipId: String(info.clipId || "")
+    clipId: String(info.clipId || ""),
+    description,
+    location,
+    hosts,
+    genres,
+    cue
   });
 
   return {
@@ -964,7 +1656,7 @@ ipcMain.handle("download-rte-url", async (event, { pageUrl, progressToken, force
   };
 });
 
-ipcMain.handle("download-wwf-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload = false }) => {
+ipcMain.handle("download-wwf-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid Worldwide FM page URL is required.");
   }
@@ -976,6 +1668,10 @@ ipcMain.handle("download-wwf-url", async (event, { pageUrl, progressToken, title
     programTitle: programTitle || info.showName || "Worldwide FM",
     publishedTime: publishedTime || info.title || resolvedTitle,
     artworkUrl: String(image || info.image || "").trim(),
+    description,
+    location,
+    hosts,
+    genres,
     onProgress: (progress) => {
       if (!progressToken) return;
       event.sender.send("download-progress", { token: progressToken, ...progress });
@@ -984,7 +1680,7 @@ ipcMain.handle("download-wwf-url", async (event, { pageUrl, progressToken, title
   });
 });
 
-ipcMain.handle("download-nts-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload = false }) => {
+ipcMain.handle("download-nts-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid NTS episode URL is required.");
   }
@@ -996,6 +1692,10 @@ ipcMain.handle("download-nts-url", async (event, { pageUrl, progressToken, title
     programTitle: programTitle || "NTS",
     publishedTime: publishedTime || info.title || resolvedTitle,
     artworkUrl: String(image || info.image || "").trim(),
+    description,
+    location,
+    hosts,
+    genres,
     onProgress: (progress) => {
       if (!progressToken) return;
       event.sender.send("download-progress", { token: progressToken, ...progress });
@@ -1004,7 +1704,7 @@ ipcMain.handle("download-nts-url", async (event, { pageUrl, progressToken, title
   });
 });
 
-ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload = false }) => {
+ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload = false }) => {
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid BBC page URL is required.");
   }
@@ -1038,7 +1738,17 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
             ...progress
           });
         },
-        forceDownload: Boolean(forceDownload)
+        forceDownload: Boolean(forceDownload),
+        postProcess: {
+          ...buildMetadata({ description, location, hosts, genres }),
+          sourceType: "bbc",
+          episodeTitle: inferredTitle,
+          programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+          publishedTime: publishedTime || inferredTitle,
+          sourceUrl: candidate,
+          artworkUrl: String(image || "").trim(),
+          episodeUrl: candidate
+        }
       });
       usedUrl = candidate;
       break;
@@ -1055,6 +1765,14 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
     throw lastError || new Error("BBC download failed.");
   }
   const resolvedArtwork = String(image || "").trim() || await resolveBbcArtwork(usedUrl);
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "bbc",
+    episodeUrl: usedUrl,
+    episodeTitle: inferredTitle,
+    programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
+    onProgress: (progress) => emitRendererProgress(event.sender, progressToken, progress)
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "bbc",
@@ -1063,15 +1781,12 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
     publishedTime: publishedTime || inferredTitle,
     sourceUrl: usedUrl,
     artworkUrl: resolvedArtwork,
-    episodeUrl: usedUrl
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "bbc",
     episodeUrl: usedUrl,
-    episodeTitle: inferredTitle,
-    programTitle: providedProgramTitle || inferProgramNameFromUrl(usedUrl) || "BBC",
-    onProgress: (progress) => emitRendererProgress(event.sender, progressToken, progress)
+    description,
+    location,
+    hosts,
+    genres,
+    cue
   });
 
   return {
@@ -1168,13 +1883,29 @@ async function resolveWwfEpisodeStream(episodeUrl) {
     sourceUrl = mixcloudUrl || url;
   }
 
+  if (/mixcloud\.com\//i.test(sourceUrl)) {
+    resolveYtDlpCommand();
+  }
+
   // Mixcloud uses AES-128 encrypted HLS — pipe yt-dlp decoded output through the
   // local proxy server for fast playback start (~5-10s). No seek support.
   const streamUrl = await registerYtDlpPipeUrl(sourceUrl);
   return { episodeUrl: url, streamUrl, title: "", image: "" };
 }
 
-async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+async function downloadWwfEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  onProgress,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) {
     throw new Error("episodeUrl is required.");
@@ -1182,6 +1913,12 @@ async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTi
   const info = await getWwfEpisodeInfo(sourceUrl).catch(() => ({}));
   const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "wwf-episode");
   const ytDlpUrl = (info.mixcloudUrl && info.mixcloudUrl.trim()) || (await getWwfEpisodeMixcloudUrl(sourceUrl).catch(() => "")) || sourceUrl;
+  const metadata = buildMetadata({
+    description: description || info.description,
+    location: location || info.location,
+    hosts: normalizeMetadataList(hosts).length ? hosts : info.hosts,
+    genres: normalizeMetadataList(genres).length ? genres : info.genres
+  });
   const download = await downloadFromManifest({
     sourceUrl: ytDlpUrl,
     manifestUrl: ytDlpUrl,
@@ -1192,9 +1929,28 @@ async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTi
     clipId: info.clipId || sourceUrl,
     onProgress,
     sourceType: "wwf",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "wwf",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || info.showName || "Worldwide FM",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || info.image || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: String(info.clipId || sourceUrl)
+    }
   });
   const resolvedArtwork = String(artworkUrl || info.image || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "wwf",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || info.showName || "Worldwide FM",
+    onProgress
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "wwf",
@@ -1204,15 +1960,12 @@ async function downloadWwfEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: String(info.clipId || sourceUrl)
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "wwf",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || info.showName || "Worldwide FM",
-    onProgress
+    clipId: String(info.clipId || sourceUrl),
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return {
     episodeUrl: sourceUrl,
@@ -1258,21 +2011,26 @@ ipcMain.handle("wwf-scheduler-list", async () => {
 ipcMain.handle("wwf-scheduler-add", async (_event, { programUrl, options }) => {
   const normalized = normalizeWwfProgramUrl(programUrl || "");
   const added = await wwfScheduler.add(normalized, options || {});
+  patchMaterializedSubscriptions();
   return added;
 });
 
 ipcMain.handle("wwf-scheduler-remove", async (_event, { scheduleId }) => {
   wwfScheduler.remove(scheduleId);
+  patchMaterializedSubscriptions();
   return wwfScheduler.list();
 });
 
 ipcMain.handle("wwf-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
   wwfScheduler.setEnabled(scheduleId, enabled);
+  patchMaterializedSubscriptions();
   return wwfScheduler.list();
 });
 
 ipcMain.handle("wwf-scheduler-check-one", async (_event, { scheduleId }) => {
-  return wwfScheduler.checkOne(scheduleId);
+  const data = await wwfScheduler.checkOne(scheduleId);
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 async function resolveNtsEpisodeStream(episodeUrl) {
@@ -1291,11 +2049,29 @@ async function resolveNtsEpisodeStream(episodeUrl) {
   }
 }
 
-async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+async function downloadNtsEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  onProgress,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const info = await getNtsEpisodeInfo(sourceUrl).catch(() => ({}));
   const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "nts-episode");
+  const metadata = buildMetadata({
+    description: description || info.description,
+    location: location || info.location,
+    hosts: normalizeMetadataList(hosts).length ? hosts : info.hosts,
+    genres: normalizeMetadataList(genres).length ? genres : info.genres
+  });
   const download = await downloadFromManifest({
     sourceUrl,
     manifestUrl: sourceUrl,
@@ -1306,9 +2082,28 @@ async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTi
     clipId: info.clipId || sourceUrl,
     onProgress,
     sourceType: "nts",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "nts",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || "NTS",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || info.image || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: String(info.clipId || sourceUrl)
+    }
   });
   const resolvedArtwork = String(artworkUrl || info.image || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "nts",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "NTS",
+    onProgress
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "nts",
@@ -1318,15 +2113,12 @@ async function downloadNtsEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: String(info.clipId || sourceUrl)
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "nts",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || "NTS",
-    onProgress
+    clipId: String(info.clipId || sourceUrl),
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
@@ -1337,10 +2129,23 @@ ipcMain.handle("nts-episode-stream", async (_event, { episodeUrl }) => {
 
 // ── FIP IPC handlers ──────────────────────────────────────────────────────────
 
-async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+async function downloadFipEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  onProgress,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const metadata = buildMetadata({ description, location, hosts, genres });
   const download = await downloadFromManifest({
     sourceUrl,
     manifestUrl: sourceUrl,
@@ -1351,9 +2156,28 @@ async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTi
     clipId: sourceUrl,
     onProgress,
     sourceType: "fip",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "fip",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || "FIP",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: sourceUrl
+    }
   });
   const resolvedArtwork = String(artworkUrl || "").trim();
+  const cue = await maybeGenerateCue({
+    downloadResult: download,
+    sourceType: "fip",
+    episodeUrl: sourceUrl,
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "FIP",
+    onProgress
+  });
   const tags = await maybeApplyId3({
     downloadResult: download,
     sourceType: "fip",
@@ -1363,25 +2187,35 @@ async function downloadFipEpisode({ episodeUrl, title, programTitle, publishedTi
     sourceUrl,
     artworkUrl: resolvedArtwork,
     episodeUrl: sourceUrl,
-    clipId: sourceUrl
-  });
-  const cue = await maybeGenerateCue({
-    downloadResult: download,
-    sourceType: "fip",
-    episodeUrl: sourceUrl,
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || "FIP",
-    onProgress
+    clipId: sourceUrl,
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
   });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
 // ── KEXP IPC handlers ─────────────────────────────────────────────────────────
 
-async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedTime, artworkUrl = "", onProgress, forceDownload = false }) {
+async function downloadKexpEpisode({
+  episodeUrl,
+  title,
+  programTitle,
+  publishedTime,
+  artworkUrl = "",
+  description = "",
+  location = "",
+  hosts = [],
+  genres = [],
+  onProgress,
+  forceDownload = false
+}) {
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "kexp-episode");
+  const metadata = buildMetadata({ description, location, hosts, genres });
 
   // Resolve direct StreamGuys archive MP3 URL via KEXP get_streaming_url API
   const streamInfo = await getKexpEpisodeStream(sourceUrl, null, publishedTime);
@@ -1398,20 +2232,20 @@ async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedT
     clipId: sourceUrl,
     onProgress,
     sourceType: "kexp",
-    forceDownload
+    forceDownload,
+    postProcess: {
+      ...metadata,
+      sourceType: "kexp",
+      episodeTitle: resolvedTitle,
+      programTitle: programTitle || "KEXP",
+      publishedTime: publishedTime || resolvedTitle,
+      sourceUrl,
+      artworkUrl: String(artworkUrl || "").trim(),
+      episodeUrl: sourceUrl,
+      clipId: sourceUrl
+    }
   });
   const resolvedArtwork = String(artworkUrl || "").trim();
-  const tags = await maybeApplyId3({
-    downloadResult: download,
-    sourceType: "kexp",
-    episodeTitle: resolvedTitle,
-    programTitle: programTitle || "KEXP",
-    publishedTime: publishedTime || resolvedTitle,
-    sourceUrl,
-    artworkUrl: resolvedArtwork,
-    episodeUrl: sourceUrl,
-    clipId: sourceUrl
-  });
   const cue = await maybeGenerateCue({
     downloadResult: download,
     sourceType: "kexp",
@@ -1421,10 +2255,26 @@ async function downloadKexpEpisode({ episodeUrl, title, programTitle, publishedT
     fileStartOffset: sgOffset,
     onProgress
   });
+  const tags = await maybeApplyId3({
+    downloadResult: download,
+    sourceType: "kexp",
+    episodeTitle: resolvedTitle,
+    programTitle: programTitle || "KEXP",
+    publishedTime: publishedTime || resolvedTitle,
+    sourceUrl,
+    artworkUrl: resolvedArtwork,
+    episodeUrl: sourceUrl,
+    clipId: sourceUrl,
+    description: metadata.description,
+    location: metadata.location,
+    hosts: metadata.hosts,
+    genres: metadata.genres,
+    cue
+  });
   return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
-ipcMain.handle("download-kexp-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
+ipcMain.handle("download-kexp-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload }) => {
   const onProgress = progressToken
     ? (payload) => {
         const win = BrowserWindow.getAllWindows()[0];
@@ -1437,12 +2287,16 @@ ipcMain.handle("download-kexp-url", async (_event, { pageUrl, progressToken, tit
     programTitle: String(programTitle || "").trim(),
     publishedTime: String(publishedTime || "").trim(),
     artworkUrl: String(image || "").trim(),
+    description,
+    location,
+    hosts,
+    genres,
     onProgress,
     forceDownload: Boolean(forceDownload)
   });
 });
 
-ipcMain.handle("download-kexp-extended-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
+ipcMain.handle("download-kexp-extended-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload }) => {
   const onProgress = progressToken
     ? (payload) => {
         const win = BrowserWindow.getAllWindows()[0];
@@ -1458,6 +2312,10 @@ ipcMain.handle("download-kexp-extended-url", async (_event, { pageUrl, progressT
     programTitle: String(programTitle || streamInfo.programTitle || "").trim(),
     publishedTime: String(publishedTime || streamInfo.broadcastedAt || "").trim(),
     artworkUrl: String(image || streamInfo.image || "").trim(),
+    description,
+    location,
+    hosts,
+    genres,
     onProgress,
     forceDownload: Boolean(forceDownload)
   });
@@ -1550,24 +2408,30 @@ ipcMain.handle("kexp-scheduler-list", async () => {
 
 ipcMain.handle("kexp-scheduler-add", async (_event, { programUrl, options }) => {
   const normalized = normalizeKexpProgramUrl(programUrl || "");
-  return kexpScheduler.add(normalized, options || {});
+  const data = await kexpScheduler.add(normalized, options || {});
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 ipcMain.handle("kexp-scheduler-remove", async (_event, { scheduleId }) => {
   kexpScheduler.remove(scheduleId);
+  patchMaterializedSubscriptions();
   return kexpScheduler.list();
 });
 
 ipcMain.handle("kexp-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
   kexpScheduler.setEnabled(scheduleId, enabled);
+  patchMaterializedSubscriptions();
   return kexpScheduler.list();
 });
 
 ipcMain.handle("kexp-scheduler-check-one", async (_event, { scheduleId }) => {
-  return kexpScheduler.checkOne(scheduleId);
+  const data = await kexpScheduler.checkOne(scheduleId);
+  patchMaterializedSubscriptions();
+  return data;
 });
 
-ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, forceDownload }) => {
+ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload }) => {
   const onProgress = progressToken
     ? (payload) => {
         const win = BrowserWindow.getAllWindows()[0];
@@ -1580,6 +2444,10 @@ ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, titl
     programTitle: String(programTitle || "").trim(),
     publishedTime: String(publishedTime || "").trim(),
     artworkUrl: String(image || "").trim(),
+    description,
+    location,
+    hosts,
+    genres,
     onProgress,
     forceDownload: Boolean(forceDownload)
   });
@@ -1670,21 +2538,27 @@ ipcMain.handle("fip-scheduler-list", async () => {
 
 ipcMain.handle("fip-scheduler-add", async (_event, { programUrl, options }) => {
   const normalized = normalizeFipProgramUrl(programUrl || "");
-  return fipScheduler.add(normalized, options || {});
+  const data = await fipScheduler.add(normalized, options || {});
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 ipcMain.handle("fip-scheduler-remove", async (_event, { scheduleId }) => {
   fipScheduler.remove(scheduleId);
+  patchMaterializedSubscriptions();
   return fipScheduler.list();
 });
 
 ipcMain.handle("fip-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
   fipScheduler.setEnabled(scheduleId, enabled);
+  patchMaterializedSubscriptions();
   return fipScheduler.list();
 });
 
 ipcMain.handle("fip-scheduler-check-one", async (_event, { scheduleId }) => {
-  return fipScheduler.checkOne(scheduleId);
+  const data = await fipScheduler.checkOne(scheduleId);
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 ipcMain.handle("nts-live-stations", () => {
@@ -1722,21 +2596,26 @@ ipcMain.handle("nts-scheduler-list", async () => {
 ipcMain.handle("nts-scheduler-add", async (_event, { programUrl, options }) => {
   const normalized = normalizeNtsProgramUrl(programUrl || "");
   const added = await ntsScheduler.add(normalized, options || {});
+  patchMaterializedSubscriptions();
   return added;
 });
 
 ipcMain.handle("nts-scheduler-remove", async (_event, { scheduleId }) => {
   ntsScheduler.remove(scheduleId);
+  patchMaterializedSubscriptions();
   return ntsScheduler.list();
 });
 
 ipcMain.handle("nts-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
   ntsScheduler.setEnabled(scheduleId, enabled);
+  patchMaterializedSubscriptions();
   return ntsScheduler.list();
 });
 
 ipcMain.handle("nts-scheduler-check-one", async (_event, { scheduleId }) => {
-  return ntsScheduler.checkOne(scheduleId);
+  const data = await ntsScheduler.checkOne(scheduleId);
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 ipcMain.handle("local-playback-url", async (_event, { outputDir, fileName }) => {
@@ -1763,21 +2642,26 @@ ipcMain.handle("scheduler-list", async () => {
 ipcMain.handle("scheduler-add", async (_event, { programUrl, options }) => {
   const normalized = normalizeProgramUrl(programUrl);
   const added = await scheduler.add(normalized, options || {});
+  patchMaterializedSubscriptions();
   return added;
 });
 
 ipcMain.handle("scheduler-remove", async (_event, { scheduleId }) => {
   scheduler.remove(scheduleId);
+  patchMaterializedSubscriptions();
   return scheduler.list();
 });
 
 ipcMain.handle("scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
   scheduler.setEnabled(scheduleId, enabled);
+  patchMaterializedSubscriptions();
   return scheduler.list();
 });
 
 ipcMain.handle("scheduler-check-one", async (_event, { scheduleId }) => {
-  return scheduler.checkOne(scheduleId);
+  const data = await scheduler.checkOne(scheduleId);
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 ipcMain.handle("bbc-scheduler-list", async () => {
@@ -1787,21 +2671,26 @@ ipcMain.handle("bbc-scheduler-list", async () => {
 ipcMain.handle("bbc-scheduler-add", async (_event, { programUrl, options }) => {
   const normalized = normalizeBbcProgramUrl(programUrl);
   const added = await bbcScheduler.add(normalized, options || {});
+  patchMaterializedSubscriptions();
   return added;
 });
 
 ipcMain.handle("bbc-scheduler-remove", async (_event, { scheduleId }) => {
   bbcScheduler.remove(scheduleId);
+  patchMaterializedSubscriptions();
   return bbcScheduler.list();
 });
 
 ipcMain.handle("bbc-scheduler-set-enabled", async (_event, { scheduleId, enabled }) => {
   bbcScheduler.setEnabled(scheduleId, enabled);
+  patchMaterializedSubscriptions();
   return bbcScheduler.list();
 });
 
 ipcMain.handle("bbc-scheduler-check-one", async (_event, { scheduleId }) => {
-  return bbcScheduler.checkOne(scheduleId);
+  const data = await bbcScheduler.checkOne(scheduleId);
+  patchMaterializedSubscriptions();
+  return data;
 });
 
 ipcMain.handle("settings-get", async () => {
@@ -1831,12 +2720,14 @@ ipcMain.handle("cue-generate", async (_event, payload = {}) => {
   }
   const cue = await maybeGenerateCue({
     force: true,
+    writeCueFile: true,
     revealErrors: true,
     sourceType,
     episodeUrl,
     episodeTitle,
     programTitle,
     tracklistUrl,
+    fileStartOffset: Number(payload.fileStartOffset || 0),
     downloadResult: { outputDir, fileName },
     onProgress: (progress) => emitRendererProgress(_event.sender, progressToken, progress)
   });
@@ -1878,7 +2769,148 @@ ipcMain.handle("settings-pick-download-dir", async (event, _payload = {}) => {
 });
 
 ipcMain.handle("download-history-list", () => downloadHistory ? downloadHistory.list() : []);
-ipcMain.handle("download-history-clear", () => { if (downloadHistory) { downloadHistory.clear(); } return { ok: true }; });
+ipcMain.handle("download-history-clear", () => {
+  if (downloadHistory) {
+    downloadHistory.clear();
+  }
+  patchMaterializedHistory();
+  broadcastGlobalEvent({ type: "download.history.cleared" });
+  return { ok: true };
+});
+ipcMain.handle("program-feeds-list", () => listAllProgramFeeds());
+ipcMain.handle("metadata-search", async (_event, payload = {}) => {
+  const snapshot = await ensureMaterializedMetadata();
+  return searchMetadataIndex(snapshot.index, payload || {});
+});
+ipcMain.handle("entity-graph-search", async (_event, payload = {}) => {
+  const forceRefresh = payload?.forceRefresh === true;
+  await refreshMetadataHarvestCache(forceRefresh);
+  const snapshot = await ensureMaterializedMetadata({
+    forceRebuild: forceRefresh,
+    allowStale: !forceRefresh
+  });
+  return searchEntityGraph(snapshot.graph, payload || {});
+});
+ipcMain.handle("entity-graph-detail", async (_event, payload = {}) => {
+  const forceRefresh = payload?.forceRefresh === true;
+  await refreshMetadataHarvestCache(forceRefresh);
+  const snapshot = await ensureMaterializedMetadata({
+    forceRebuild: forceRefresh,
+    allowStale: !forceRefresh
+  });
+  return getEntityGraphEntity(snapshot.graph, payload || {});
+});
+ipcMain.handle("metadata-discover", async (_event, payload = {}) => {
+  const forceRefresh = payload?.forceRefresh === true;
+  await refreshMetadataHarvestCache(forceRefresh);
+  const snapshot = await ensureMaterializedMetadata({
+    forceRebuild: forceRefresh,
+    allowStale: !forceRefresh
+  });
+  return discoverMetadataIndex(snapshot.index, payload || {});
+});
+ipcMain.handle("metadata-harvest-refresh", async () => {
+  const items = await refreshMetadataHarvestCache(true);
+  return { ok: true, count: items.length, updatedAt: metadataHarvestStore?.getUpdatedAt?.() || "" };
+});
+ipcMain.handle("collections-list", () => collectionsStore ? collectionsStore.list() : []);
+ipcMain.handle("collections-create", (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return [];
+  }
+  collectionsStore.create(String(payload.name || ""));
+  return collectionsStore.list();
+});
+ipcMain.handle("collections-delete", (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return [];
+  }
+  collectionsStore.remove(String(payload.collectionId || ""));
+  return collectionsStore.list();
+});
+ipcMain.handle("collections-add-entry", (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return [];
+  }
+  collectionsStore.addEntry(String(payload.collectionId || ""), payload.entry || {});
+  return collectionsStore.list();
+});
+ipcMain.handle("collections-add-entries", (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return { collections: [], addedCount: 0 };
+  }
+  const result = collectionsStore.addEntries(String(payload.collectionId || ""), payload.entries || []);
+  return {
+    collections: collectionsStore.list(),
+    addedCount: Number(result?.addedCount || 0)
+  };
+});
+ipcMain.handle("collections-remove-entry", (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return [];
+  }
+  collectionsStore.removeEntry(String(payload.collectionId || ""), String(payload.entryId || ""));
+  return collectionsStore.list();
+});
+ipcMain.handle("collections-recommendations", async (_event, payload = {}) => {
+  const forceRefresh = payload?.forceRefresh === true;
+  await refreshMetadataHarvestCache(forceRefresh);
+  const snapshot = await ensureMaterializedMetadata({
+    forceRebuild: forceRefresh,
+    allowStale: !forceRefresh
+  });
+  const collections = collectionsStore ? collectionsStore.list() : [];
+  const collection = collections.find((item) => item.id === String(payload.collectionId || ""));
+  if (!collection) {
+    return {
+      collectionId: "",
+      collectionName: "",
+      query: "",
+      sourceType: "",
+      terms: [],
+      totalCandidates: 0,
+      results: [],
+      facets: { hosts: [], genres: [], locations: [] }
+    };
+  }
+  return buildCollectionRecommendations(
+    snapshot.index,
+    collection,
+    payload || {}
+  );
+});
+ipcMain.handle("history-postprocess", async (_event, payload = {}) => rebuildDownloadedFileMetadata(payload || {}));
+ipcMain.handle("diagnostics-get", async () => {
+  const settings = readSettings();
+  const snapshot = await ensureMaterializedMetadata();
+  return collectRuntimeDiagnostics({
+    dataDir: app.getPath("userData"),
+    downloadDir: settings.downloadDir,
+    projectRoot: path.join(__dirname, ".."),
+    recentErrors: recentErrorsLog ? recentErrorsLog.list() : [],
+    settings,
+    harvestUpdatedAt: metadataHarvestStore?.getUpdatedAt?.() || "",
+    harvestState: metadataHarvestStore?.getState?.() || { sources: {} },
+    harvestedItems: metadataHarvestStore?.list?.() || [],
+    metadataIndex: snapshot.index,
+    entityGraph: snapshot.graph
+  });
+});
+ipcMain.handle("diagnostics-repair", async () => runVendorBootstrap({
+  projectRoot: path.join(__dirname, "..")
+}));
+ipcMain.handle("open-path", async (_event, targetPath) => {
+  const inputPath = String(targetPath || "").trim();
+  if (!inputPath) {
+    return { ok: false, error: "Path is required." };
+  }
+  try {
+    const errorMessage = await shell.openPath(inputPath);
+    return errorMessage ? { ok: false, error: errorMessage } : { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error || "Failed to open path.") };
+  }
+});
 
 ipcMain.handle("download-queue-stats", async () => {
   return downloadQueue.stats();
@@ -1905,17 +2937,21 @@ ipcMain.handle("download-queue-cancel", async (_event, { taskId }) => {
   };
 });
 
+ipcMain.handle("download-queue-rerun", async (_event, { taskId, mode = "exact" }) => {
+  const rerun = downloadQueue.rerun(taskId, {
+    restoreTask: restoreDownloadQueueTask,
+    mode
+  });
+  if (!rerun) {
+    return { ok: false, error: "Task cannot be rerun.", snapshot: downloadQueue.snapshot() };
+  }
+  return { ok: true, taskId: rerun.id, snapshot: downloadQueue.snapshot() };
+});
+
 ipcMain.handle("download-queue-clear-pending", async () => {
   downloadQueue.clearPending();
   return downloadQueue.snapshot();
 });
-
-function feedDataDirFor(sourceType) {
-  if (sourceType === "bbc") return path.join(app.getPath("userData"), "bbc");
-  if (sourceType === "wwf") return path.join(app.getPath("userData"), "wwf");
-  if (sourceType === "nts") return path.join(app.getPath("userData"), "nts");
-  return app.getPath("userData");
-}
 
 async function sendWebhookIfConfigured(payload) {
   const webhookUrl = String(readSettings().webhookUrl || "").trim();
@@ -1935,10 +2971,17 @@ async function onScheduleRefreshed(sourceType, schedule, latest) {
   if (!readSettings().feedExportEnabled) {
     return;
   }
-  writeProgramFeedFiles({
+  const feed = writeProgramFeedFiles({
     dataDir: feedDataDirFor(sourceType),
     schedule,
     latest
+  });
+  patchMaterializedFeeds();
+  broadcastGlobalEvent({
+    type: "feeds.updated",
+    source: sourceType,
+    title: schedule?.title || "",
+    slug: feed?.slug || ""
   });
 }
 
@@ -1954,6 +2997,12 @@ async function onScheduleComplete(sourceType, schedule, downloaded) {
     count: downloaded.length,
     downloaded
   });
+  broadcastGlobalEvent({
+    type: "episode.downloaded",
+    source: sourceType,
+    title: schedule?.title || "",
+    episodeTitle: Array.isArray(downloaded) && downloaded[0]?.title ? downloaded[0].title : ""
+  });
   try {
     const { Notification } = require("electron");
     if (Notification.isSupported()) {
@@ -1967,10 +3016,23 @@ async function onScheduleComplete(sourceType, schedule, downloaded) {
 }
 
 async function onScheduleError(sourceType, schedule, error) {
+  if (recentErrorsLog) {
+    recentErrorsLog.append({
+      sourceType,
+      title: schedule?.title || "",
+      error: String(error?.message || error || "Unknown error")
+    });
+  }
   await sendWebhookIfConfigured({
     event: "download.error",
     source: sourceType,
     scheduleId: schedule?.id || "",
+    title: schedule?.title || "",
+    error: String(error?.message || error || "Unknown error")
+  });
+  broadcastGlobalEvent({
+    type: "download.error",
+    source: sourceType,
     title: schedule?.title || "",
     error: String(error?.message || error || "Unknown error")
   });
@@ -1988,6 +3050,19 @@ app.whenReady().then(() => {
 
   const DOWNLOAD_HISTORY_PATH = path.join(DATA_DIR, "download-history.json");
   downloadHistory = createDownloadHistory(DOWNLOAD_HISTORY_PATH);
+  const RECENT_ERRORS_PATH = path.join(DATA_DIR, "recent-errors.json");
+  recentErrorsLog = createRecentErrorsLog(RECENT_ERRORS_PATH);
+  metadataHarvestStore = createMetadataHarvestStore(path.join(DATA_DIR, "metadata-harvest.json"));
+  materializedMetadataStore = createMaterializedMetadataStore(path.join(DATA_DIR, "materialized-metadata.json"));
+  materializedMetadataCache = getMaterializedMetadataSnapshot();
+  collectionsStore = createCollectionsStore(path.join(DATA_DIR, "collections.json"));
+  const restoredQueueItems = downloadQueue.restorePending();
+  if (restoredQueueItems > 0) {
+    broadcastGlobalEvent({
+      type: "download.queue.restored",
+      count: restoredQueueItems
+    });
+  }
 
   scheduler = createSchedulerStore({
     app,
@@ -1999,13 +3074,17 @@ app.whenReady().then(() => {
     runEpisodeDownload: async (episode) =>
       downloadEpisodeByClip({
         clipId: episode.clipId,
-        title: episode.title,
-        programTitle: episode.programTitle,
-        episodeUrl: episode.episodeUrl,
-        publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || "",
-        forceDownload: episode.forceDownload || false
-      })
+      title: episode.title,
+      programTitle: episode.programTitle,
+      episodeUrl: episode.episodeUrl,
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
+      forceDownload: episode.forceDownload || false
+    })
   });
 
   bbcScheduler = createSchedulerStore({
@@ -2023,6 +3102,10 @@ app.whenReady().then(() => {
         programTitle: episode.programTitle,
         publishedTime: episode.publishedTime,
         artworkUrl: episode.image || "",
+        description: episode.description || "",
+        location: episode.location || "",
+        hosts: episode.hosts || [],
+        genres: episode.genres || [],
         forceDownload: episode.forceDownload || false
       })
   });
@@ -2038,12 +3121,16 @@ app.whenReady().then(() => {
     runEpisodeDownload: async (episode) =>
       downloadWwfEpisode({
         episodeUrl: episode.episodeUrl,
-        title: episode.title || episode.fullTitle,
-        programTitle: episode.programTitle || episode.showName,
-        publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || "",
-        forceDownload: episode.forceDownload || false
-      })
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || episode.showName,
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
+      forceDownload: episode.forceDownload || false
+    })
   });
 
   ntsScheduler = createSchedulerStore({
@@ -2057,12 +3144,16 @@ app.whenReady().then(() => {
     runEpisodeDownload: async (episode) =>
       downloadNtsEpisode({
         episodeUrl: episode.episodeUrl,
-        title: episode.title || episode.fullTitle,
-        programTitle: episode.programTitle || "NTS",
-        publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || "",
-        forceDownload: episode.forceDownload || false
-      })
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || "NTS",
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
+      forceDownload: episode.forceDownload || false
+    })
   });
 
   fipScheduler = createSchedulerStore({
@@ -2076,12 +3167,16 @@ app.whenReady().then(() => {
     runEpisodeDownload: async (episode) =>
       downloadFipEpisode({
         episodeUrl: episode.episodeUrl,
-        title: episode.title || episode.fullTitle,
-        programTitle: episode.programTitle || "FIP",
-        publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || "",
-        forceDownload: episode.forceDownload || false
-      })
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || "FIP",
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
+      forceDownload: episode.forceDownload || false
+    })
   });
 
   kexpScheduler = createSchedulerStore({
@@ -2095,12 +3190,16 @@ app.whenReady().then(() => {
     runEpisodeDownload: async (episode) =>
       downloadKexpEpisode({
         episodeUrl: episode.episodeUrl,
-        title: episode.title || episode.fullTitle,
-        programTitle: episode.programTitle || "KEXP",
-        publishedTime: episode.publishedTime,
-        artworkUrl: episode.image || "",
-        forceDownload: episode.forceDownload || false
-      })
+      title: episode.title || episode.fullTitle,
+      programTitle: episode.programTitle || "KEXP",
+      publishedTime: episode.publishedTime,
+      artworkUrl: episode.image || "",
+      description: episode.description || "",
+      location: episode.location || "",
+      hosts: episode.hosts || [],
+      genres: episode.genres || [],
+      forceDownload: episode.forceDownload || false
+    })
   });
 
   scheduler.start();
@@ -2115,6 +3214,12 @@ app.whenReady().then(() => {
   fipScheduler.runAll().catch(() => {});
   kexpScheduler.start();
   kexpScheduler.runAll().catch(() => {});
+  if (process.env.NODE_ENV !== "test") {
+    setTimeout(() => {
+      refreshMetadataHarvestCache(false).catch(() => {});
+      refreshMaterializedMetadataSnapshot().catch(() => {});
+    }, 2500);
+  }
 
   createWindow();
 
