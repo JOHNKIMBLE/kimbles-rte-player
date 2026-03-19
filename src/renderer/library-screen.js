@@ -33,6 +33,7 @@
     let heavyLibraryViewsLoaded = false;
     let heavyLibraryViewsLoadingPromise = null;
     let heavyLibraryViewsTimer = null;
+    const LIBRARY_SECTION_STATE_KEY = "kimble.library.section-state.v1";
 
     function getSourceLabel(sourceKey) {
       const key = String(sourceKey || "").trim().toLowerCase();
@@ -51,6 +52,14 @@
         .split(/,\s*/g)
         .map((entry) => entry.trim())
         .filter(Boolean);
+    }
+
+    function sanitizeBulletText(value, replacement = " | ") {
+      return String(value || "").replace(/â€¢|•/g, replacement);
+    }
+
+    function isElementNode(value) {
+      return Boolean(value && typeof value === "object" && Number(value.nodeType) === 1);
     }
 
     function buildMetadataSearchText(entry) {
@@ -243,6 +252,9 @@
     }
 
     function focusLibrarySection(sectionId) {
+      if (sectionId) {
+        setLibrarySectionCollapsed(sectionId, false);
+      }
       if (typeof activateLibraryView === "function") {
         activateLibraryView(sectionId);
         return;
@@ -252,6 +264,98 @@
           behavior: "smooth",
           block: "start"
         });
+      }
+    }
+
+    function getLibrarySectionState() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(LIBRARY_SECTION_STATE_KEY) || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveLibrarySectionState(nextState) {
+      try {
+        window.localStorage.setItem(LIBRARY_SECTION_STATE_KEY, JSON.stringify(nextState || {}));
+      } catch {}
+    }
+
+    function getLibrarySections() {
+      return Array.from(document.querySelectorAll("#schedulesTabContent [data-library-section]"));
+    }
+
+    function ensureLibrarySectionBody(section) {
+      if (!isElementNode(section)) {
+        return null;
+      }
+      const existingBody = section.querySelector(":scope > .library-section-body");
+      if (existingBody) {
+        return existingBody;
+      }
+      const header = section.firstElementChild;
+      const body = document.createElement("div");
+      body.className = "library-section-body";
+      let cursor = header ? header.nextSibling : section.firstChild;
+      while (cursor) {
+        const next = cursor.nextSibling;
+        body.appendChild(cursor);
+        cursor = next;
+      }
+      section.appendChild(body);
+      return body;
+    }
+
+    function setLibrarySectionCollapsed(sectionId, collapsed, options = {}) {
+      const section = document.getElementById(sectionId);
+      if (!isElementNode(section) || !section.hasAttribute("data-library-section")) {
+        return;
+      }
+      const body = ensureLibrarySectionBody(section);
+      const toggle = section.querySelector("[data-library-section-toggle]");
+      const nextCollapsed = Boolean(collapsed);
+      section.classList.toggle("library-section-collapsed", nextCollapsed);
+      if (body) {
+        body.hidden = nextCollapsed;
+      }
+      if (toggle) {
+        toggle.textContent = nextCollapsed ? "Expand" : "Collapse";
+        toggle.setAttribute("aria-expanded", String(!nextCollapsed));
+      }
+      if (options.persist !== false) {
+        const stateBySection = getLibrarySectionState();
+        stateBySection[sectionId] = nextCollapsed;
+        saveLibrarySectionState(stateBySection);
+      }
+    }
+
+    function ensureLibrarySectionToggle(section) {
+      if (!isElementNode(section)) {
+        return;
+      }
+      const header = section.firstElementChild;
+      if (!isElementNode(header) || section.querySelector("[data-library-section-toggle]")) {
+        return;
+      }
+      const title = header.querySelector("h2");
+      const actionRow = Array.from(header.children).find((child) => child !== title && child.classList?.contains("row"));
+      const target = isElementNode(actionRow) ? actionRow : header;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary library-section-toggle";
+      button.setAttribute("data-library-section-toggle", section.id || "");
+      button.setAttribute("aria-expanded", "true");
+      button.textContent = "Collapse";
+      target.appendChild(button);
+    }
+
+    function initializeLibrarySections() {
+      const stateBySection = getLibrarySectionState();
+      for (const section of getLibrarySections()) {
+        ensureLibrarySectionBody(section);
+        ensureLibrarySectionToggle(section);
+        setLibrarySectionCollapsed(section.id || "", Boolean(stateBySection[section.id || ""]), { persist: false });
       }
     }
 
@@ -1630,6 +1734,7 @@
         dom.diagnosticsHarvestSummary.textContent = harvest.harvestedCount
           ? `Harvested ${Number(harvest.harvestedCount || 0)} docs across ${Number(harvest.sourceCount || 0)} sources${updatedAt ? ` • Updated ${updatedAt}` : ""}.`
           : "No harvest diagnostics yet. Refresh the discovery cache to start populating the graph.";
+        dom.diagnosticsHarvestSummary.textContent = sanitizeBulletText(dom.diagnosticsHarvestSummary.textContent);
       }
       renderMetricCards(dom.diagnosticsHarvestMetrics, buildHarvestDiagnosticsMetrics(harvest));
 
@@ -1668,6 +1773,7 @@
             `;
           }).join("")
           : `<div class="item"><div class="item-meta">No per-source harvest cadence data yet.</div></div>`;
+        dom.diagnosticsHarvestSources.innerHTML = sanitizeBulletText(dom.diagnosticsHarvestSources.innerHTML, " &middot; ");
       }
 
       if (dom.diagnosticsSourceHealth) {
@@ -1698,6 +1804,7 @@
             `;
           }).join("")
           : `<div class="item"><div class="item-meta">No source health data yet.</div></div>`;
+        dom.diagnosticsSourceHealth.innerHTML = sanitizeBulletText(dom.diagnosticsSourceHealth.innerHTML, " &middot; ");
       }
 
       if (dom.diagnosticsRetryHistory) {
@@ -2587,7 +2694,7 @@
             dom.metadataIndexKindFilter.value = ["host", "episode"].includes(type) ? type : "";
           }
           await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
-          focusLibrarySection("metadataExplorerSection");
+          focusLibrarySection("libraryMetadataExplorerSection");
         }
       });
 
@@ -2661,7 +2768,7 @@
               dom.metadataIndexKindFilter.value = ["host", "episode"].includes(type) ? type : "";
             }
             await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
-            focusLibrarySection("metadataExplorerSection");
+            focusLibrarySection("libraryMetadataExplorerSection");
           }
         });
       }
@@ -2990,9 +3097,41 @@
           setSettingsStatus(error.message, true);
         }
       });
+
+      document.getElementById("libraryQuickNav")?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-library-jump]");
+        if (!button) {
+          return;
+        }
+        focusLibrarySection(button.getAttribute("data-library-jump") || "");
+      });
+
+      document.querySelector("[data-library-expand-all]")?.addEventListener("click", () => {
+        for (const section of getLibrarySections()) {
+          setLibrarySectionCollapsed(section.id || "", false);
+        }
+      });
+
+      document.querySelector("[data-library-collapse-all]")?.addEventListener("click", () => {
+        for (const section of getLibrarySections()) {
+          setLibrarySectionCollapsed(section.id || "", true);
+        }
+      });
+
+      document.getElementById("schedulesTabContent")?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-library-section-toggle]");
+        if (!button) {
+          return;
+        }
+        const sectionId = button.getAttribute("data-library-section-toggle") || "";
+        const section = sectionId ? document.getElementById(sectionId) : null;
+        const collapsed = Boolean(section?.classList.contains("library-section-collapsed"));
+        setLibrarySectionCollapsed(sectionId, !collapsed);
+      });
     }
 
     bindEvents();
+    initializeLibrarySections();
 
     return {
       loadFeeds,
