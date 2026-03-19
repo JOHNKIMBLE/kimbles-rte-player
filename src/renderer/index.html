@@ -487,13 +487,35 @@
     </div>
 
     <div id="schedulesTabContent" class="hidden">
-      <section class="panel" id="healthDashboardSection">
+      <section class="panel" id="healthDashboardSection" data-library-section="health" data-library-label="Health">
         <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
           <h2 style="margin:0;font-size:1rem;">Library Health</h2>
         </div>
         <div id="healthGrid" class="health-grid"></div>
       </section>
-      <section class="panel">
+      <section class="panel library-quick-nav-panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;font-size:1rem;">Library Jump</h2>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <button type="button" class="secondary" data-library-expand-all>Expand All</button>
+            <button type="button" class="secondary" data-library-collapse-all>Collapse All</button>
+          </div>
+        </div>
+        <div id="libraryQuickNav" class="library-quick-nav">
+          <button type="button" class="secondary library-jump-btn" data-library-jump="healthDashboardSection">Health</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="subscriptionsSection">Subscriptions</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="libraryCollectionsSection">Collections</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="libraryEntityGraphSection">Graph</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="libraryEntityProfileSection">Profile</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="libraryMetadataExplorerSection">Explorer</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="metadataRepairsSection">Repairs</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="feedsSection">Feeds</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="queueSection">Queue</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="historySection">History</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="diagnosticsSection">Diagnostics</button>
+        </div>
+      </section>
+      <section class="panel" id="subscriptionsSection" data-library-section="subscriptions" data-library-label="Subscriptions">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Subscriptions</h2>
           <button id="refreshAllSchedulesBtn" class="secondary">Refresh All</button>
@@ -532,7 +554,7 @@
         <div id="allSchedulesMetrics" class="library-metrics-grid"></div>
         <div id="allSchedulesList" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="libraryCollectionsSection" data-library-section="collections" data-library-label="Collections">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Collections</h2>
           <div class="row" style="gap:0.5rem;">
@@ -596,7 +618,7 @@
         <div id="collectionsRecommendationsMetrics" class="library-metrics-grid"></div>
         <div id="collectionsRecommendationsList" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="libraryEntityGraphSection" data-library-section="graph" data-library-label="Entity Graph">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Entity Graph</h2>
           <button id="entityGraphRefreshBtn" class="secondary">Refresh Graph</button>
@@ -628,7 +650,7 @@
         <div id="entityGraphMetrics" class="library-metrics-grid"></div>
         <div id="entityGraphList" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="libraryEntityProfileSection" data-library-section="profile" data-library-label="Entity Profile">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Entity Profile</h2>
           <div id="entityProfileSummary" class="hint">Select an entity from the graph, collections, or recommendations.</div>
@@ -638,7 +660,7 @@
         <div id="entityProfileCard" class="list"></div>
         <div id="entityProfileRecommendations" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="libraryMetadataExplorerSection" data-library-section="explorer" data-library-label="Metadata Explorer">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Metadata Explorer</h2>
           <button id="metadataHarvestRefreshBtn" class="secondary">Refresh Discovery Cache</button>
@@ -700,7 +722,7 @@
         <div id="metadataIndexMetrics" class="library-metrics-grid"></div>
         <div id="metadataIndexList" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="metadataRepairsSection" data-library-section="repairs" data-library-label="Metadata Repairs">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Metadata Repairs</h2>
           <div id="metadataRepairSummary" class="hint">Normalize recurring metadata terms across the library.</div>
@@ -729,7 +751,7 @@
         </div>
         <div id="metadataRepairList" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="feedsSection" data-library-section="feeds" data-library-label="Program Feeds">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Program Feeds</h2>
           <div class="row" style="gap:0.5rem;">
@@ -756,7 +778,7 @@
         <div id="feedsMetrics" class="library-metrics-grid"></div>
         <div id="feedsList" class="list"></div>
       </section>
-      <section class="panel">
+      <section class="panel" id="queueSection" data-library-section="queue" data-library-label="Download Queue">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Download Queue</h2>
           <div id="downloadQueueStatus" class="hint">Loading queue...</div>
@@ -801,7 +823,7 @@
         <div id="queueMetrics" class="library-metrics-grid"></div>
         <div id="downloadQueueRecent" class="list compact-list"></div>
       </section>
-      <section class="panel" id="historySection">
+      <section class="panel" id="historySection" data-library-section="history" data-library-label="Download History">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;">Download History</h2>
           <div class="row" style="gap:0.5rem;">
@@ -1097,7 +1119,7 @@
         </div>
         <div id="settingsStatus" class="status muted"></div>
       </section>
-      <section class="panel" id="diagnosticsSection">
+      <section class="panel" id="diagnosticsSection" data-library-section="diagnostics" data-library-label="Diagnostics">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;font-size:1rem;">Diagnostics</h2>
           <div class="row" style="gap:0.5rem;">

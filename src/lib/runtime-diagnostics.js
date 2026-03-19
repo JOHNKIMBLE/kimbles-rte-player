@@ -145,6 +145,16 @@ function buildMetadataHarvestDiagnostics(options = {}) {
     return Math.round((hits / safeRows.length) * 100);
   }
 
+  function hasMetadataList(row, primaryField, fallbackField) {
+    if (Array.isArray(row?.[primaryField]) && row[primaryField].length) {
+      return true;
+    }
+    if (fallbackField && Array.isArray(row?.[fallbackField]) && row[fallbackField].length) {
+      return true;
+    }
+    return false;
+  }
+
   function buildThinReasons({ thinCount = 0, hostCoverage = 0, genreCoverage = 0 } = {}) {
     const reasons = [];
     if (Number(thinCount || 0) > 0) {
@@ -164,10 +174,10 @@ function buildMetadataHarvestDiagnostics(options = {}) {
     return rows
       .map((row) => {
         const missingFields = [];
-        if (!(Array.isArray(row?.hosts) && row.hosts.length)) {
+        if (!hasMetadataList(row, "hosts", "latestEpisodeHosts")) {
           missingFields.push("hosts");
         }
-        if (!(Array.isArray(row?.genres) && row.genres.length)) {
+        if (!hasMetadataList(row, "genres", "latestEpisodeGenres")) {
           missingFields.push("genres");
         }
         if (!String(row?.description || row?.latestEpisodeDescription || "").trim()) {
@@ -199,13 +209,13 @@ function buildMetadataHarvestDiagnostics(options = {}) {
     const current = harvestSources[sourceType] && typeof harvestSources[sourceType] === "object" ? harvestSources[sourceType] : {};
     const nextDueMs = current.nextDueAt ? Date.parse(String(current.nextDueAt)) : NaN;
     const lastRunMs = current.lastRunAt ? Date.parse(String(current.lastRunAt)) : NaN;
-    const hostCoverage = coverageRatio(programs, (row) => Array.isArray(row?.hosts) && row.hosts.length);
-    const genreCoverage = coverageRatio(programs, (row) => Array.isArray(row?.genres) && row.genres.length);
+    const hostCoverage = coverageRatio(programs, (row) => hasMetadataList(row, "hosts", "latestEpisodeHosts"));
+    const genreCoverage = coverageRatio(programs, (row) => hasMetadataList(row, "genres", "latestEpisodeGenres"));
     const descriptionCoverage = coverageRatio(rows, (row) => String(row?.description || row?.latestEpisodeDescription || "").trim());
     const locationCoverage = coverageRatio(rows, (row) => String(row?.location || row?.latestEpisodeLocation || "").trim());
     const thinCount = rows.filter((row) => {
-      const hasHosts = Array.isArray(row?.hosts) && row.hosts.length;
-      const hasGenres = Array.isArray(row?.genres) && row.genres.length;
+      const hasHosts = hasMetadataList(row, "hosts", "latestEpisodeHosts");
+      const hasGenres = hasMetadataList(row, "genres", "latestEpisodeGenres");
       const hasDescription = String(row?.description || row?.latestEpisodeDescription || "").trim();
       const hasLocation = String(row?.location || row?.latestEpisodeLocation || "").trim();
       return !hasHosts && !hasGenres && !hasDescription && !hasLocation;
