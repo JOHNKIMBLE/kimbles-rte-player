@@ -161,7 +161,7 @@ const FETCH_HEADERS = {
 const FIP_SUMMARY_CACHE_VER = 2;
 
 const { cleanText, stripHtml } = require("./utils");
-const { assertUrlHostSuffixes } = require("./url-safety");
+const { assertUrlHostSuffixes, fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./url-safety");
 
 const FIP_FETCH_SUFFIXES = ["radiofrance.fr"];
 
@@ -194,55 +194,23 @@ function stripUrlQueryAndHash(input) {
 }
 
 async function fetchJson(url, extraHeaders = {}) {
-  const safe = assertUrlHostSuffixes(url, FIP_FETCH_SUFFIXES, "FIP");
   const headers = { ...FETCH_HEADERS, Accept: "application/json", ...extraHeaders };
   if (typeof fetch !== "undefined") {
-    const res = await fetch(safe, { headers, cache: "no-store" });
+    const res = await fetchWithHostAllowlist(url, FIP_FETCH_SUFFIXES, "FIP", { headers, cache: "no-store" });
     if (!res.ok) throw new Error(`FIP API ${res.status} for ${url}`);
     return res.json();
   }
-  return new Promise((resolve, reject) => {
-    const u = new URL(safe);
-    const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(safe, { headers }, (res) => {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        reject(new Error(`FIP API ${res.statusCode} for ${url}`));
-        return;
-      }
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-        catch (e) { reject(e); }
-      });
-      res.on("error", reject);
-    });
-    req.on("error", reject);
-  });
+  const text = await httpGetWithHostAllowlist(url, FIP_FETCH_SUFFIXES, "FIP", headers);
+  return JSON.parse(text);
 }
 
 async function fetchText(url) {
-  const safe = assertUrlHostSuffixes(url, FIP_FETCH_SUFFIXES, "FIP");
   if (typeof fetch !== "undefined") {
-    const res = await fetch(safe, { headers: FETCH_HEADERS });
+    const res = await fetchWithHostAllowlist(url, FIP_FETCH_SUFFIXES, "FIP", { headers: FETCH_HEADERS });
     if (!res.ok) throw new Error(`FIP fetch ${res.status} for ${url}`);
     return res.text();
   }
-  return new Promise((resolve, reject) => {
-    const u = new URL(safe);
-    const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(safe, { headers: FETCH_HEADERS }, (res) => {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        reject(new Error(`FIP fetch ${res.statusCode} for ${safe}`));
-        return;
-      }
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-      res.on("error", reject);
-    });
-    req.on("error", reject);
-  });
+  return httpGetWithHostAllowlist(url, FIP_FETCH_SUFFIXES, "FIP", FETCH_HEADERS);
 }
 
 /**

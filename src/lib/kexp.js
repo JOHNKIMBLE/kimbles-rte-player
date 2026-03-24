@@ -58,34 +58,17 @@ const FETCH_HEADERS = {
   "Accept": "application/json"
 };
 
-const { assertUrlHostSuffixes } = require("./url-safety");
+const { assertUrlHostSuffixes, fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./url-safety");
 const KEXP_FETCH_SUFFIXES = ["kexp.org", "cloudfront.net", "splixer.com", "tkatlabs.com", "streamguys1.com"];
 
 async function fetchJson(url) {
-  const safe = assertUrlHostSuffixes(url, KEXP_FETCH_SUFFIXES, "KEXP");
   if (typeof fetch !== "undefined") {
-    const res = await fetch(safe, { headers: FETCH_HEADERS });
+    const res = await fetchWithHostAllowlist(url, KEXP_FETCH_SUFFIXES, "KEXP", { headers: FETCH_HEADERS });
     if (!res.ok) throw new Error(`KEXP API ${res.status} for ${url}`);
     return res.json();
   }
-  return new Promise((resolve, reject) => {
-    const u = new URL(safe);
-    const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(safe, { headers: FETCH_HEADERS }, (res) => {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        reject(new Error(`KEXP API ${res.statusCode} for ${url}`));
-        return;
-      }
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-        catch (e) { reject(e); }
-      });
-      res.on("error", reject);
-    });
-    req.on("error", reject);
-  });
+  const text = await httpGetWithHostAllowlist(url, KEXP_FETCH_SUFFIXES, "KEXP", FETCH_HEADERS);
+  return JSON.parse(text);
 }
 
 // ── Splixer fetch helper ──────────────────────────────────────────────────────
@@ -712,14 +695,14 @@ async function getKexpEpisodeStream(episodeUrl, _runYtDlpJson, startTime) {
     const cfUrl = cloudfrontUrlFromTs(resolvedStartTime);
     if (cfUrl) {
       try {
-        const cfSafe = assertUrlHostSuffixes(cfUrl, KEXP_FETCH_SUFFIXES, "KEXP archive");
-        const probe = await fetch(cfSafe, {
+        const probe = await fetchWithHostAllowlist(cfUrl, KEXP_FETCH_SUFFIXES, "KEXP archive", {
           method: "GET",
           headers: { Range: "bytes=0-0" }
         }).catch(() => null);
         if (probe && (probe.ok || probe.status === 206)) {
           await probe.body?.cancel().catch(() => {});
-          return { streamUrl: cfSafe, startOffset: 0, title: "", duration: null };
+          const streamUrl = assertUrlHostSuffixes(cfUrl, KEXP_FETCH_SUFFIXES, "KEXP archive");
+          return { streamUrl, startOffset: 0, title: "", duration: null };
         }
       } catch {}
     }
