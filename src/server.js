@@ -1478,22 +1478,6 @@ async function resolveRteEpisodeStream(clipId) {
   };
 }
 
-function isAllowedRteProxyUrl(inputUrl) {
-  try {
-    const parsed = new URL(String(inputUrl || ""));
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return false;
-    }
-    const host = String(parsed.hostname || "").toLowerCase();
-    return (
-      host.endsWith("rasset.ie")
-      || host.endsWith("rte.ie")
-    );
-  } catch {
-    return false;
-  }
-}
-
 function rewriteHlsManifest(text, baseUrl) {
   const base = new URL(baseUrl);
   const wrapUrl = (value) => `/api/rte/stream-proxy?url=${encodeURIComponent(value)}`;
@@ -2696,7 +2680,7 @@ app.get("/api/rte/stream-proxy", async (req, res) => {
       headers.Range = reqRange;
     }
 
-    const { response: upstream, href: safeTarget } = await fetchRteProxyUpstream(targetUrl, isAllowedRteProxyUrl, { headers });
+    const { response: upstream, href: safeTarget } = await fetchRteProxyUpstream(targetUrl, { headers });
     if (!upstream.ok && upstream.status !== 206) {
       const bodyText = await upstream.text().catch(() => "");
       res.status(upstream.status).send(bodyText || `Upstream error: ${upstream.status}`);

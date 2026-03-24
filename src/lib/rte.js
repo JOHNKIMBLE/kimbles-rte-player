@@ -25,6 +25,63 @@ function configure({ diskCache } = {}) {
 
 const { cleanText, stripHtml, inferCadence } = require("./utils");
 const { fetchWithHostAllowlist } = require("./outbound-http");
+const { computeNextBroadcastStartUtc } = require("./scheduler");
+
+const MS_PER_DAY = 86400000;
+
+/**
+ * When runSchedule is not in "Mon • HH:MM - HH:MM" form, estimate the next slot from
+ * recent episode publish times and inferred cadence.
+ */
+function computeNextRteFromEpisodes(episodes, cadenceInfo, fromDate = new Date()) {
+  const from = fromDate.getTime();
+  const sorted = (Array.isArray(episodes) ? episodes : [])
+    .map((e) => {
+      const t = Date.parse(e.publishedTime || "");
+      return Number.isFinite(t) ? { t, d: new Date(t), title: String(e.fullTitle || e.title || "").trim() } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.t - a.t);
+  if (!sorted.length) {
+    return { nextBroadcastAt: "", nextBroadcastTitle: "" };
+  }
+
+  const latest = sorted[0];
+  const cadence = cadenceInfo?.cadence || "unknown";
+  const avg = cadenceInfo?.averageDaysBetween;
+
+  if (cadence === "daily") {
+    const c = new Date(fromDate);
+    c.setUTCHours(latest.d.getUTCHours(), latest.d.getUTCMinutes(), 0, 0);
+    while (c.getTime() <= from) {
+      c.setUTCDate(c.getUTCDate() + 1);
+    }
+    return { nextBroadcastAt: c.toISOString(), nextBroadcastTitle: latest.title };
+  }
+
+  if ((cadence === "weekly" || cadence === "unknown") && typeof avg === "number" && avg > 0 && avg <= 21) {
+    const candidate = new Date(latest.t + avg * MS_PER_DAY);
+    if (candidate.getTime() > from) {
+      return { nextBroadcastAt: candidate.toISOString(), nextBroadcastTitle: latest.title };
+    }
+  }
+
+  const targetDow = latest.d.getUTCDay();
+  const h = latest.d.getUTCHours();
+  const m = latest.d.getUTCMinutes();
+  for (let add = 0; add < 21; add += 1) {
+    const c = new Date(fromDate);
+    c.setUTCDate(c.getUTCDate() + add);
+    if (c.getUTCDay() !== targetDow) {
+      continue;
+    }
+    c.setUTCHours(h, m, 0, 0);
+    if (c.getTime() > from) {
+      return { nextBroadcastAt: c.toISOString(), nextBroadcastTitle: latest.title };
+    }
+  }
+  return { nextBroadcastAt: "", nextBroadcastTitle: "" };
+}
 
 function cleanTitle(title) {
   return cleanText(title).replace(/\s+-\s+[^-]+$/, "").trim();
@@ -489,6 +546,10 @@ async function getProgramEpisodes(programUrl, page = 1) {
 
   const cadenceInfo = inferCadence(episodes);
   const summary = await getProgramSummary(normalizedProgramUrl);
+  const fromSchedule = computeNextBroadcastStartUtc(summary.runSchedule || "");
+  const fromEpisodes = computeNextRteFromEpisodes(episodes, cadenceInfo);
+  const nextBroadcastAt = fromSchedule || fromEpisodes.nextBroadcastAt || "";
+  const nextBroadcastTitle = fromSchedule ? "" : fromEpisodes.nextBroadcastTitle;
   const enrichedEpisodes = episodes.map((episode) => ({
     ...episode,
     description: episode.description || summary.description || "",
@@ -512,7 +573,9 @@ async function getProgramEpisodes(programUrl, page = 1) {
     episodes: enrichedEpisodes,
     cadence: cadenceInfo.cadence,
     averageDaysBetween: cadenceInfo.averageDaysBetween,
-    runSchedule: summary.runSchedule || ""
+    runSchedule: summary.runSchedule || "",
+    nextBroadcastAt,
+    nextBroadcastTitle
   };
 }
 
@@ -542,7 +605,10 @@ async function getProgramSummary(programUrl) {
     if (cached) programSummaryCache.set(normalizedProgramUrl, cached);
   }
   if (programSummaryCache.has(normalizedProgramUrl)) {
-    return programSummaryCache.get(normalizedProgramUrl);
+    const cached = programSummaryCache.get(normalizedProgramUrl);
+    const rs = String(cached.runSchedule || "").trim();
+    const nextBroadcastAt = cached.nextBroadcastAt || computeNextBroadcastStartUtc(rs) || "";
+    return { ...cached, nextBroadcastAt, nextBroadcastTitle: String(cached.nextBroadcastTitle || "").trim() };
   }
 
   const html = await fetchText(normalizedProgramUrl);
@@ -619,6 +685,7 @@ async function getProgramSummary(programUrl) {
     ]) || "";
   }
 
+  const rs = dublinScheduleToUtc(cleanText(runSchedule));
   const summary = {
     programUrl: normalizedProgramUrl,
     title: cleanTitle(title),
@@ -626,8 +693,10 @@ async function getProgramSummary(programUrl) {
     image: image ? toAbsoluteRteUrl(image) : "",
     hosts,
     location,
-    runSchedule: dublinScheduleToUtc(cleanText(runSchedule)),
-    genres: [...new Set(genres)].slice(0, 6)
+    runSchedule: rs,
+    genres: [...new Set(genres)].slice(0, 6),
+    nextBroadcastAt: computeNextBroadcastStartUtc(rs),
+    nextBroadcastTitle: ""
   };
 
   programSummaryCache.set(normalizedProgramUrl, summary);

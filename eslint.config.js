@@ -20,7 +20,9 @@ const nodeGlobals = {
   console: "readonly",
   global: "readonly",
   FormData: "readonly",
-  Blob: "readonly"
+  Blob: "readonly",
+  Headers: "readonly",
+  Response: "readonly"
 };
 
 const browserGlobals = {
@@ -50,7 +52,11 @@ const browserGlobals = {
   MutationObserver: "readonly",
   IntersectionObserver: "readonly",
   ResizeObserver: "readonly",
-  performance: "readonly"
+  performance: "readonly",
+  btoa: "readonly",
+  atob: "readonly",
+  TextEncoder: "readonly",
+  TextDecoder: "readonly"
 };
 
 module.exports = [

@@ -70,19 +70,142 @@
   };
 
   const WEB_SECRETS_STORAGE_KEY = "rte_web_secrets_v1";
+  const WEB_SECRETS_ENVELOPE_V = 2;
   const WEB_SECRET_FIELDS = ["webhookUrl", "discordWebhookUrl", "ntfyTopicUrl", "auddApiToken", "acoustidApiKey"];
 
-  function readWebSecrets() {
+  let cachedWebSecrets = {};
+
+  function u8ToB64(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      s += String.fromCharCode(bytes[i]);
+    }
+    return btoa(s);
+  }
+
+  function b64ToU8(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) {
+      out[i] = bin.charCodeAt(i);
+    }
+    return out;
+  }
+
+  function isLegacyPlainSecretsObject(obj) {
+    if (!obj || typeof obj !== "object" || obj.v === WEB_SECRETS_ENVELOPE_V) {
+      return false;
+    }
+    return WEB_SECRET_FIELDS.some((f) => Object.prototype.hasOwnProperty.call(obj, f));
+  }
+
+  async function deriveWebSecretsAesKey() {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) {
+      return null;
+    }
+    const enc = new TextEncoder();
+    const material = enc.encode(`kimble-web-secrets|${String(location.origin)}|aes-gcm-v1`);
+    const hash = await subtle.digest("SHA-256", material);
+    return subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt", "decrypt"]);
+  }
+
+  async function encryptWebSecretsEnvelope(secrets) {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) {
+      return null;
+    }
+    const key = await deriveWebSecretsAesKey();
+    if (!key) {
+      return null;
+    }
+    const iv = new Uint8Array(12);
+    globalThis.crypto.getRandomValues(iv);
+    const plaintext = new TextEncoder().encode(JSON.stringify(secrets));
+    const ciphertext = await subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+    return JSON.stringify({
+      v: WEB_SECRETS_ENVELOPE_V,
+      iv: u8ToB64(iv),
+      ct: u8ToB64(new Uint8Array(ciphertext))
+    });
+  }
+
+  async function decryptWebSecretsEnvelope(raw) {
+    let parsed;
     try {
-      const raw = sessionStorage.getItem(WEB_SECRETS_STORAGE_KEY);
-      if (!raw) {
-        return {};
-      }
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : {};
+      parsed = JSON.parse(raw);
     } catch {
       return {};
     }
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    if (parsed.v === WEB_SECRETS_ENVELOPE_V && parsed.iv && parsed.ct) {
+      const subtle = globalThis.crypto?.subtle;
+      if (!subtle) {
+        return {};
+      }
+      const key = await deriveWebSecretsAesKey();
+      if (!key) {
+        return {};
+      }
+      const iv = b64ToU8(String(parsed.iv));
+      const ct = b64ToU8(String(parsed.ct));
+      const plainBuf = await subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+      const inner = JSON.parse(new TextDecoder().decode(plainBuf));
+      return inner && typeof inner === "object" ? inner : {};
+    }
+    if (isLegacyPlainSecretsObject(parsed)) {
+      return parsed;
+    }
+    return {};
+  }
+
+  async function persistWebSecretsToSession(secrets) {
+    cachedWebSecrets = secrets && typeof secrets === "object" ? { ...secrets } : {};
+    try {
+      const enc = await encryptWebSecretsEnvelope(cachedWebSecrets);
+      if (enc) {
+        sessionStorage.setItem(WEB_SECRETS_STORAGE_KEY, enc);
+      } else {
+        sessionStorage.removeItem(WEB_SECRETS_STORAGE_KEY);
+      }
+    } catch {
+      try {
+        sessionStorage.removeItem(WEB_SECRETS_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  async function refreshCachedSecretsFromSession() {
+    try {
+      const raw = sessionStorage.getItem(WEB_SECRETS_STORAGE_KEY);
+      if (!raw) {
+        cachedWebSecrets = {};
+        return;
+      }
+      const obj = await decryptWebSecretsEnvelope(raw);
+      cachedWebSecrets = obj && typeof obj === "object" ? { ...obj } : {};
+      let envelopeParsed = null;
+      try {
+        envelopeParsed = JSON.parse(raw);
+      } catch {
+        envelopeParsed = null;
+      }
+      if (envelopeParsed && isLegacyPlainSecretsObject(envelopeParsed)) {
+        await persistWebSecretsToSession(cachedWebSecrets);
+      }
+    } catch {
+      cachedWebSecrets = {};
+    }
+  }
+
+  const secretsStorageReady = refreshCachedSecretsFromSession();
+
+  function readWebSecrets() {
+    return { ...cachedWebSecrets };
   }
 
   const defaultSettings = {
@@ -203,7 +326,7 @@
     }
   }
 
-  function persistWebSettingsSplit(normalized) {
+  async function persistWebSettingsSplit(normalized) {
     const secrets = {};
     const rest = { ...normalized };
     for (const field of WEB_SECRET_FIELDS) {
@@ -212,15 +335,16 @@
         delete rest[field];
       }
     }
+    await persistWebSecretsToSession(secrets);
     try {
-      sessionStorage.setItem(WEB_SECRETS_STORAGE_KEY, JSON.stringify(secrets));
+      localStorage.setItem("rte_web_settings", JSON.stringify(rest));
     } catch {
-      /* sessionStorage unavailable (e.g. private mode) — rest still omits secrets from localStorage */
+      /* localStorage unavailable */
     }
-    localStorage.setItem("rte_web_settings", JSON.stringify(rest));
   }
 
-  function saveWebSettings(input) {
+  async function saveWebSettings(input) {
+    await secretsStorageReady;
     const current = loadWebSettings();
     const next = {
       ...current,
@@ -266,7 +390,7 @@
       episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(next.episodesPerPage || defaultSettings.episodesPerPage)))),
       discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(next.discoveryCount || defaultSettings.discoveryCount))))
     };
-    persistWebSettingsSplit(normalized);
+    await persistWebSettingsSplit(normalized);
     return normalized;
   }
 
@@ -530,16 +654,17 @@
     clearPendingDownloadQueue: () => API.sendJson("/api/download-queue/clear-pending", "POST", {}),
 
     getSettings: async () => {
+      await secretsStorageReady;
       try {
         const remote = await API.getJson("/api/settings");
-        const merged = saveWebSettings(remote);
-        return merged;
+        return await saveWebSettings(remote);
       } catch {
         return loadWebSettings();
       }
     },
     saveSettings: async (payload) => {
-      const local = saveWebSettings(payload);
+      await secretsStorageReady;
+      const local = await saveWebSettings(payload);
       try {
         return await API.sendJson("/api/settings", "POST", local);
       } catch {
