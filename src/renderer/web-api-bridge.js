@@ -532,10 +532,19 @@
     listDownloadHistory: () => fetch("/api/download-history").then(r => r.json()),
     clearDownloadHistory: () => fetch("/api/download-history", { method: "DELETE" }).then(r => r.json()),
     listProgramFeeds: () => API.getJson("/api/feeds"),
+    refreshProgramFeeds: () => API.sendJson("/api/feeds/refresh", "POST", {}),
+    openExternalUrl: (url) => {
+      const u = String(url || "").trim();
+      if (/^https?:\/\//i.test(u)) {
+        window.open(u, "_blank", "noopener,noreferrer");
+      }
+      return Promise.resolve({ ok: true });
+    },
     searchMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&host=${encodeURIComponent(payload.host || "")}&genre=${encodeURIComponent(payload.genre || "")}&location=${encodeURIComponent(payload.location || "")}&limit=${encodeURIComponent(payload.limit || 50)}`),
     searchEntityGraph: (payload = {}) => API.getJson(`/api/entity-graph/search?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&type=${encodeURIComponent(payload.type || "")}&limit=${encodeURIComponent(payload.limit || 24)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     getEntityGraphEntity: (payload = {}) => API.getJson(`/api/entity-graph/entity?entityId=${encodeURIComponent(payload.entityId || "")}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     discoverMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/discover?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
+    discoverSubscriptionPrograms: (payload = {}) => API.getJson(`/api/metadata/subscription-discovery?limit=${encodeURIComponent(payload.limit || 12)}&sourceType=${encodeURIComponent(payload.sourceType || "")}&q=${encodeURIComponent(payload.query || "")}`),
     refreshMetadataHarvest: () => API.sendJson("/api/metadata/harvest-refresh", "POST", {}),
     refreshMetadataHarvestSource: (sourceType, options = {}) => API.sendJson("/api/metadata/harvest-refresh/source", "POST", {
       sourceType,

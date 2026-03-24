@@ -6,6 +6,7 @@
     const playFromDownloadedFile = deps.playFromDownloadedFile;
     const sourceLabels = deps.sourceLabels || {};
     const openProgramExplorer = deps.openProgramExplorer;
+    const onHealthSourceNavigate = deps.onHealthSourceNavigate;
     let latestTaggedSchedules = [];
     let searchTimer = null;
 
@@ -76,15 +77,13 @@
         dom.allSchedulesMetrics.innerHTML = "";
         return;
       }
-      const retryPending = list.reduce((sum, schedule) => sum + (Array.isArray(schedule?.retryQueue) ? schedule.retryQueue.length : 0), 0);
       const paused = list.filter((schedule) => schedule.enabled === false).length;
       const dueSoon = countDueSoon(list, 24);
       const failedRecently = countFailedRecently(list, 7);
       const metrics = [
         { label: "Due Soon", value: dueSoon, tone: dueSoon > 0 ? "warn" : "neutral", detail: "Next 24h" },
         { label: "Failed Recently", value: failedRecently, tone: failedRecently > 0 ? "danger" : "neutral", detail: "Last 7 days" },
-        { label: "Paused", value: paused, tone: paused > 0 ? "warn" : "neutral", detail: "Visible set" },
-        { label: "Retry Pending", value: retryPending, tone: retryPending > 0 ? "warn" : "neutral", detail: "Visible set" }
+        { label: "Paused", value: paused, tone: paused > 0 ? "warn" : "neutral", detail: "Visible set" }
       ];
       dom.allSchedulesMetrics.innerHTML = metrics.map((metric) => `
         <div class="library-metric-card library-metric-${escapeHtml(metric.tone)}">
@@ -211,7 +210,7 @@
           dotClass = retries > 0 ? "health-dot-yellow" : "health-dot-green";
         }
         const lastRunStr = lastRun ? new Date(lastRun).toLocaleDateString() : "Never";
-        return `<div class="health-card">
+        return `<div class="health-card health-card-interactive" role="button" tabindex="0" data-health-source="${escapeHtml(key)}" title="Open Subscriptions filtered to ${escapeHtml(name)}">
           <div class="health-card-name"><span class="health-dot ${dotClass}"></span>${escapeHtml(name)}</div>
           <div class="health-card-meta">${count} schedule${count !== 1 ? "s" : ""}</div>
           <div class="health-card-meta">Last run: ${escapeHtml(lastRunStr)}</div>
@@ -280,7 +279,47 @@
       dom.allSchedulesStatusFilter?.addEventListener("change", renderVisibleSchedules);
       dom.allSchedulesSort?.addEventListener("change", renderVisibleSchedules);
 
+      function activateHealthSource(sourceKey) {
+        const key = String(sourceKey || "").trim().toLowerCase();
+        if (!key || typeof onHealthSourceNavigate !== "function") {
+          return;
+        }
+        onHealthSourceNavigate(key);
+      }
+
+      dom.healthGrid?.addEventListener("click", (event) => {
+        const card = event.target.closest("[data-health-source]");
+        if (!card) {
+          return;
+        }
+        activateHealthSource(card.getAttribute("data-health-source"));
+      });
+      dom.healthGrid?.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+        const card = event.target.closest("[data-health-source]");
+        if (!card) {
+          return;
+        }
+        event.preventDefault();
+        activateHealthSource(card.getAttribute("data-health-source"));
+      });
+
       dom.allSchedulesList?.addEventListener("click", async (event) => {
+        const openProgramBtn = event.target.closest("[data-schedule-open-program]");
+        if (openProgramBtn) {
+          const url = String(openProgramBtn.getAttribute("data-schedule-open-program") || "").trim();
+          if (url && typeof window.rteDownloader?.openExternalUrl === "function") {
+            try {
+              await window.rteDownloader.openExternalUrl(url);
+            } catch (error) {
+              window.console?.error?.(error);
+            }
+          }
+          return;
+        }
+
         const button = event.target.closest("button");
         if (!button) {
           return;

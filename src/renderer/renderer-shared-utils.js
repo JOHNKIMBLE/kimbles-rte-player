@@ -454,15 +454,15 @@
             ${runLocal ? `<div class="scheduler-cell scheduler-cell-airs"><span class="scheduler-k">Airs (Local)</span><span class="scheduler-v">${escapeHtml(runLocal)}</span></div>` : ""}
             ${checkWindowLocal ? `<div class="scheduler-cell scheduler-cell-check-window"><span class="scheduler-k">Check Window (Local)</span><span class="scheduler-v">${escapeHtml(checkWindowLocal)}</span></div>` : ""}
             ${nextShowLocal ? `<div class="scheduler-cell scheduler-cell-next-broadcast"><span class="scheduler-k">Next Broadcast (Local)</span><span class="scheduler-v">${escapeHtml(nextShowLocal)}</span></div>` : ""}
-            <div class="scheduler-cell scheduler-cell-retry"><span class="scheduler-k">Retry Queue</span><span class="scheduler-v">${escapeHtml(String(retryPending))} pending</span></div>
             ${latestFilePath ? `<div class="scheduler-cell scheduler-cell-latest-file"><span class="scheduler-k">Latest File</span><span class="scheduler-v scheduler-path">${escapeHtml(latestFilePath)}</span></div>` : ""}
             ${latestFileTime ? `<div class="scheduler-cell scheduler-cell-saved"><span class="scheduler-k">Saved</span><span class="scheduler-v">${escapeHtml(latestFileTime)}</span></div>` : ""}
             <div class="scheduler-cell scheduler-cell-last-checked"><span class="scheduler-k">Last Checked</span><span class="scheduler-v">${escapeHtml(checked)}</span></div>
-            <div class="scheduler-cell scheduler-cell-last-run"><span class="scheduler-k">Last Run</span><span class="scheduler-v">${escapeHtml(ran)}</span></div>
+            <div class="scheduler-cell scheduler-cell-last-run"><span class="scheduler-k">Last Run</span><span class="scheduler-v">${escapeHtml(ran)}</span>${retryPending > 0 ? `<span class="scheduler-v scheduler-v-muted scheduler-v-stack">${escapeHtml(String(retryPending))} episode(s) waiting to retry</span>` : ""}</div>
           </div>
           <div class="item-actions">
             <button class="secondary" ${toggleAttr}="${escapeHtml(schedule.id)}" data-enabled="${schedule.enabled ? "1" : "0"}">${schedule.enabled ? "Pause" : "Enable"}</button>
             <button class="secondary" ${runAttr}="${escapeHtml(schedule.id)}">Run Now</button>
+            ${schedule?.programUrl ? `<button type="button" class="secondary" data-schedule-open-program="${escapeHtml(schedule.programUrl)}">Program Page</button>` : ""}
             ${schedule?.programUrl ? `<button class="secondary" ${openExplorerAttr}="${escapeHtml(schedule.programUrl)}">Open Explorer</button>` : ""}
             ${schedule?.lastDownloaded?.outputDir && schedule?.lastDownloaded?.fileName ? `<button class="secondary" ${playOutputAttr}="${escapeHtml(schedule.lastDownloaded.outputDir)}" ${playFileAttr}="${escapeHtml(schedule.lastDownloaded.fileName)}" ${playTitleAttr}="${escapeHtml(schedule.lastDownloaded.title || schedule.title)}" ${playImageAttr}="${escapeHtml(schedule.lastDownloaded.image || schedule.latestEpisodeImage || schedule.image || "")}" ${playEpisodeUrlAttr}="${escapeHtml(schedule.lastDownloaded.episodeUrl || "")}" ${playSourceTypeAttr}="${escapeHtml(playSourceTypeValue)}">Play Latest</button>` : ""}
             <button class="secondary" ${removeAttr}="${escapeHtml(schedule.id)}">Remove</button>

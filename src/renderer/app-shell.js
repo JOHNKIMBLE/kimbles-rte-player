@@ -202,6 +202,10 @@
       dom.tabSchedulesBtn?.classList.toggle("active-tab", isSchedules);
       dom.tabSettingsBtn?.classList.toggle("active-tab", isSettings);
 
+      try {
+        localStorageRef.setItem("kimble_active_tab", state.activeTab);
+      } catch {}
+
       if (isSchedules) {
         actions.renderAllSchedules?.().catch(() => {});
         actions.refreshLibraryData?.().catch(() => {});
@@ -435,7 +439,10 @@
           state.canPickDownloadDirectory = false;
         }
         updateDownloadDirPickerUi();
-        setActiveTab("rte");
+        const savedTab = String(localStorageRef.getItem("kimble_active_tab") || "").trim();
+        const allowedTabs = ["rte", "bbc", "wwf", "nts", "fip", "kexp", "schedules", "settings"];
+        const initialTab = allowedTabs.includes(savedTab) ? savedTab : "rte";
+        setActiveTab(initialTab);
         if (dom.scheduleBackfillCount) {
           dom.scheduleBackfillCount.disabled = true;
         }
