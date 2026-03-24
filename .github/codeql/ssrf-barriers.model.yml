@@ -1,5 +1,5 @@
-# Teach CodeQL that URLs returned by url-safety helpers are SSRF-sanitized (request-forgery barriers).
-# See: https://codeql.github.com/docs/codeql-language-guides/customizing-library-models-for-javascript/
+# CodeQL request-forgery barriers: validated URL strings from url-safety.
+# Multiple "type" spellings help when the DB roots paths differently.
 extensions:
   - addsTo:
       pack: codeql/javascript-all
@@ -11,3 +11,9 @@ extensions:
       - ["src/lib/url-safety.js", "Member[assertGenericNotificationWebhookUrl].ReturnValue", "request-forgery"]
       - ["src/lib/url-safety.js", "Member[assertNtfyTopicUrl].ReturnValue", "request-forgery"]
       - ["src/lib/url-safety.js", "Member[canonicalizeRteProxyTarget].ReturnValue", "request-forgery"]
+      - ["./src/lib/url-safety.js", "Member[assertOutboundHttpUrl].ReturnValue", "request-forgery"]
+      - ["./src/lib/url-safety.js", "Member[assertUrlHostSuffixes].ReturnValue", "request-forgery"]
+      - ["./src/lib/url-safety.js", "Member[assertDiscordWebhookUrl].ReturnValue", "request-forgery"]
+      - ["./src/lib/url-safety.js", "Member[assertGenericNotificationWebhookUrl].ReturnValue", "request-forgery"]
+      - ["./src/lib/url-safety.js", "Member[assertNtfyTopicUrl].ReturnValue", "request-forgery"]
+      - ["./src/lib/url-safety.js", "Member[canonicalizeRteProxyTarget].ReturnValue", "request-forgery"]

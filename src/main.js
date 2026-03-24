@@ -91,7 +91,7 @@ const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSche
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
-  assertGenericNotificationWebhookUrl,
+  fetchWithGenericWebhookAssert,
   hostMatchesAnySuffix,
   hostMatchesSuffix
 } = require("./lib/url-safety");
@@ -3107,14 +3107,8 @@ async function sendWebhookIfConfigured(payload) {
   if (!webhookUrl) {
     return;
   }
-  let safeUrl;
   try {
-    safeUrl = assertGenericNotificationWebhookUrl(webhookUrl);
-  } catch {
-    return;
-  }
-  try {
-    await fetch(safeUrl, {
+    await fetchWithGenericWebhookAssert(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload || {})

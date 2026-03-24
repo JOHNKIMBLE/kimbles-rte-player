@@ -21,7 +21,7 @@ let _diskCache = null;
 function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 
 const { cleanText, stripHtml } = require("./utils");
-const { assertUrlHostSuffixes } = require("./url-safety");
+const { fetchWithHostAllowlist, hostMatchesSuffix, httpGetWithHostAllowlist } = require("./url-safety");
 
 function normalizeShowUrl(inputUrl) {
   const raw = String(inputUrl || "").trim();
@@ -29,7 +29,9 @@ function normalizeShowUrl(inputUrl) {
   if (/^https?:\/\//i.test(raw)) {
     try {
       const parsed = new URL(raw, BASE_URL);
-      if (!/nts\.live/i.test(parsed.hostname)) return raw;
+      if (!hostMatchesSuffix(parsed.hostname, "nts.live")) {
+        return raw;
+      }
       const match = parsed.pathname.match(/^\/shows\/([^/]+)(?:\/episodes\/.*)?$/i);
       if (match) return `${parsed.origin}/shows/${match[1]}`;
     } catch {}
@@ -43,7 +45,9 @@ function normalizeEpisodeUrl(inputUrl) {
   if (!raw) return "";
   try {
     const parsed = new URL(raw, BASE_URL);
-    if (!/nts\.live/i.test(parsed.hostname)) return raw;
+    if (!hostMatchesSuffix(parsed.hostname, "nts.live")) {
+      return raw;
+    }
     if (/\/shows\/[^/]+\/episodes\/[^/]+/.test(parsed.pathname)) {
       return parsed.origin + parsed.pathname.replace(/\/+$/, "");
     }
@@ -76,33 +80,19 @@ const FETCH_HEADERS = {
 };
 
 async function fetchText(url) {
-  const safe = assertUrlHostSuffixes(url, ["nts.live", "ntslive.net"], "NTS");
   if (typeof fetch !== "undefined") {
-    const response = await fetch(safe, { headers: FETCH_HEADERS });
+    const response = await fetchWithHostAllowlist(url, ["nts.live", "ntslive.net"], "NTS", { headers: FETCH_HEADERS });
     if (!response.ok) throw new Error(`Failed to load NTS: ${response.status} ${response.statusText}`);
     return response.text();
   }
-  return new Promise((resolve, reject) => {
-    const u = new URL(safe);
-    const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(safe, { headers: FETCH_HEADERS }, (res) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`Failed to load NTS: ${res.statusCode} ${res.statusMessage}`));
-        return;
-      }
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-      res.on("error", reject);
-    });
-    req.on("error", reject);
-  });
+  return httpGetWithHostAllowlist(url, ["nts.live", "ntslive.net"], "NTS", FETCH_HEADERS);
 }
 
 async function fetchJson(url) {
-  const safe = assertUrlHostSuffixes(url, ["nts.live", "ntslive.net"], "NTS");
   if (typeof fetch !== "undefined") {
-    const response = await fetch(safe, { headers: { ...FETCH_HEADERS, Accept: "application/json" } });
+    const response = await fetchWithHostAllowlist(url, ["nts.live", "ntslive.net"], "NTS", {
+      headers: { ...FETCH_HEADERS, Accept: "application/json" }
+    });
     if (!response.ok) throw new Error(`Failed to load NTS: ${response.status} ${response.statusText}`);
     return response.json();
   }

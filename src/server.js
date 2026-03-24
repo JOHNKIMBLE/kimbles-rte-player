@@ -1920,60 +1920,53 @@ async function sendNotificationsIfConfigured(payload) {
   const text = formatNotificationText(body);
   const jobs = [];
 
-  let safeWebhook = "";
-  let safeDiscord = "";
-  let safeNtfy = "";
-  try {
-    if (webhookUrl) safeWebhook = assertGenericNotificationWebhookUrl(webhookUrl);
-  } catch {
-    safeWebhook = "";
+  if (webhookUrl) {
+    try {
+      jobs.push(fetch(assertGenericNotificationWebhookUrl(webhookUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }).catch(() => null));
+    } catch {
+      /* invalid webhook URL */
+    }
   }
-  try {
-    if (discordWebhookUrl) safeDiscord = assertDiscordWebhookUrl(discordWebhookUrl);
-  } catch {
-    safeDiscord = "";
+  if (discordWebhookUrl) {
+    try {
+      jobs.push(fetch(assertDiscordWebhookUrl(discordWebhookUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: text || "Kimble notification",
+          embeds: [{
+            title: String(body.title || body.programTitle || body.event || "Kimble"),
+            description: String(body.episodeTitle || body.error || ""),
+            fields: [
+              body.source ? { name: "Source", value: String(body.source), inline: true } : null,
+              body.count != null ? { name: "Count", value: String(body.count), inline: true } : null,
+              body.event ? { name: "Event", value: String(body.event), inline: true } : null
+            ].filter(Boolean),
+            timestamp: new Date().toISOString()
+          }]
+        })
+      }).catch(() => null));
+    } catch {
+      /* invalid Discord webhook */
+    }
   }
-  try {
-    if (ntfyTopicUrl) safeNtfy = assertNtfyTopicUrl(ntfyTopicUrl);
-  } catch {
-    safeNtfy = "";
-  }
-
-  if (safeWebhook) {
-    jobs.push(fetch(safeWebhook, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    }).catch(() => null));
-  }
-  if (safeDiscord) {
-    jobs.push(fetch(safeDiscord, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: text || "Kimble notification",
-        embeds: [{
-          title: String(body.title || body.programTitle || body.event || "Kimble"),
-          description: String(body.episodeTitle || body.error || ""),
-          fields: [
-            body.source ? { name: "Source", value: String(body.source), inline: true } : null,
-            body.count != null ? { name: "Count", value: String(body.count), inline: true } : null,
-            body.event ? { name: "Event", value: String(body.event), inline: true } : null
-          ].filter(Boolean),
-          timestamp: new Date().toISOString()
-        }]
-      })
-    }).catch(() => null));
-  }
-  if (safeNtfy) {
-    jobs.push(fetch(safeNtfy, {
-      method: "POST",
-      headers: {
-        Title: String(body.title || body.programTitle || body.event || "Kimble"),
-        Tags: String(body.error ? "warning" : "radio,music")
-      },
-      body: text || JSON.stringify(body)
-    }).catch(() => null));
+  if (ntfyTopicUrl) {
+    try {
+      jobs.push(fetch(assertNtfyTopicUrl(ntfyTopicUrl), {
+        method: "POST",
+        headers: {
+          Title: String(body.title || body.programTitle || body.event || "Kimble"),
+          Tags: String(body.error ? "warning" : "radio,music")
+        },
+        body: text || JSON.stringify(body)
+      }).catch(() => null));
+    } catch {
+      /* invalid ntfy URL */
+    }
   }
   await Promise.all(jobs);
 }

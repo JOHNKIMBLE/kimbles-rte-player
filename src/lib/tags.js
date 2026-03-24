@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { resolveBundledFfmpegDir } = require("./downloader");
-const { assertOutboundHttpUrl } = require("./url-safety");
+const { fetchWithOutboundAssert } = require("./url-safety");
 const { decodeHtml } = require("./utils");
 
 function clean(input) {
@@ -427,8 +427,7 @@ async function downloadCoverToTemp(url, tempDir) {
     return null;
   }
   try {
-    const safe = assertOutboundHttpUrl(input, "Cover art URL");
-    const response = await fetch(safe, {
+    const response = await fetchWithOutboundAssert(input, "Cover art URL", {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
     if (!response.ok) {

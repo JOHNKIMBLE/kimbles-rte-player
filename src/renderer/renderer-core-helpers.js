@@ -1,7 +1,6 @@
 (function initKimbleRendererCoreHelpers() {
   function createRendererCoreHelpers(deps) {
     const dom = deps.dom || {};
-    const documentRef = deps.documentRef || document;
     const downloadProgressHandlers = new Map();
 
     function handleDownloadProgress(payload) {
@@ -52,18 +51,75 @@
       return progress.message || fallbackText;
     }
 
-    function decodeHtmlEntities(input) {
-      let value = String(input || "");
-      for (let i = 0; i < 2; i += 1) {
-        const textarea = documentRef.createElement("textarea");
-        textarea.innerHTML = value;
-        const decoded = textarea.value;
-        if (decoded === value) {
-          break;
+    const NAMED_HTML_ENTITIES = new Map(
+      Object.entries({
+        hellip: "\u2026",
+        mdash: "\u2014",
+        ndash: "\u2013",
+        rsquo: "\u2019",
+        lsquo: "\u2018",
+        apos: "'",
+        quot: '"',
+        amp: "&",
+        nbsp: " ",
+        lt: "<",
+        gt: ">"
+      })
+    );
+
+    function decodeHtmlEntitiesOnce(sIn) {
+      const s = String(sIn || "");
+      let out = "";
+      let i = 0;
+      while (i < s.length) {
+        if (s.charCodeAt(i) !== 38) {
+          out += s[i];
+          i += 1;
+          continue;
         }
-        value = decoded;
+        const semi = s.indexOf(";", i + 1);
+        if (semi < 0 || semi - i > 48) {
+          out += "&";
+          i += 1;
+          continue;
+        }
+        const inner = s.slice(i + 1, semi);
+        let rep = null;
+        if (/^#[Xx][0-9a-fA-F]+$/.test(inner)) {
+          const code = Number.parseInt(inner.slice(2), 16);
+          if (Number.isFinite(code) && code >= 0 && code <= 0x10ffff) {
+            rep = String.fromCodePoint(code);
+          }
+        } else if (/^#[0-9]+$/.test(inner)) {
+          const code = Number(inner.slice(1));
+          if (Number.isFinite(code) && code >= 0 && code <= 0x10ffff) {
+            rep = String.fromCodePoint(code);
+          }
+        } else {
+          rep = NAMED_HTML_ENTITIES.get(inner.toLowerCase()) ?? null;
+        }
+        if (rep != null) {
+          out += rep;
+          i = semi + 1;
+        } else {
+          out += "&";
+          i += 1;
+        }
       }
-      return value;
+      return out;
+    }
+
+    /** Decode HTML entities without assigning untrusted strings to element innerHTML. */
+    function decodeHtmlEntities(input) {
+      let cur = String(input || "");
+      for (let p = 0; p < 12; p += 1) {
+        const next = decodeHtmlEntitiesOnce(cur);
+        if (next === cur) {
+          return cur;
+        }
+        cur = next;
+      }
+      return cur;
     }
 
     function escapeHtml(text) {

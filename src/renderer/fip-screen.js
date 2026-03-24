@@ -1,5 +1,28 @@
 (function initKimbleFipScreen() {
   function createFipScreen(deps) {
+    const FIP_STREAM_SUFFIXES = ["radiofrance.fr"];
+    function sanitizeFipStreamSrc(raw) {
+      const s = String(raw || "").trim();
+      if (!s) {
+        return "";
+      }
+      try {
+        const u = new URL(s);
+        if (u.protocol !== "https:" && u.protocol !== "http:") {
+          return "";
+        }
+        const h = u.hostname.toLowerCase();
+        for (const suf of FIP_STREAM_SUFFIXES) {
+          if (h === suf || h.endsWith(`.${suf}`)) {
+            return u.href;
+          }
+        }
+        return "";
+      } catch {
+        return "";
+      }
+    }
+
     const state = deps.state;
     const dom = deps.dom || {};
     const escapeHtml = deps.escapeHtml;
@@ -724,7 +747,7 @@
           return;
         }
         const option = dom.stationSelect.options[dom.stationSelect.selectedIndex];
-        const streamUrl = (option && option.getAttribute("data-stream-url")) || "";
+        const streamUrl = sanitizeFipStreamSrc((option && option.getAttribute("data-stream-url")) || "");
         if (!streamUrl) {
           return;
         }
@@ -741,7 +764,7 @@
 
       dom.stationSelect?.addEventListener("change", () => {
         const option = dom.stationSelect.options[dom.stationSelect.selectedIndex];
-        const streamUrl = (option && option.getAttribute("data-stream-url")) || "";
+        const streamUrl = sanitizeFipStreamSrc((option && option.getAttribute("data-stream-url")) || "");
         if (dom.liveAudio && !dom.liveAudio.paused) {
           dom.liveAudio.src = streamUrl;
           if (streamUrl) {
