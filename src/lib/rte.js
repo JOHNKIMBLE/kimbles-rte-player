@@ -24,7 +24,7 @@ function configure({ diskCache } = {}) {
 }
 
 const { cleanText, stripHtml, inferCadence } = require("./utils");
-const { assertUrlHostSuffixes } = require("./url-safety");
+const { fetchWithHostAllowlist } = require("./url-safety");
 
 function cleanTitle(title) {
   return cleanText(title).replace(/\s+-\s+[^-]+$/, "").trim();
@@ -343,8 +343,7 @@ function getEpisodesJsonUrl(programUrl, page = 1) {
 }
 
 async function fetchText(url) {
-  const safe = assertUrlHostSuffixes(url, ["rte.ie", "rasset.ie"], "RTÉ");
-  const response = await fetch(safe, {
+  const response = await fetchWithHostAllowlist(url, ["rte.ie", "rasset.ie"], "RTÉ", {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -358,8 +357,7 @@ async function fetchText(url) {
 }
 
 async function fetchJson(url) {
-  const safe = assertUrlHostSuffixes(url, ["rte.ie", "rasset.ie"], "RTÉ");
-  const response = await fetch(safe, {
+  const response = await fetchWithHostAllowlist(url, ["rte.ie", "rasset.ie"], "RTÉ", {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }

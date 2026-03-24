@@ -19,7 +19,7 @@ const episodesCache = {
 };
 
 const { decodeHtml, cleanText, stripHtml } = require("./utils");
-const { assertUrlHostSuffixes } = require("./url-safety");
+const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./url-safety");
 const { parseWwfScheduleJsonSlice } = require("./wwf-schedule-json");
 
 const WWF_FETCH_SUFFIXES = ["worldwidefm.net", "mixcloud.com", "cosmicjs.com", "radiocult.fm"];
@@ -428,34 +428,19 @@ function parsePublishedFromMeta(text) {
 }
 
 async function fetchText(url) {
-  const safe = assertUrlHostSuffixes(url, WWF_FETCH_SUFFIXES, "Worldwide FM");
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-GB,en;q=0.9"
   };
   if (typeof fetch !== "undefined") {
-    const response = await fetch(safe, { headers });
+    const response = await fetchWithHostAllowlist(url, WWF_FETCH_SUFFIXES, "Worldwide FM", { headers });
     if (!response.ok) {
       throw new Error(`Failed to load Worldwide FM: ${response.status} ${response.statusText}`);
     }
     return response.text();
   }
-  return new Promise((resolve, reject) => {
-    const u = new URL(safe);
-    const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(safe, { headers }, (res) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`Failed to load Worldwide FM: ${res.statusCode} ${res.statusMessage}`));
-        return;
-      }
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-      res.on("error", reject);
-    });
-    req.on("error", reject);
-  });
+  return httpGetWithHostAllowlist(url, WWF_FETCH_SUFFIXES, "Worldwide FM", headers);
 }
 
 /** Return true if value looks like a raw Cosmic CMS MongoDB ObjectID (hex string ≥20 chars). */

@@ -132,6 +132,43 @@ function canonicalizeRteProxyTarget(inputUrl, isAllowedFn) {
   return parseHttpUrl(inputUrl).toString();
 }
 
+/**
+ * Outbound fetch with hostname allowlist (assert + fetch in one call for analyzers).
+ */
+async function fetchWithHostAllowlist(urlString, suffixes, label, init) {
+  return fetch(assertUrlHostSuffixes(urlString, suffixes, label), init || {});
+}
+
+/**
+ * Outbound fetch after outbound-http rules (CDN / tracklist / cover art).
+ */
+async function fetchWithOutboundAssert(urlString, label, init) {
+  return fetch(assertOutboundHttpUrl(urlString, label), init || {});
+}
+
+async function fetchWithGenericWebhookAssert(urlString, init) {
+  return fetch(assertGenericNotificationWebhookUrl(urlString), init || {});
+}
+
+function httpGetWithHostAllowlist(urlString, suffixes, label, headers) {
+  const href = assertUrlHostSuffixes(urlString, suffixes, label);
+  return new Promise((resolve, reject) => {
+    const u = new URL(href);
+    const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
+    const req = mod.get(href, { headers }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        reject(new Error(`HTTP ${res.statusCode} ${res.statusMessage || ""}`.trim()));
+        return;
+      }
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+  });
+}
+
 module.exports = {
   isSsrfBlockedHostname,
   assertOutboundHttpUrl,
@@ -141,5 +178,9 @@ module.exports = {
   assertNtfyTopicUrl,
   canonicalizeRteProxyTarget,
   hostMatchesSuffix,
-  hostMatchesAnySuffix
+  hostMatchesAnySuffix,
+  fetchWithHostAllowlist,
+  fetchWithOutboundAssert,
+  fetchWithGenericWebhookAssert,
+  httpGetWithHostAllowlist
 };

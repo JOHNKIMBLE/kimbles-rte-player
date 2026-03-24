@@ -3,7 +3,13 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 const { resolveBundledFfmpegDir } = require("./downloader");
-const { assertOutboundHttpUrl, assertUrlHostSuffixes, hostMatchesSuffix } = require("./url-safety");
+const {
+  assertOutboundHttpUrl,
+  assertUrlHostSuffixes,
+  hostMatchesSuffix,
+  fetchWithHostAllowlist,
+  fetchWithOutboundAssert
+} = require("./url-safety");
 const { cleanText, stripHtml } = require("./utils");
 
 function getVendorRootCandidates() {
@@ -442,8 +448,7 @@ async function tryExternalTracklist(tracklistUrl) {
       return [];
     }
   } catch {}
-  const safe = assertOutboundHttpUrl(url, "Tracklist URL");
-  const response = await fetch(safe, {
+  const response = await fetchWithOutboundAssert(url, "Tracklist URL", {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -978,8 +983,7 @@ async function fetchHlsManifestInfo(manifestUrl, depth = 0) {
     return HLS_MANIFEST_CACHE.get(cacheKey);
   }
   const promise = (async () => {
-    const safe = assertOutboundHttpUrl(url, "HLS manifest URL");
-    const response = await fetch(safe, {
+    const response = await fetchWithOutboundAssert(url, "HLS manifest URL", {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       }
@@ -988,6 +992,7 @@ async function fetchHlsManifestInfo(manifestUrl, depth = 0) {
       throw new Error(`HLS manifest fetch failed: ${response.status} ${response.statusText}`);
     }
     const text = await response.text();
+    const safe = assertOutboundHttpUrl(url, "HLS manifest URL");
     const parsed = parseM3u8Manifest(text, safe);
     if (parsed.segments.length) {
       const segmentStarts = [];
@@ -1569,12 +1574,12 @@ async function searchCommonTracklistSites(query, extraQueries = []) {
 
   for (const searchUrl of candidates) {
     try {
-      const searchSafe = assertUrlHostSuffixes(searchUrl, ["1001tracklists.com", "mixesdb.com"], "Tracklist search");
-      const response = await fetch(searchSafe, {
+      const response = await fetchWithHostAllowlist(searchUrl, ["1001tracklists.com", "mixesdb.com"], "Tracklist search", {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
       });
+      const searchSafe = assertUrlHostSuffixes(searchUrl, ["1001tracklists.com", "mixesdb.com"], "Tracklist search");
       if (!response.ok) {
         continue;
       }
