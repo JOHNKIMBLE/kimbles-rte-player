@@ -1,20 +1,8 @@
 const path = require("node:path");
+const { decodeHtml } = require("./utils");
 
 function sanitizePathSegment(input) {
-  const decoded = String(input || "")
-    .replace(/&#(\d+);/g, (_m, num) => {
-      const code = Number(num);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex) => {
-      const code = Number.parseInt(hex, 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
-    })
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&#039;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+  const decoded = decodeHtml(String(input || ""));
 
   return decoded
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")

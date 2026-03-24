@@ -58,16 +58,20 @@ const FETCH_HEADERS = {
   "Accept": "application/json"
 };
 
+const { assertUrlHostSuffixes } = require("./url-safety");
+const KEXP_FETCH_SUFFIXES = ["kexp.org", "cloudfront.net", "splixer.com", "tkatlabs.com", "streamguys1.com"];
+
 async function fetchJson(url) {
+  const safe = assertUrlHostSuffixes(url, KEXP_FETCH_SUFFIXES, "KEXP");
   if (typeof fetch !== "undefined") {
-    const res = await fetch(url, { headers: FETCH_HEADERS });
+    const res = await fetch(safe, { headers: FETCH_HEADERS });
     if (!res.ok) throw new Error(`KEXP API ${res.status} for ${url}`);
     return res.json();
   }
   return new Promise((resolve, reject) => {
-    const u = new URL(url);
+    const u = new URL(safe);
     const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(url, { headers: FETCH_HEADERS }, (res) => {
+    const req = mod.get(safe, { headers: FETCH_HEADERS }, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
         reject(new Error(`KEXP API ${res.statusCode} for ${url}`));
         return;
@@ -708,21 +712,23 @@ async function getKexpEpisodeStream(episodeUrl, _runYtDlpJson, startTime) {
     const cfUrl = cloudfrontUrlFromTs(resolvedStartTime);
     if (cfUrl) {
       try {
-        const probe = await fetch(cfUrl, {
+        const cfSafe = assertUrlHostSuffixes(cfUrl, KEXP_FETCH_SUFFIXES, "KEXP archive");
+        const probe = await fetch(cfSafe, {
           method: "GET",
           headers: { Range: "bytes=0-0" }
         }).catch(() => null);
         if (probe && (probe.ok || probe.status === 206)) {
           await probe.body?.cancel().catch(() => {});
-          return { streamUrl: cfUrl, startOffset: 0, title: "", duration: null };
+          return { streamUrl: cfSafe, startOffset: 0, title: "", duration: null };
         }
       } catch {}
     }
     throw new Error("KEXP: no archive recording available for this show.");
   }
 
+  const sgSafe = assertUrlHostSuffixes(sgUrl, KEXP_FETCH_SUFFIXES, "KEXP stream");
   return {
-    streamUrl: sgUrl,
+    streamUrl: sgSafe,
     startOffset: Number(streamData["sg-offset"] || 0),
     title: "",
     duration: null

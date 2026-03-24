@@ -3,6 +3,7 @@
  * Run: node scripts/inspect-wwf-json.js
  */
 const https = require("https");
+const { parseWwfScheduleJsonSlice } = require("../src/lib/wwf-schedule-json");
 const BASE = "https://www.worldwidefm.net";
 
 function fetch(url) {
@@ -99,8 +100,7 @@ async function main() {
   if (scheduleStart >= 0) {
     const end = scheduleHtml.indexOf("}]", scheduleStart);
     const raw = scheduleHtml.slice(scheduleStart, end + 2);
-    const unescaped = raw.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-    const arr = JSON.parse(unescaped);
+    const arr = parseWwfScheduleJsonSlice(raw);
     console.log("\n=== SCHEDULE first object keys ===");
     console.log(Object.keys(arr[0] || {}));
   }

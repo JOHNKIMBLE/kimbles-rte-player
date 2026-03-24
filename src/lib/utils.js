@@ -1,11 +1,25 @@
 // Shared utilities used across all source lib files (rte, bbc, nts, worldwidefm, fip).
 
 /**
- * Decode HTML entities. Uses the most complete set of entities across all sources
- * (superset of what any individual lib previously handled).
+ * Decode HTML entities. Numeric references run before named entities so nested forms
+ * resolve in one pass (shared across libs to avoid duplicate decode chains).
  */
 function decodeHtml(input) {
   return String(input || "")
+    .replace(/&#x([0-9a-fA-F]+);/gi, (match, hex) => {
+      const code = Number.parseInt(hex, 16);
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
+        return match;
+      }
+      return String.fromCodePoint(code);
+    })
+    .replace(/&#(\d+);/g, (match, num) => {
+      const code = Number(num);
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
+        return match;
+      }
+      return String.fromCodePoint(code);
+    })
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
@@ -13,12 +27,12 @@ function decodeHtml(input) {
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
     .replace(/&ndash;/g, "\u2013")
     .replace(/&mdash;/g, "\u2014")
     .replace(/&rsquo;/g, "\u2019")
     .replace(/&lsquo;/g, "\u2018")
-    .replace(/&hellip;/g, "\u2026")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+    .replace(/&hellip;/g, "\u2026");
 }
 
 /** Decode HTML entities and collapse whitespace. */
@@ -26,9 +40,27 @@ function cleanText(input) {
   return decodeHtml(String(input || "")).replace(/\s+/g, " ").trim();
 }
 
-/** Strip HTML tags and collapse whitespace. */
+/** Strip HTML tags and collapse whitespace (linear scan; avoids ReDoS-prone tag regex). */
 function stripHtml(input) {
-  return String(input || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const s = String(input || "");
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const lt = s.indexOf("<", i);
+    if (lt < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, lt);
+    const gt = s.indexOf(">", lt + 1);
+    if (gt < 0) {
+      out += s.slice(lt);
+      break;
+    }
+    i = gt + 1;
+    out += " ";
+  }
+  return out.replace(/\s+/g, " ").trim();
 }
 
 /**

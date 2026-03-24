@@ -1,4 +1,4 @@
-﻿const LIVE_STATIONS = [
+const LIVE_STATIONS = [
   { id: 1, slug: "2fm", name: "RTÉ 2FM", stationUrl: "https://www.rte.ie/radio/2fm/" },
   { id: 9, slug: "radio1", name: "RTÉ Radio 1", stationUrl: "https://www.rte.ie/radio/radio1/" },
   { id: 16, slug: "lyricfm", name: "RTÉ lyric fm", stationUrl: "https://www.rte.ie/radio/lyricfm/" },
@@ -24,6 +24,7 @@ function configure({ diskCache } = {}) {
 }
 
 const { cleanText, stripHtml, inferCadence } = require("./utils");
+const { assertUrlHostSuffixes } = require("./url-safety");
 
 function cleanTitle(title) {
   return cleanText(title).replace(/\s+-\s+[^-]+$/, "").trim();
@@ -342,7 +343,8 @@ function getEpisodesJsonUrl(programUrl, page = 1) {
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, {
+  const safe = assertUrlHostSuffixes(url, ["rte.ie", "rasset.ie"], "RTÉ");
+  const response = await fetch(safe, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -356,7 +358,8 @@ async function fetchText(url) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, {
+  const safe = assertUrlHostSuffixes(url, ["rte.ie", "rasset.ie"], "RTÉ");
+  const response = await fetch(safe, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
