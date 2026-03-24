@@ -94,6 +94,14 @@ const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSche
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
+  assertDiscordWebhookUrl,
+  assertGenericNotificationWebhookUrl,
+  assertNtfyTopicUrl,
+  canonicalizeRteProxyTarget,
+  hostMatchesAnySuffix
+} = require("./lib/url-safety");
+const { createMutationRateLimiter } = require("./lib/http-rate-limit");
+const {
   buildMetadataIndex,
   buildScheduleMetadataDocs,
   buildFeedMetadataDocs,
@@ -130,6 +138,7 @@ const { runVendorBootstrap } = require("./lib/vendor-bootstrap");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+app.use(createMutationRateLimiter({ windowMs: 60_000, maxRequests: 500 }));
 const rendererDir = path.join(__dirname, "renderer");
 app.use(express.static(rendererDir));
 app.use("/build", express.static(path.join(__dirname, "..", "build")));
@@ -322,7 +331,7 @@ function inferProgramNameFromUrl(inputUrl) {
     if (parts[0] === "radio" && parts.length >= 3) {
       return parts[2].replace(/-/g, " ");
     }
-    if (parsed.hostname.includes("bbc.")) {
+    if (hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
       return "BBC";
     }
   } catch {
@@ -1091,7 +1100,6 @@ async function downloadFromManifest({
     hosts: postProcess?.hosts
   });
   const settings = resolvedTarget.settings;
-  const rule = resolvedTarget.rule;
   const target = resolvedTarget.target;
   const outputDir = target.outputDir;
   fs.mkdirSync(outputDir, { recursive: true });
@@ -1911,15 +1919,35 @@ async function sendNotificationsIfConfigured(payload) {
   const body = payload && typeof payload === "object" ? payload : {};
   const text = formatNotificationText(body);
   const jobs = [];
-  if (webhookUrl) {
-    jobs.push(fetch(webhookUrl, {
+
+  let safeWebhook = "";
+  let safeDiscord = "";
+  let safeNtfy = "";
+  try {
+    if (webhookUrl) safeWebhook = assertGenericNotificationWebhookUrl(webhookUrl);
+  } catch {
+    safeWebhook = "";
+  }
+  try {
+    if (discordWebhookUrl) safeDiscord = assertDiscordWebhookUrl(discordWebhookUrl);
+  } catch {
+    safeDiscord = "";
+  }
+  try {
+    if (ntfyTopicUrl) safeNtfy = assertNtfyTopicUrl(ntfyTopicUrl);
+  } catch {
+    safeNtfy = "";
+  }
+
+  if (safeWebhook) {
+    jobs.push(fetch(safeWebhook, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }).catch(() => null));
   }
-  if (discordWebhookUrl) {
-    jobs.push(fetch(discordWebhookUrl, {
+  if (safeDiscord) {
+    jobs.push(fetch(safeDiscord, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1937,8 +1965,8 @@ async function sendNotificationsIfConfigured(payload) {
       })
     }).catch(() => null));
   }
-  if (ntfyTopicUrl) {
-    jobs.push(fetch(ntfyTopicUrl, {
+  if (safeNtfy) {
+    jobs.push(fetch(safeNtfy, {
       method: "POST",
       headers: {
         Title: String(body.title || body.programTitle || body.event || "Kimble"),
@@ -2664,9 +2692,7 @@ app.get("/api/rte/stream-proxy", async (req, res) => {
     if (!targetUrl) {
       throw new Error("url is required.");
     }
-    if (!isAllowedRteProxyUrl(targetUrl)) {
-      throw new Error("Proxy target host is not allowed.");
-    }
+    const safeTarget = canonicalizeRteProxyTarget(targetUrl, isAllowedRteProxyUrl);
 
     const headers = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -2676,7 +2702,7 @@ app.get("/api/rte/stream-proxy", async (req, res) => {
       headers.Range = reqRange;
     }
 
-    const upstream = await fetch(targetUrl, { headers });
+    const upstream = await fetch(safeTarget, { headers });
     if (!upstream.ok && upstream.status !== 206) {
       const bodyText = await upstream.text().catch(() => "");
       res.status(upstream.status).send(bodyText || `Upstream error: ${upstream.status}`);
@@ -2684,10 +2710,10 @@ app.get("/api/rte/stream-proxy", async (req, res) => {
     }
 
     const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
-    const isManifest = contentType.includes("mpegurl") || /\.m3u8($|[?#])/i.test(targetUrl);
+    const isManifest = contentType.includes("mpegurl") || /\.m3u8($|[?#])/i.test(safeTarget);
     if (isManifest) {
       const text = await upstream.text();
-      const rewritten = rewriteHlsManifest(text, targetUrl);
+      const rewritten = rewriteHlsManifest(text, safeTarget);
       res.status(upstream.status);
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
       res.setHeader("Cache-Control", "no-store");

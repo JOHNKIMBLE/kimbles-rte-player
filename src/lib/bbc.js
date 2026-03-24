@@ -17,6 +17,7 @@ const bbcDiscoveryTermsCache = {
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const { decodeHtml, cleanText, stripHtml, inferCadence } = require("./utils");
+const { assertUrlHostSuffixes } = require("./url-safety");
 
 function normalizeBbcUrl(inputUrl) {
   const parsed = new URL(String(inputUrl || "").trim());
@@ -91,7 +92,8 @@ function mapEpisode(entry, index) {
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, {
+  const safe = assertUrlHostSuffixes(url, ["bbc.co.uk", "bbc.com"], "BBC");
+  const response = await fetch(safe, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -105,7 +107,8 @@ async function fetchText(url) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, {
+  const safe = assertUrlHostSuffixes(url, ["bbc.co.uk", "bbc.com"], "BBC");
+  const response = await fetch(safe, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }

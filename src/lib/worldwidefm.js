@@ -19,6 +19,10 @@ const episodesCache = {
 };
 
 const { decodeHtml, cleanText, stripHtml } = require("./utils");
+const { assertUrlHostSuffixes } = require("./url-safety");
+const { parseWwfScheduleJsonSlice } = require("./wwf-schedule-json");
+
+const WWF_FETCH_SUFFIXES = ["worldwidefm.net", "mixcloud.com", "cosmicjs.com", "radiocult.fm"];
 
 /**
  * Parse RSC (React Server Components) payloads from Next.js pages.
@@ -424,22 +428,23 @@ function parsePublishedFromMeta(text) {
 }
 
 async function fetchText(url) {
+  const safe = assertUrlHostSuffixes(url, WWF_FETCH_SUFFIXES, "Worldwide FM");
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-GB,en;q=0.9"
   };
   if (typeof fetch !== "undefined") {
-    const response = await fetch(url, { headers });
+    const response = await fetch(safe, { headers });
     if (!response.ok) {
       throw new Error(`Failed to load Worldwide FM: ${response.status} ${response.statusText}`);
     }
     return response.text();
   }
   return new Promise((resolve, reject) => {
-    const u = new URL(url);
+    const u = new URL(safe);
     const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(url, { headers }, (res) => {
+    const req = mod.get(safe, { headers }, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`Failed to load Worldwide FM: ${res.statusCode} ${res.statusMessage}`));
         return;
@@ -494,14 +499,7 @@ function parseWwfScheduleFromHtml(html) {
   if (startIdx < 0) return [];
   const endIdx = html.indexOf("}]", startIdx);
   if (endIdx <= startIdx) return [];
-  const raw = html.slice(startIdx, endIdx + 2);
-  const unescaped = raw.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-  try {
-    const arr = JSON.parse(unescaped);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
+  return parseWwfScheduleJsonSlice(html.slice(startIdx, endIdx + 2));
 }
 
 const scheduleEpisodesCache = { fetchedAt: 0, episodes: [], TTL_MS: 1000 * 60 * 5 };

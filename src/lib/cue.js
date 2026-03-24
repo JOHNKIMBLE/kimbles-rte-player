@@ -3,6 +3,8 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 const { resolveBundledFfmpegDir } = require("./downloader");
+const { assertOutboundHttpUrl, assertUrlHostSuffixes, hostMatchesSuffix } = require("./url-safety");
+const { cleanText, stripHtml } = require("./utils");
 
 function getVendorRootCandidates() {
   const projectRoot = path.resolve(__dirname, "..", "..");
@@ -17,10 +19,6 @@ function getVendorRootCandidates() {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-function cleanText(input) {
-  return decodeHtmlEntities(String(input || "")).replace(/\s+/g, " ").trim();
-}
-
 function emitProgress(callback, payload = {}) {
   if (typeof callback !== "function") {
     return;
@@ -33,27 +31,34 @@ function emitProgress(callback, payload = {}) {
   } catch {}
 }
 
-function decodeHtmlEntities(input) {
-  return String(input || "")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => {
-      const code = Number.parseInt(hex, 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
-    })
-    .replace(/&#([0-9]+);/g, (_match, dec) => {
-      const code = Number.parseInt(dec, 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
-    })
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&#039;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+function sanitizeCueText(input) {
+  return cleanText(input).replace(/"/g, "'");
 }
 
-function sanitizeCueText(input) {
-  return cleanText(decodeHtmlEntities(input)).replace(/"/g, "'");
+/** Remove paired tags (script/style) without unbounded backtracking. */
+function stripBalancedHtmlBlock(html, openNeedle, closeNeedle) {
+  const s = String(html || "");
+  const open = openNeedle.toLowerCase();
+  const close = closeNeedle.toLowerCase();
+  const lower = s.toLowerCase();
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const start = lower.indexOf(open, i);
+    if (start < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, start);
+    const end = lower.indexOf(close, start + open.length);
+    if (end < 0) {
+      out += "\n";
+      break;
+    }
+    out += "\n";
+    i = end + close.length;
+  }
+  return out;
 }
 
 function parseDurationToSeconds(input) {
@@ -332,13 +337,12 @@ function parseTrackLinesWithTimes(lines) {
 }
 
 function htmlToCandidateLines(html) {
-  const text = String(html || "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "\n")
-    .replace(/<style[\s\S]*?<\/style>/gi, "\n")
+  let text = stripBalancedHtmlBlock(stripBalancedHtmlBlock(String(html || ""), "<script", "</script>"), "<style", "</style>");
+  text = text
     .replace(/<\/(?:li|tr|p|div|h\d)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ");
-  return decodeHtmlEntities(text)
+    .replace(/<br\s*\/?>/gi, "\n");
+  text = stripHtml(text);
+  return text
     .split(/\r?\n/g)
     .map((line) => cleanText(line))
     .filter(Boolean);
@@ -410,7 +414,7 @@ function dedupeTracksWithTimes(tracks) {
 
 function parseExternalTracklistHtml(url, html) {
   const host = String(new URL(url).hostname || "").toLowerCase();
-  if (host.includes("trackid.net")) {
+  if (hostMatchesSuffix(host, "trackid.net")) {
     return [];
   }
   const lines = htmlToCandidateLines(html);
@@ -421,7 +425,7 @@ function parseExternalTracklistHtml(url, html) {
     return merged;
   }
   // Host-specific extra pass can be extended later if needed.
-  if (host.includes("mixesdb") || host.includes("1001tracklists")) {
+  if (hostMatchesSuffix(host, "mixesdb.com") || hostMatchesSuffix(host, "1001tracklists.com")) {
     return dedupeTracksWithTimes(parseTrackLinesWithTimes(lines));
   }
   return [];
@@ -434,11 +438,12 @@ async function tryExternalTracklist(tracklistUrl) {
   }
   try {
     const host = String(new URL(url).hostname || "").toLowerCase();
-    if (host.includes("trackid.net")) {
+    if (hostMatchesSuffix(host, "trackid.net")) {
       return [];
     }
   } catch {}
-  const response = await fetch(url, {
+  const safe = assertOutboundHttpUrl(url, "Tracklist URL");
+  const response = await fetch(safe, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -463,7 +468,7 @@ function normalizeLink(href, baseUrl) {
 }
 
 function normalizeTrackKey(value) {
-  return cleanText(decodeHtmlEntities(value || ""))
+  return cleanText(value || "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
@@ -797,12 +802,12 @@ function extractAudioSnippetToWav(audioPath, startSeconds, durationSeconds, outF
     try {
       const remoteUrl = new URL(String(audioPath || ""));
       const host = String(remoteUrl.hostname || "").toLowerCase();
-      if (host.includes("rasset.ie") || host.includes("rte.ie")) {
+      if (hostMatchesSuffix(host, "rasset.ie") || hostMatchesSuffix(host, "rte.ie")) {
         remoteRequestArgs = [
           "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           "-headers", "Referer: https://www.rte.ie/\r\nOrigin: https://www.rte.ie\r\n"
         ];
-      } else if (host.includes("bbc.co.uk") || host.includes("bbc.com")) {
+      } else if (hostMatchesSuffix(host, "bbc.co.uk") || hostMatchesSuffix(host, "bbc.com")) {
         remoteRequestArgs = [
           "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           "-headers", "Referer: https://www.bbc.co.uk/\r\nOrigin: https://www.bbc.co.uk\r\n"
@@ -973,7 +978,8 @@ async function fetchHlsManifestInfo(manifestUrl, depth = 0) {
     return HLS_MANIFEST_CACHE.get(cacheKey);
   }
   const promise = (async () => {
-    const response = await fetch(url, {
+    const safe = assertOutboundHttpUrl(url, "HLS manifest URL");
+    const response = await fetch(safe, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       }
@@ -982,7 +988,7 @@ async function fetchHlsManifestInfo(manifestUrl, depth = 0) {
       throw new Error(`HLS manifest fetch failed: ${response.status} ${response.statusText}`);
     }
     const text = await response.text();
-    const parsed = parseM3u8Manifest(text, url);
+    const parsed = parseM3u8Manifest(text, safe);
     if (parsed.segments.length) {
       const segmentStarts = [];
       let running = 0;
@@ -991,7 +997,7 @@ async function fetchHlsManifestInfo(manifestUrl, depth = 0) {
         running += Number(segment.duration || 0);
       }
       return {
-        manifestUrl: url,
+        manifestUrl: safe,
         segmentCount: parsed.segments.length,
         durationSeconds: Math.max(0, Math.floor(running)),
         segmentStarts
@@ -1563,7 +1569,8 @@ async function searchCommonTracklistSites(query, extraQueries = []) {
 
   for (const searchUrl of candidates) {
     try {
-      const response = await fetch(searchUrl, {
+      const searchSafe = assertUrlHostSuffixes(searchUrl, ["1001tracklists.com", "mixesdb.com"], "Tracklist search");
+      const response = await fetch(searchSafe, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -1573,7 +1580,7 @@ async function searchCommonTracklistSites(query, extraQueries = []) {
       }
       const html = await response.text();
       const hrefs = Array.from(html.matchAll(/href=["']([^"']+)["']/gi))
-        .map((match) => normalizeLink(match[1], searchUrl))
+        .map((match) => normalizeLink(match[1], searchSafe))
         .filter((href) => /1001tracklists\.com\/tracklist\/|mixesdb\.com\/w\//i.test(href));
       const uniq = Array.from(new Set(hrefs)).slice(0, 8);
       for (const url of uniq) {
