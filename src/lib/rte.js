@@ -24,7 +24,7 @@ function configure({ diskCache } = {}) {
 }
 
 const { cleanText, stripHtml, inferCadence } = require("./utils");
-const { fetchWithHostAllowlist } = require("./url-safety");
+const { fetchWithHostAllowlist } = require("./outbound-http");
 
 function cleanTitle(title) {
   return cleanText(title).replace(/\s+-\s+[^-]+$/, "").trim();

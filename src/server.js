@@ -94,13 +94,15 @@ const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSche
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
-  assertDiscordWebhookUrl,
-  assertGenericNotificationWebhookUrl,
-  assertNtfyTopicUrl,
-  canonicalizeRteProxyTarget,
   hostMatchesAnySuffix
 } = require("./lib/url-safety");
-const { createMutationRateLimiter } = require("./lib/http-rate-limit");
+const {
+  fetchWithGenericWebhookAssert,
+  fetchDiscordWebhookAssert,
+  fetchNtfyAssert,
+  fetchRteProxyUpstream
+} = require("./lib/outbound-http");
+const { createMutationRateLimiter, createGlobalRateLimiter } = require("./lib/http-rate-limit");
 const {
   buildMetadataIndex,
   buildScheduleMetadataDocs,
@@ -137,6 +139,7 @@ const { collectRuntimeDiagnostics } = require("./lib/runtime-diagnostics");
 const { runVendorBootstrap } = require("./lib/vendor-bootstrap");
 
 const app = express();
+app.use(createGlobalRateLimiter({ windowMs: 60_000, maxRequests: 5000 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(createMutationRateLimiter({ windowMs: 60_000, maxRequests: 500 }));
 const rendererDir = path.join(__dirname, "renderer");
@@ -1922,7 +1925,7 @@ async function sendNotificationsIfConfigured(payload) {
 
   if (webhookUrl) {
     try {
-      jobs.push(fetch(assertGenericNotificationWebhookUrl(webhookUrl), {
+      jobs.push(fetchWithGenericWebhookAssert(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -1933,7 +1936,7 @@ async function sendNotificationsIfConfigured(payload) {
   }
   if (discordWebhookUrl) {
     try {
-      jobs.push(fetch(assertDiscordWebhookUrl(discordWebhookUrl), {
+      jobs.push(fetchDiscordWebhookAssert(discordWebhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1956,7 +1959,7 @@ async function sendNotificationsIfConfigured(payload) {
   }
   if (ntfyTopicUrl) {
     try {
-      jobs.push(fetch(assertNtfyTopicUrl(ntfyTopicUrl), {
+      jobs.push(fetchNtfyAssert(ntfyTopicUrl, {
         method: "POST",
         headers: {
           Title: String(body.title || body.programTitle || body.event || "Kimble"),
@@ -2347,8 +2350,8 @@ app.get("/api/wwf/ytdlp-pipe", (req, res) => {
   let child;
   try {
     child = spawnYtDlpPipe(url);
-  } catch (error) {
-    return res.status(503).json({ error: String(error?.message || error || "yt-dlp pipe failed") });
+  } catch {
+    return res.status(503).json({ error: "yt-dlp pipe failed" });
   }
   res.setHeader("Content-Type", "audio/mpeg");
   res.setHeader("Transfer-Encoding", "chunked");
@@ -2685,8 +2688,6 @@ app.get("/api/rte/stream-proxy", async (req, res) => {
     if (!targetUrl) {
       throw new Error("url is required.");
     }
-    const safeTarget = canonicalizeRteProxyTarget(targetUrl, isAllowedRteProxyUrl);
-
     const headers = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     };
@@ -2695,7 +2696,7 @@ app.get("/api/rte/stream-proxy", async (req, res) => {
       headers.Range = reqRange;
     }
 
-    const upstream = await fetch(safeTarget, { headers });
+    const { response: upstream, href: safeTarget } = await fetchRteProxyUpstream(targetUrl, isAllowedRteProxyUrl, { headers });
     if (!upstream.ok && upstream.status !== 206) {
       const bodyText = await upstream.text().catch(() => "");
       res.status(upstream.status).send(bodyText || `Upstream error: ${upstream.status}`);

@@ -161,7 +161,8 @@ const FETCH_HEADERS = {
 const FIP_SUMMARY_CACHE_VER = 2;
 
 const { cleanText, stripHtml } = require("./utils");
-const { assertUrlHostSuffixes, fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./url-safety");
+const { assertUrlHostSuffixes } = require("./url-safety");
+const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 
 const FIP_FETCH_SUFFIXES = ["radiofrance.fr"];
 
