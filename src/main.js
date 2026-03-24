@@ -87,7 +87,7 @@ const { buildDownloadTarget, sanitizePathSegment } = require("./lib/path-format"
 const { createDownloadQueue } = require("./lib/download-queue");
 const { applyId3Tags } = require("./lib/tags");
 const { enforceDownloadRules, isLikelyRerun } = require("./lib/download-rules");
-const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
+const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSchedules } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
@@ -98,7 +98,8 @@ const {
   sortMetadataDocs,
   searchMetadataIndex,
   discoverMetadataIndex,
-  buildCollectionRecommendations
+  buildCollectionRecommendations,
+  buildSubscriptionDiscoveryRecommendations
 } = require("./lib/metadata-index");
 const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
 const { createCollectionsStore } = require("./lib/collections-store");
@@ -2866,6 +2867,47 @@ ipcMain.handle("download-history-clear", () => {
   return { ok: true };
 });
 ipcMain.handle("program-feeds-list", () => listAllProgramFeeds());
+
+async function executeProgramFeedsRefresh() {
+  try {
+    const result = await rebuildProgramFeedsFromSchedules({
+      feedExportEnabled: readSettings().feedExportEnabled,
+      getDataDir: feedDataDirFor,
+      sources: [
+        { sourceType: "rte", listSchedules: () => scheduler.list(), getEpisodes: (url, page) => getProgramEpisodes(url, page) },
+        { sourceType: "bbc", listSchedules: () => bbcScheduler.list(), getEpisodes: (url, page) => getBbcProgramEpisodes(url, runYtDlpJson, page) },
+        { sourceType: "wwf", listSchedules: () => wwfScheduler.list(), getEpisodes: (url, page) => getWwfProgramEpisodes(url, page) },
+        { sourceType: "nts", listSchedules: () => ntsScheduler.list(), getEpisodes: (url, page) => getNtsProgramEpisodes(url, page) },
+        { sourceType: "fip", listSchedules: () => fipScheduler.list(), getEpisodes: (url, page) => getFipProgramEpisodes(url, page) },
+        { sourceType: "kexp", listSchedules: () => kexpScheduler.list(), getEpisodes: (url, page) => getKexpProgramEpisodes(url, page) }
+      ]
+    });
+    if (result.ok && result.rebuilt > 0) {
+      patchMaterializedFeeds();
+      broadcastGlobalEvent({ type: "feeds.updated", source: "refresh", title: "", slug: "" });
+    }
+    return { ...result, feeds: listAllProgramFeeds() };
+  } catch (error) {
+    return {
+      ok: false,
+      rebuilt: 0,
+      errors: [],
+      message: String(error?.message || error || "Feed refresh failed"),
+      feeds: listAllProgramFeeds()
+    };
+  }
+}
+
+ipcMain.handle("program-feeds-refresh", () => executeProgramFeedsRefresh());
+
+ipcMain.handle("open-external-url", async (_event, url) => {
+  const target = String(url || "").trim();
+  if (!/^https?:\/\//i.test(target)) {
+    throw new Error("Only http(s) URLs can be opened.");
+  }
+  await shell.openExternal(target);
+  return { ok: true };
+});
 ipcMain.handle("metadata-search", async (_event, payload = {}) => {
   const snapshot = await ensureMaterializedMetadata();
   return searchMetadataIndex(snapshot.index, payload || {});
@@ -2896,6 +2938,10 @@ ipcMain.handle("metadata-discover", async (_event, payload = {}) => {
     allowStale: !forceRefresh
   });
   return discoverMetadataIndex(snapshot.index, payload || {});
+});
+ipcMain.handle("metadata-subscription-discovery", async (_event, payload = {}) => {
+  const snapshot = await ensureMaterializedMetadata();
+  return buildSubscriptionDiscoveryRecommendations(snapshot.index, payload || {});
 });
 ipcMain.handle("metadata-harvest-refresh", async () => {
   const items = await refreshMetadataHarvestCache(true);

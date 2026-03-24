@@ -152,7 +152,7 @@ const LIVE_NOW_TTL = 1000 * 30; // 30s — matches renderer poll interval
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json, text/html, */*",
-  "Accept-Language": "fr,en;q=0.9"
+  "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.85,fr;q=0.4"
 };
 
 const { cleanText, stripHtml } = require("./utils");
@@ -222,23 +222,42 @@ async function fetchText(url) {
 
 /**
  * Parse a French airtime string (e.g. "Tous les jours à 19h") into
- * English display text, cadence, and UTC runSchedule ("HH:MM").
+ * English display text, cadence, legacy UTC runSchedule ("HH:MM"),
+ * and schedulerRunSchedule ("Mon • 18:00 - 20:00") for the shared scheduler window parser.
  */
+const FIP_DAY_LABEL_TO_SCHEDULER = {
+  "Mon\u2013Fri": "Mon - Fri",
+  "Mon\u2013Thu": "Mon - Thu",
+  "Mon\u2013Wed": "Mon - Wed",
+  "Tue\u2013Fri": "Tue - Fri",
+  Weekends: "Sat - Sun",
+  Mondays: "Mon",
+  Tuesdays: "Tue",
+  Wednesdays: "Wed",
+  Thursdays: "Thu",
+  Fridays: "Fri",
+  Saturdays: "Sat",
+  Sundays: "Sun"
+};
+
 function parseFipAirtime(airtime) {
-  if (!airtime) return { english: "", cadence: "irregular", runSchedule: "" };
+  if (!airtime) {
+    return { english: "", cadence: "irregular", runSchedule: "", schedulerRunSchedule: "" };
+  }
   const s = String(airtime).toLowerCase().trim();
 
   // Extract hour/minute from "à Xh" or "à Xhxx"
   const hourMatch = s.match(/à\s*(\d{1,2})h(\d{2})?/);
   const localHour = hourMatch ? parseInt(hourMatch[1], 10) : null;
-  const localMin  = hourMatch && hourMatch[2] ? parseInt(hourMatch[2], 10) : 0;
+  const localMin = hourMatch && hourMatch[2] ? parseInt(hourMatch[2], 10) : 0;
 
   // Paris → UTC offset: rough DST (UTC+2 Apr-Oct, UTC+1 otherwise)
   let runSchedule = "";
+  let utcH = 0;
   if (localHour !== null) {
     const mo = new Date().getMonth() + 1;
     const parisOff = (mo >= 4 && mo <= 10) ? 2 : 1;
-    const utcH = (localHour - parisOff + 24) % 24;
+    utcH = (localHour - parisOff + 24) % 24;
     runSchedule = `${String(utcH).padStart(2, "0")}:${String(localMin).padStart(2, "0")}`;
   }
 
@@ -273,7 +292,22 @@ function parseFipAirtime(airtime) {
   }
 
   const english = engDay ? `${engDay}${engTime}` : (engTime ? engTime.trim() : airtime);
-  return { english, cadence, runSchedule };
+
+  let schedulerRunSchedule = "";
+  const dayToken = engDay ? FIP_DAY_LABEL_TO_SCHEDULER[engDay] : "";
+  if (dayToken && localHour !== null) {
+    const startUtcMins = utcH * 60 + localMin;
+    const endUtcMins = startUtcMins + 120;
+    const endH = Math.floor(endUtcMins / 60) % 24;
+    const endM = endUtcMins % 60;
+    const sh = String(utcH).padStart(2, "0");
+    const sm = String(localMin).padStart(2, "0");
+    const eh = String(endH).padStart(2, "0");
+    const em = String(endM).padStart(2, "0");
+    schedulerRunSchedule = `${dayToken} • ${sh}:${sm} - ${eh}:${em}`;
+  }
+
+  return { english, cadence, runSchedule, schedulerRunSchedule };
 }
 
 /** Normalize a FIP podcast show URL to canonical form. */
@@ -675,11 +709,13 @@ async function fetchFipShowList(useCache = true) {
  * Returns { uuid, title, description, image, genres }.
  */
 async function fetchShowMeta(slug) {
-  if (summaryCache.has(slug)) return summaryCache.get(slug);
+  if (summaryCache.has(slug)) {
+    return patchCachedFipMetaRunSchedule(summaryCache.get(slug));
+  }
   try {
     const { concept } = await fetchPageData(slug);
     if (concept && concept.title) {
-      const { english: airtimeEn, cadence, runSchedule } = parseFipAirtime(concept.airtime);
+      const { english: airtimeEn, cadence, runSchedule, schedulerRunSchedule } = parseFipAirtime(concept.airtime);
       const [titleEn, descEn, genresEn] = await Promise.all([
         translateFr(concept.title || ""),
         translateFr((concept.description || "").slice(0, 450)),
@@ -695,7 +731,7 @@ async function fetchShowMeta(slug) {
         airtime: concept.airtime || "",
         airtimeEn,
         cadence,
-        runSchedule
+        runSchedule: schedulerRunSchedule || runSchedule || ""
       };
       summaryCache.set(slug, meta);
       return meta;
@@ -703,6 +739,19 @@ async function fetchShowMeta(slug) {
   } catch {}
   const fallback = { uuid: "", title: slug.replace(/-/g, " "), description: "", image: "", genres: [], hosts: [], airtime: "", airtimeEn: "", cadence: "irregular", runSchedule: "" };
   return fallback;
+}
+
+function patchCachedFipMetaRunSchedule(meta) {
+  if (!meta || !meta.airtime) {
+    return meta;
+  }
+  const { cadence, runSchedule, schedulerRunSchedule } = parseFipAirtime(meta.airtime);
+  const line = schedulerRunSchedule || runSchedule || "";
+  if (line) {
+    meta.runSchedule = line;
+    meta.cadence = cadence || meta.cadence;
+  }
+  return meta;
 }
 
 async function getFipProgramSummary(showUrl) {

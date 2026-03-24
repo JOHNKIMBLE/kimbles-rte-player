@@ -147,10 +147,13 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   listDownloadHistory: () => ipcRenderer.invoke("download-history-list"),
   clearDownloadHistory: () => ipcRenderer.invoke("download-history-clear"),
   listProgramFeeds: () => ipcRenderer.invoke("program-feeds-list"),
+  refreshProgramFeeds: () => ipcRenderer.invoke("program-feeds-refresh"),
+  openExternalUrl: (url) => ipcRenderer.invoke("open-external-url", url),
   searchMetadataIndex: (payload = {}) => ipcRenderer.invoke("metadata-search", payload || {}),
   searchEntityGraph: (payload = {}) => ipcRenderer.invoke("entity-graph-search", payload || {}),
   getEntityGraphEntity: (payload = {}) => ipcRenderer.invoke("entity-graph-detail", payload || {}),
   discoverMetadataIndex: (payload = {}) => ipcRenderer.invoke("metadata-discover", payload || {}),
+  discoverSubscriptionPrograms: (payload = {}) => ipcRenderer.invoke("metadata-subscription-discovery", payload || {}),
   refreshMetadataHarvest: () => ipcRenderer.invoke("metadata-harvest-refresh"),
   refreshMetadataHarvestSource: (sourceType, options = {}) => ipcRenderer.invoke("metadata-harvest-refresh-source", {
     sourceType,

@@ -1,4 +1,4 @@
-﻿const quickUrlInput = document.getElementById("quickUrlInput");
+const quickUrlInput = document.getElementById("quickUrlInput");
 const quickDownloadBtn = document.getElementById("quickDownloadBtn");
 const quickResult = document.getElementById("quickResult");
 const quickLog = document.getElementById("quickLog");
@@ -795,6 +795,9 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     metadataIndexSaveHostsBtn,
     metadataIndexSaveEpisodesBtn,
     metadataHarvestRefreshBtn: document.getElementById("metadataHarvestRefreshBtn"),
+    subscriptionDiscoveryRefreshBtn: document.getElementById("subscriptionDiscoveryRefreshBtn"),
+    subscriptionDiscoverySummary: document.getElementById("subscriptionDiscoverySummary"),
+    subscriptionDiscoveryList: document.getElementById("subscriptionDiscoveryList"),
     metadataDiscoveryRefreshBtn: document.getElementById("metadataDiscoveryRefreshBtn"),
     metadataDiscoverySaveAllBtn,
     metadataDiscoverySaveHostsBtn,
@@ -852,6 +855,7 @@ const libraryScreen = window.KimbleLibraryScreen.create({
   formatLocalDateTime,
   createProgressToken,
   setSettingsStatus,
+  setButtonBusy,
   playFromDownloadedFile,
   queueDownloadedFile: (item) => playbackController?.enqueueQueueItem?.(item),
   sourceLabels: SOURCE_LABELS,
@@ -882,7 +886,16 @@ const schedulesScreen = window.KimbleSchedulesScreen.create({
   renderSchedulerCard,
   playFromDownloadedFile,
   sourceLabels: SOURCE_LABELS,
-  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target),
+  onHealthSourceNavigate: (sourceKey) => {
+    if (allSchedulesSourceFilter) {
+      allSchedulesSourceFilter.value = sourceKey;
+    }
+    appShell?.setActiveTab?.("schedules");
+    window.requestAnimationFrame(() => {
+      document.getElementById("subscriptionsSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 });
 const settingsScreen = window.KimbleSettingsScreen.create({
   state,

@@ -190,8 +190,79 @@ function listProgramFeedFiles({ dataDir, sourceType = "", publicBasePath = "" })
   return entries;
 }
 
+/**
+ * Re-write JSON/RSS feed files by re-fetching the latest episode page for each subscription.
+ * @param {{ feedExportEnabled: boolean, getDataDir: (sourceType: string) => string, sources: Array<{ sourceType: string, listSchedules: () => unknown[], getEpisodes: (programUrl: string, page?: number) => Promise<unknown> }> }} options
+ */
+async function rebuildProgramFeedsFromSchedules({ feedExportEnabled, getDataDir, sources, concurrency = 4 }) {
+  if (!feedExportEnabled) {
+    return {
+      ok: false,
+      rebuilt: 0,
+      errors: [],
+      message: "Turn on feed export in Settings to rebuild RSS/JSON feeds from subscriptions."
+    };
+  }
+
+  const errors = [];
+  let rebuilt = 0;
+  const jobs = [];
+  for (const row of sources || []) {
+    const sourceType = String(row?.sourceType || "").trim();
+    const listFn = row?.listSchedules;
+    const getEpisodes = row?.getEpisodes;
+    if (!sourceType || typeof listFn !== "function" || typeof getEpisodes !== "function") {
+      continue;
+    }
+    const dataDir = getDataDir(sourceType);
+    const schedules = listFn() || [];
+    for (const schedule of schedules) {
+      const programUrl = String(schedule?.programUrl || "").trim();
+      if (!programUrl) {
+        continue;
+      }
+      jobs.push({ sourceType, dataDir, schedule, getEpisodes });
+    }
+  }
+
+  const limit = Math.max(1, Math.min(12, Math.floor(Number(concurrency) || 4) || 4));
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < jobs.length) {
+      const i = nextIndex;
+      nextIndex += 1;
+      const { sourceType, dataDir, schedule, getEpisodes } = jobs[i];
+      const programUrl = String(schedule?.programUrl || "").trim();
+      try {
+        const latest = await getEpisodes(programUrl, 1);
+        writeProgramFeedFiles({ dataDir, schedule, latest });
+        rebuilt += 1;
+      } catch (error) {
+        errors.push({
+          sourceType,
+          title: String(schedule?.title || ""),
+          message: String(error?.message || error || "Unknown error")
+        });
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) || 1 }, () => worker()));
+
+  let message = "";
+  if (errors.length) {
+    message = `Rebuilt ${rebuilt} feed file(s); ${errors.length} subscription(s) could not be refreshed.`;
+  } else if (rebuilt > 0) {
+    message = `Rebuilt ${rebuilt} feed file(s) from current subscriptions.`;
+  } else {
+    message = "No subscriptions with a program URL to export.";
+  }
+
+  return { ok: true, rebuilt, errors, message };
+}
+
 module.exports = {
   ensureFeedDir,
   listProgramFeedFiles,
-  writeProgramFeedFiles
+  writeProgramFeedFiles,
+  rebuildProgramFeedsFromSchedules
 };

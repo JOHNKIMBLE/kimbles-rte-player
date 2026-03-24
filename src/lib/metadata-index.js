@@ -348,6 +348,41 @@ function discoverMetadataIndex(index, options = {}) {
   };
 }
 
+function getRecommendationKindBoost(kind) {
+  const safe = normalizeText(kind).toLowerCase();
+  if (safe === "host") return 20;
+  if (safe === "episode") return 18;
+  if (safe === "discovery") return 12;
+  if (safe === "feed") return 8;
+  if (safe === "subscription") return 6;
+  return 4;
+}
+
+function computeRecommendationScoreForRow(row, terms, queryTokens) {
+  const termList = Array.isArray(terms) ? terms : [];
+  const tokens = Array.isArray(queryTokens) ? queryTokens : [];
+  const hostOverlap = normalizeMetadataList(row.hosts).filter((host) => termList.some((term) => normalizeText(term).toLowerCase() === normalizeText(host).toLowerCase())).length;
+  const genreOverlap = normalizeMetadataList(row.genres).filter((genre) => termList.some((term) => normalizeText(term).toLowerCase() === normalizeText(genre).toLowerCase())).length;
+  const queryScore = tokens.length ? computeScore(row, tokens) : 0;
+  return metadataRichness(row) + getRecommendationKindBoost(row.kind) + queryScore + (hostOverlap * 10) + (genreOverlap * 8);
+}
+
+function subscriptionDocToRecommendationEntry(doc) {
+  return {
+    hosts: doc.hosts,
+    genres: doc.genres,
+    location: doc.location,
+    cadence: doc.cadence,
+    runSchedule: doc.runSchedule,
+    title: doc.title,
+    value: doc.title,
+    programTitle: doc.programTitle || doc.title,
+    episodeTitle: doc.latestEpisodeTitle,
+    subtitle: doc.subtitle,
+    description: doc.description
+  };
+}
+
 function buildCollectionRecommendationTerms(collection) {
   const entries = Array.isArray(collection?.entries) ? collection.entries : [];
   const weights = new Map();
@@ -418,23 +453,6 @@ function buildCollectionRecommendations(index, collection, options = {}) {
   const seen = new Set();
   const queryTokens = query.toLowerCase().split(/\s+/g).map((token) => token.trim()).filter(Boolean);
 
-  function getRecommendationKindBoost(kind) {
-    const safe = normalizeText(kind).toLowerCase();
-    if (safe === "host") return 20;
-    if (safe === "episode") return 18;
-    if (safe === "discovery") return 12;
-    if (safe === "feed") return 8;
-    if (safe === "subscription") return 6;
-    return 4;
-  }
-
-  function computeRecommendationScore(row) {
-    const hostOverlap = normalizeMetadataList(row.hosts).filter((host) => terms.some((term) => normalizeText(term).toLowerCase() === normalizeText(host).toLowerCase())).length;
-    const genreOverlap = normalizeMetadataList(row.genres).filter((genre) => terms.some((term) => normalizeText(term).toLowerCase() === normalizeText(genre).toLowerCase())).length;
-    const queryScore = queryTokens.length ? computeScore(row, queryTokens) : 0;
-    return metadataRichness(row) + getRecommendationKindBoost(row.kind) + queryScore + (hostOverlap * 10) + (genreOverlap * 8);
-  }
-
   function pushRows(rows) {
     for (const row of Array.isArray(rows) ? rows : []) {
       const rowKey = [
@@ -451,7 +469,7 @@ function buildCollectionRecommendations(index, collection, options = {}) {
       seen.add(rowKey);
       merged.push({
         ...row,
-        recommendationScore: computeRecommendationScore(row)
+        recommendationScore: computeRecommendationScoreForRow(row, terms, queryTokens)
       });
     }
   }
@@ -476,6 +494,131 @@ function buildCollectionRecommendations(index, collection, options = {}) {
     totalCandidates: merged.length,
     results,
     facets: buildFacets(merged)
+  };
+}
+
+function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
+  const docs = Array.isArray(index) ? index : buildMetadataIndex(index);
+  const limit = Math.max(1, Math.min(50, Number(options.limit || 12) || 12));
+  const sourceType = normalizeText(options.sourceType).toLowerCase();
+  const queryOverride = normalizeText(options.query);
+  const subscriptions = docs.filter((doc) => normalizeText(doc.kind).toLowerCase() === "subscription" && (!sourceType || doc.sourceType === sourceType));
+  if (!subscriptions.length) {
+    return {
+      subscriptionCount: 0,
+      query: "",
+      sourceType,
+      terms: [],
+      totalCandidates: 0,
+      results: [],
+      facets: { hosts: [], genres: [], locations: [] },
+      message: "Add subscriptions to get suggestions from your metadata index."
+    };
+  }
+  const pseudoEntries = subscriptions.map(subscriptionDocToRecommendationEntry);
+  const terms = buildCollectionRecommendationTerms({ entries: pseudoEntries });
+  const query = queryOverride || terms.slice(0, 8).join(" ");
+  const savedKeys = new Set(subscriptions.map((entry) => [
+    normalizeText(entry.sourceType).toLowerCase(),
+    normalizeText(entry.programUrl),
+    normalizeText(entry.episodeUrl),
+    normalizeText(entry.title).toLowerCase(),
+    normalizeText(entry.programTitle).toLowerCase()
+  ].join("|")));
+  const savedTitleKeys = new Set(subscriptions.flatMap((entry) => {
+    const source = normalizeText(entry.sourceType).toLowerCase();
+    const values = [entry.title, entry.programTitle];
+    return values
+      .map((value) => normalizeText(value).toLowerCase())
+      .filter(Boolean)
+      .map((value) => `${source}|${value}`);
+  }));
+  const subscribedProgramUrls = new Map();
+  for (const sub of subscriptions) {
+    const st = normalizeText(sub.sourceType).toLowerCase();
+    const url = normalizeText(sub.programUrl);
+    if (!st || !url) {
+      continue;
+    }
+    if (!subscribedProgramUrls.has(st)) {
+      subscribedProgramUrls.set(st, new Set());
+    }
+    subscribedProgramUrls.get(st).add(url);
+  }
+
+  const discovery = discoverMetadataIndex(docs, {
+    sourceType,
+    query,
+    limit: Math.max(limit * 3, 18)
+  });
+  const search = searchMetadataIndex(docs, {
+    sourceType,
+    query,
+    limit: Math.max(limit * 3, 18)
+  });
+
+  const merged = [];
+  const seen = new Set();
+  const queryTokens = query.toLowerCase().split(/\s+/g).map((token) => token.trim()).filter(Boolean);
+
+  function isSubscribedProgramUrl(row) {
+    const st = normalizeText(row.sourceType).toLowerCase();
+    const url = normalizeText(row.programUrl);
+    if (!st || !url) {
+      return false;
+    }
+    const bucket = subscribedProgramUrls.get(st);
+    return Boolean(bucket && bucket.has(url));
+  }
+
+  function pushRows(rows) {
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (normalizeText(row.kind).toLowerCase() === "subscription") {
+        continue;
+      }
+      if (isSubscribedProgramUrl(row)) {
+        continue;
+      }
+      const rowKey = [
+        normalizeText(row.sourceType).toLowerCase(),
+        normalizeText(row.programUrl),
+        normalizeText(row.episodeUrl),
+        normalizeText(row.title).toLowerCase(),
+        normalizeText(row.programTitle).toLowerCase()
+      ].join("|");
+      const titleKey = `${normalizeText(row.sourceType).toLowerCase()}|${normalizeText(row.title || row.programTitle).toLowerCase()}`;
+      if (savedKeys.has(rowKey) || savedTitleKeys.has(titleKey) || seen.has(rowKey)) {
+        continue;
+      }
+      seen.add(rowKey);
+      merged.push({
+        ...row,
+        recommendationScore: computeRecommendationScoreForRow(row, terms, queryTokens)
+      });
+    }
+  }
+
+  pushRows(discovery.results);
+  pushRows(search.results);
+
+  const results = merged
+    .sort((a, b) => {
+      if (b.recommendationScore !== a.recommendationScore) {
+        return b.recommendationScore - a.recommendationScore;
+      }
+      return getDocumentTimestamp(b) - getDocumentTimestamp(a);
+    })
+    .slice(0, limit);
+
+  return {
+    subscriptionCount: subscriptions.length,
+    query,
+    sourceType,
+    terms: terms.slice(0, 16),
+    totalCandidates: merged.length,
+    results,
+    facets: buildFacets(merged),
+    message: ""
   };
 }
 
@@ -765,5 +908,6 @@ module.exports = {
   applyMetadataRepairRules,
   searchMetadataIndex,
   discoverMetadataIndex,
-  buildCollectionRecommendations
+  buildCollectionRecommendations,
+  buildSubscriptionDiscoveryRecommendations
 };

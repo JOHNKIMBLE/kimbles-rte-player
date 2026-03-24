@@ -667,6 +667,14 @@
         </div>
         <p class="hint">Hybrid metadata index from local library data plus aggressively harvested discovery/search results. Source tabs stay unchanged.</p>
         <div class="row history-toolbar-meta">
+          <div id="subscriptionDiscoverySummary" class="hint">Loading subscription-based suggestions...</div>
+          <div class="row" style="gap:0.5rem;margin-bottom:0;">
+            <button id="subscriptionDiscoveryRefreshBtn" type="button" class="secondary" style="font-size:0.85em;">Refresh suggestions</button>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:0;">Suggested programs use hosts and genres from your active subscriptions, exclude shows you already subscribe to, and rank against the discovery cache.</p>
+        <div id="subscriptionDiscoveryList" class="list" style="margin-bottom:1rem;"></div>
+        <div class="row history-toolbar-meta">
           <div id="metadataDiscoverySummary" class="hint">Loading curated discovery...</div>
           <div class="row" style="gap:0.5rem;margin-bottom:0;">
             <button id="metadataDiscoveryRefreshBtn" class="secondary" style="font-size:0.85em;">Refresh Picks</button>
@@ -761,7 +769,7 @@
         </div>
         <p class="hint">JSON and RSS exports generated from subscriptions.</p>
         <div class="row history-toolbar-meta">
-          <div id="feedsSummary" class="hint">Loading feeds...</div>
+          <div id="feedsSummary" class="hint" aria-live="polite">Loading feeds...</div>
           <div class="row" style="gap:0.5rem;margin-bottom:0;">
             <select id="feedsSourceFilter" style="font-size:0.85em;">
               <option value="">All Sources</option>

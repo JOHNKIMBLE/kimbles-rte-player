@@ -138,6 +138,91 @@ function uniqueCleanList(values) {
   return out;
 }
 
+const BBC_HOST_DENYLIST = new Set([
+  "us",
+  "uk",
+  "gb",
+  "eu",
+  "en",
+  "bbc",
+  "news",
+  "sounds",
+  "help",
+  "contact",
+  "cookies",
+  "privacy"
+]);
+
+function isLikelyBbcHostName(value, programTitle = "") {
+  const text = cleanText(stripHtml(value || ""));
+  if (!text || text.length < 2 || text.length > 80) {
+    return false;
+  }
+  if (!/[A-Za-zÀ-ÿ]/.test(text)) {
+    return false;
+  }
+  if (text.split(/\s+/).length > 8) {
+    return false;
+  }
+  const lower = text.toLowerCase();
+  if (BBC_HOST_DENYLIST.has(lower)) {
+    return false;
+  }
+  if (/^[a-z]{2}$/.test(lower)) {
+    return false;
+  }
+  if (/^bbc\b/i.test(text)) {
+    return false;
+  }
+  if (/parent page|breadcrumb|cookie|copyright|javascript|share this|listen back|read more|skip to/i.test(text)) {
+    return false;
+  }
+  const prog = cleanText(programTitle || "");
+  if (prog && prog.toLowerCase() === lower) {
+    const looksLikeCompoundShowTitle = /\b(bbc|radio\s*\d|sounds)\b/i.test(prog) || /\s-\s/.test(prog);
+    if (looksLikeCompoundShowTitle) {
+      return false;
+    }
+    const words = prog.split(/\s+/).filter(Boolean);
+    const lastWord = words[words.length - 1] || "";
+    const lastLooksShowy = /^(beats|mix|shows?|hours?|sessions?|club|live|night|morning|drive|breakfast|best|top|countdown|chart|selections?|picks?|anthems?|underground)s?$/i.test(lastWord);
+    if (words.length >= 2 && lastLooksShowy) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function inferBbcHostsFromProgramTitle(title = "") {
+  const text = cleanText(title || "");
+  if (!text) {
+    return [];
+  }
+  const onBbc = text.match(/^(.+?)\s+on\s+BBC/i);
+  if (onBbc?.[1]) {
+    const h = cleanText(onBbc[1]);
+    if (isLikelyBbcHostName(h, text)) {
+      return [h];
+    }
+  }
+  const segments = text.split(/\s*-\s*/).map((s) => cleanText(s)).filter(Boolean);
+  const bbcish = (s) => /\b(bbc|radio\s*\d|sounds|podcast)\b/i.test(s);
+  const candidates = segments.filter((s) => !bbcish(s) && isLikelyBbcHostName(s, text));
+  if (candidates.length) {
+    return uniqueCleanList(candidates).slice(0, 6);
+  }
+  const withMatch = text.match(/(?:with|w\/|hosted by|presented by)\s+(.+)$/i);
+  if (withMatch?.[1]) {
+    return uniqueCleanList(
+      withMatch[1]
+        .split(/\s*(?:,|&| and )\s*/gi)
+        .map((x) => cleanText(x))
+        .filter((h) => isLikelyBbcHostName(h, text))
+    ).slice(0, 6);
+  }
+  return [];
+}
+
 function scoreTextMatch(value, query, exactWeight, prefixWeight, includesWeight) {
   const text = cleanText(value || "").toLowerCase();
   if (!text || !query) {
@@ -385,7 +470,7 @@ function collectBbcPeople(value, bucket) {
   }
 }
 
-function extractBbcHostsFromHtml(html) {
+function extractBbcHostsFromHtml(html, programTitle = "") {
   const hosts = [];
   for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
@@ -410,13 +495,19 @@ function extractBbcHostsFromHtml(html) {
 
   if (!hosts.length) {
     const presentedBy = html.match(/(?:Presented by|presented by|with)\s*<\/span>\s*<span[^>]*>([^<]+)<\/span>/i)
-      || html.match(/(?:Presented by|with)\s+([^<.,|]{2,80})/i);
+      || html.match(/(?:Presented by|presented by)\s+([^<.,|]{2,80})/i);
     if (presentedBy?.[1]) {
       hosts.push(cleanText(presentedBy[1]));
     }
   }
 
-  return uniqueCleanList(hosts).slice(0, 6);
+  const filtered = uniqueCleanList(hosts)
+    .filter((host) => isLikelyBbcHostName(host, programTitle))
+    .slice(0, 6);
+  if (filtered.length) {
+    return filtered;
+  }
+  return inferBbcHostsFromProgramTitle(programTitle);
 }
 
 function parsePublishedDateIso(input) {
@@ -979,7 +1070,7 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
       /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i,
       /<meta\s+name=["']twitter:image(?::src)?["']\s+content=["']([^"']+)["']/i
     ]);
-    hosts = extractBbcHostsFromHtml(html);
+    hosts = extractBbcHostsFromHtml(html, title || "");
     // Try to extract genres from JSON-LD schema.org markup
     for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
       try {
@@ -1022,6 +1113,16 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
         image = cleanText(json?.thumbnail || "");
       }
     } catch {}
+  }
+
+  if (!hosts.length) {
+    const t = cleanText(title || "");
+    if (t) {
+      const inferred = inferBbcHostsFromProgramTitle(t);
+      if (inferred.length) {
+        hosts = inferred;
+      }
+    }
   }
 
   const schedule = includeSchedule
