@@ -91,7 +91,9 @@ const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSche
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
-  fetchWithGenericWebhookAssert,
+  fetchWithGenericWebhookAssert
+} = require("./lib/outbound-http");
+const {
   hostMatchesAnySuffix,
   hostMatchesSuffix
 } = require("./lib/url-safety");
@@ -195,9 +197,9 @@ function createStreamProxyServer() {
       let child;
       try {
         child = spawnYtDlpPipe(pipeEntry.url);
-      } catch (error) {
+      } catch {
         res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(error?.message || error || "yt-dlp pipe failed") }));
+        res.end(JSON.stringify({ error: "yt-dlp pipe failed" }));
         return;
       }
       res.writeHead(200, { "Content-Type": "audio/mpeg", "Transfer-Encoding": "chunked" });

@@ -19,7 +19,7 @@ const episodesCache = {
 };
 
 const { decodeHtml, cleanText, stripHtml } = require("./utils");
-const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./url-safety");
+const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 const { parseWwfScheduleJsonSlice } = require("./wwf-schedule-json");
 
 const WWF_FETCH_SUFFIXES = ["worldwidefm.net", "mixcloud.com", "cosmicjs.com", "radiocult.fm"];

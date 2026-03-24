@@ -69,6 +69,22 @@
     }
   };
 
+  const WEB_SECRETS_STORAGE_KEY = "rte_web_secrets_v1";
+  const WEB_SECRET_FIELDS = ["webhookUrl", "discordWebhookUrl", "ntfyTopicUrl", "auddApiToken", "acoustidApiKey"];
+
+  function readWebSecrets() {
+    try {
+      const raw = sessionStorage.getItem(WEB_SECRETS_STORAGE_KEY);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
   const defaultSettings = {
     timeFormat: "24h",
     downloadDir: "/downloads",
@@ -130,6 +146,16 @@
         return { ...defaultSettings };
       }
       const parsed = JSON.parse(raw);
+      const secrets = readWebSecrets();
+      const secret = (field) => {
+        if (Object.prototype.hasOwnProperty.call(secrets, field) && typeof secrets[field] === "string") {
+          return secrets[field].trim();
+        }
+        if (typeof parsed[field] === "string") {
+          return parsed[field].trim();
+        }
+        return defaultSettings[field];
+      };
       return {
         timeFormat: parsed.timeFormat === "12h" ? "12h" : "24h",
         downloadDir: typeof parsed.downloadDir === "string" && parsed.downloadDir.trim()
@@ -152,13 +178,13 @@
           : defaultSettings.dedupeMode,
         id3Tagging: parsed.id3Tagging == null ? defaultSettings.id3Tagging : Boolean(parsed.id3Tagging),
         feedExportEnabled: parsed.feedExportEnabled == null ? defaultSettings.feedExportEnabled : Boolean(parsed.feedExportEnabled),
-        webhookUrl: typeof parsed.webhookUrl === "string" ? parsed.webhookUrl.trim() : defaultSettings.webhookUrl,
-        discordWebhookUrl: typeof parsed.discordWebhookUrl === "string" ? parsed.discordWebhookUrl.trim() : defaultSettings.discordWebhookUrl,
-        ntfyTopicUrl: typeof parsed.ntfyTopicUrl === "string" ? parsed.ntfyTopicUrl.trim() : defaultSettings.ntfyTopicUrl,
+        webhookUrl: secret("webhookUrl"),
+        discordWebhookUrl: secret("discordWebhookUrl"),
+        ntfyTopicUrl: secret("ntfyTopicUrl"),
         auddTrackMatching: parsed.auddTrackMatching == null ? defaultSettings.auddTrackMatching : Boolean(parsed.auddTrackMatching),
-        auddApiToken: typeof parsed.auddApiToken === "string" ? parsed.auddApiToken.trim() : defaultSettings.auddApiToken,
+        auddApiToken: secret("auddApiToken"),
         fingerprintTrackMatching: parsed.fingerprintTrackMatching == null ? defaultSettings.fingerprintTrackMatching : Boolean(parsed.fingerprintTrackMatching),
-        acoustidApiKey: typeof parsed.acoustidApiKey === "string" ? parsed.acoustidApiKey.trim() : defaultSettings.acoustidApiKey,
+        acoustidApiKey: secret("acoustidApiKey"),
         songrecTrackMatching: parsed.songrecTrackMatching == null ? defaultSettings.songrecTrackMatching : Boolean(parsed.songrecTrackMatching),
         songrecSampleSeconds: Math.max(8, Math.min(45, Math.floor(Number(parsed.songrecSampleSeconds || defaultSettings.songrecSampleSeconds)))),
         ffmpegCueSilenceDetect: parsed.ffmpegCueSilenceDetect == null ? defaultSettings.ffmpegCueSilenceDetect : Boolean(parsed.ffmpegCueSilenceDetect),
@@ -175,6 +201,23 @@
     } catch {
       return { ...defaultSettings };
     }
+  }
+
+  function persistWebSettingsSplit(normalized) {
+    const secrets = {};
+    const rest = { ...normalized };
+    for (const field of WEB_SECRET_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(rest, field)) {
+        secrets[field] = rest[field];
+        delete rest[field];
+      }
+    }
+    try {
+      sessionStorage.setItem(WEB_SECRETS_STORAGE_KEY, JSON.stringify(secrets));
+    } catch {
+      /* sessionStorage unavailable (e.g. private mode) — rest still omits secrets from localStorage */
+    }
+    localStorage.setItem("rte_web_settings", JSON.stringify(rest));
   }
 
   function saveWebSettings(input) {
@@ -223,7 +266,7 @@
       episodesPerPage: Math.max(1, Math.min(50, Math.floor(Number(next.episodesPerPage || defaultSettings.episodesPerPage)))),
       discoveryCount: Math.max(1, Math.min(24, Math.floor(Number(next.discoveryCount || defaultSettings.discoveryCount))))
     };
-    localStorage.setItem("rte_web_settings", JSON.stringify(normalized));
+    persistWebSettingsSplit(normalized);
     return normalized;
   }
 
