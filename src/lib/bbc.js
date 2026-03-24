@@ -17,7 +17,7 @@ const bbcDiscoveryTermsCache = {
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const { decodeHtml, cleanText, stripHtml, inferCadence } = require("./utils");
-const { fetchWithHostAllowlist } = require("./url-safety");
+const { fetchWithHostAllowlist } = require("./outbound-http");
 
 function normalizeBbcUrl(inputUrl) {
   const parsed = new URL(String(inputUrl || "").trim());

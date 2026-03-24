@@ -6,10 +6,9 @@ const { resolveBundledFfmpegDir } = require("./downloader");
 const {
   assertOutboundHttpUrl,
   assertUrlHostSuffixes,
-  hostMatchesSuffix,
-  fetchWithHostAllowlist,
-  fetchWithOutboundAssert
+  hostMatchesSuffix
 } = require("./url-safety");
+const { fetchWithHostAllowlist, fetchWithOutboundAssert } = require("./outbound-http");
 const { cleanText, stripHtml } = require("./utils");
 
 function getVendorRootCandidates() {

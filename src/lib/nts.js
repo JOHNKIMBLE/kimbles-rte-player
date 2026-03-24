@@ -21,7 +21,8 @@ let _diskCache = null;
 function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 
 const { cleanText, stripHtml } = require("./utils");
-const { fetchWithHostAllowlist, hostMatchesSuffix, httpGetWithHostAllowlist } = require("./url-safety");
+const { hostMatchesSuffix } = require("./url-safety");
+const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 
 function normalizeShowUrl(inputUrl) {
   const raw = String(inputUrl || "").trim();
@@ -1055,7 +1056,7 @@ async function fetchAllNtsShows(useCache = true) {
  * NTS aliases follow patterns like "the-breakfast-show-flo", "morning-show-w-xxx", etc.
  */
 function generateSlugGuesses(q) {
-  const words = q.split(/\s+/).filter(Boolean);
+  const words = q.split(/\s+/).filter(Boolean).slice(0, 24);
   const slug = q.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const guesses = new Set();
   if (slug) guesses.add(slug);

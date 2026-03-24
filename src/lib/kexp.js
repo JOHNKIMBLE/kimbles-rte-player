@@ -58,7 +58,8 @@ const FETCH_HEADERS = {
   "Accept": "application/json"
 };
 
-const { assertUrlHostSuffixes, fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./url-safety");
+const { assertUrlHostSuffixes } = require("./url-safety");
+const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 const KEXP_FETCH_SUFFIXES = ["kexp.org", "cloudfront.net", "splixer.com", "tkatlabs.com", "streamguys1.com"];
 
 async function fetchJson(url) {

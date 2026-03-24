@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { resolveBundledFfmpegDir } = require("./downloader");
-const { fetchWithOutboundAssert } = require("./url-safety");
+const { fetchWithOutboundAssert } = require("./outbound-http");
 const { decodeHtml } = require("./utils");
 
 function clean(input) {
