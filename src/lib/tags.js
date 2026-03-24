@@ -2,24 +2,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { resolveBundledFfmpegDir } = require("./downloader");
+const { assertOutboundHttpUrl } = require("./url-safety");
+const { decodeHtml } = require("./utils");
 
 function clean(input) {
-  return String(input || "")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => {
-      const code = Number.parseInt(hex, 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
-    })
-    .replace(/&#([0-9]+);/g, (_match, dec) => {
-      const code = Number.parseInt(dec, 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
-    })
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#039;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+  return decodeHtml(String(input || ""))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -440,7 +427,8 @@ async function downloadCoverToTemp(url, tempDir) {
     return null;
   }
   try {
-    const response = await fetch(input, {
+    const safe = assertOutboundHttpUrl(input, "Cover art URL");
+    const response = await fetch(safe, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
     if (!response.ok) {

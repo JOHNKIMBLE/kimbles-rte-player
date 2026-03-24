@@ -26,8 +26,10 @@ async function translateFr(text) {
   }
   if (translationCache.has(key)) return translationCache.get(key);
   try {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(key)}&langpair=fr|en`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const memUrl = new URL("https://api.mymemory.translated.net/get");
+    memUrl.searchParams.set("q", key);
+    memUrl.searchParams.set("langpair", "fr|en");
+    const res = await fetch(memUrl.toString(), { signal: AbortSignal.timeout(6000) });
     const json = await res.json();
     const translated = (json?.responseData?.translatedText || "").trim();
     // Reject if translation looks like an error message or is too short
@@ -152,10 +154,16 @@ const LIVE_NOW_TTL = 1000 * 30; // 30s — matches renderer poll interval
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json, text/html, */*",
-  "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.85,fr;q=0.4"
+  "Accept-Language": "en-GB,en;q=0.95,en-US;q=0.9,fr;q=0.02"
 };
 
+/** Bump when summary cache shape or translation policy changes (invalidates stale entries). */
+const FIP_SUMMARY_CACHE_VER = 2;
+
 const { cleanText, stripHtml } = require("./utils");
+const { assertUrlHostSuffixes } = require("./url-safety");
+
+const FIP_FETCH_SUFFIXES = ["radiofrance.fr"];
 
 /**
  * Parse a duration value (ISO 8601 or plain seconds) to an integer seconds count.
@@ -171,16 +179,17 @@ function parseDurationSeconds(str) {
 }
 
 async function fetchJson(url, extraHeaders = {}) {
+  const safe = assertUrlHostSuffixes(url, FIP_FETCH_SUFFIXES, "FIP");
   const headers = { ...FETCH_HEADERS, Accept: "application/json", ...extraHeaders };
   if (typeof fetch !== "undefined") {
-    const res = await fetch(url, { headers, cache: "no-store" });
+    const res = await fetch(safe, { headers, cache: "no-store" });
     if (!res.ok) throw new Error(`FIP API ${res.status} for ${url}`);
     return res.json();
   }
   return new Promise((resolve, reject) => {
-    const u = new URL(url);
+    const u = new URL(safe);
     const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(url, { headers }, (res) => {
+    const req = mod.get(safe, { headers }, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
         reject(new Error(`FIP API ${res.statusCode} for ${url}`));
         return;
@@ -198,17 +207,18 @@ async function fetchJson(url, extraHeaders = {}) {
 }
 
 async function fetchText(url) {
+  const safe = assertUrlHostSuffixes(url, FIP_FETCH_SUFFIXES, "FIP");
   if (typeof fetch !== "undefined") {
-    const res = await fetch(url, { headers: FETCH_HEADERS });
+    const res = await fetch(safe, { headers: FETCH_HEADERS });
     if (!res.ok) throw new Error(`FIP fetch ${res.status} for ${url}`);
     return res.text();
   }
   return new Promise((resolve, reject) => {
-    const u = new URL(url);
+    const u = new URL(safe);
     const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(url, { headers: FETCH_HEADERS }, (res) => {
+    const req = mod.get(safe, { headers: FETCH_HEADERS }, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        reject(new Error(`FIP fetch ${res.statusCode} for ${url}`));
+        reject(new Error(`FIP fetch ${res.statusCode} for ${safe}`));
         return;
       }
       const chunks = [];
@@ -370,8 +380,9 @@ function deref(v, arr, depth = 0) {
  * and items is the array of episode objects.
  */
 async function fetchPageData(slug, cursor = null) {
-  let url = `${BASE_URL}/fip/podcasts/${encodeURIComponent(slug)}/__data.json`;
-  if (cursor) url += `?pageCursor=${encodeURIComponent(cursor)}`;
+  const bust = `_=${Date.now()}`;
+  let url = `${BASE_URL}/fip/podcasts/${encodeURIComponent(slug)}/__data.json?${bust}`;
+  if (cursor) url += `&pageCursor=${encodeURIComponent(cursor)}`;
 
   const json = await fetchJson(url);
   const nodes = Array.isArray(json?.nodes) ? json.nodes : [];
@@ -384,11 +395,11 @@ async function fetchPageData(slug, cursor = null) {
   }
   if (!arr.length) return { concept: null, items: [], nextCursor: null, prevCursor: null };
 
-  // Find the pagination object { items, next, prev }
+  // Find the pagination object { items, next } (Radio France may omit `prev` on newer payloads)
   let paginationObj = null;
   for (const v of arr) {
     if (v && typeof v === "object" && !Array.isArray(v) &&
-        "items" in v && "next" in v && "prev" in v) {
+        "items" in v && ("next" in v || "prev" in v)) {
       paginationObj = deref(v, arr);
       break;
     }
@@ -511,30 +522,56 @@ function extractHosts(obj) {
   return uniqueCleanList(hosts).slice(0, 6);
 }
 
+/**
+ * Parse French weekday date strings from Radio France (e.g. "Vendredi 20 mars 2026") to UTC unix seconds (noon).
+ */
+function parseFipFrenchPublishedDate(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return 0;
+  const m = s.match(/(\d{1,2})\s+([a-zA-ZÀ-ÿ]+)\s+(\d{4})/);
+  if (!m) return 0;
+  const day = parseInt(m[1], 10);
+  const year = parseInt(m[3], 10);
+  const monthNorm = m[2]
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const months = {
+    janvier: 0, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+    juillet: 6, aout: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11
+  };
+  const month = months[monthNorm];
+  if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return 0;
+  return Math.floor(Date.UTC(year, month, day, 12, 0, 0) / 1000);
+}
+
 function mapPageItem(item, showSlug) {
   if (!item || typeof item !== "object") return null;
 
-  const title = cleanText(item.title || "");
-  const description = cleanText(stripHtml(item.description || item.standFirst || ""));
+  const tp = item.titleProps && typeof item.titleProps === "object" ? item.titleProps : null;
+  const title = cleanText(tp?.title || tp?.text || item.title || "");
+  const description = cleanText(stripHtml(item.description || item.standFirst || tp?.text || ""));
   const image = resolveImageUrl(item.visual?.src || "");
 
-  // Episode URL from link field (e.g. "/fip/podcasts/live-a-fip/gildaa-...")
-  const linkPath = String(item.link || "").trim();
+  // Episode path: legacy `link` or Svelte titleProps.href
+  const linkPath = String(tp?.href || item.link || "").trim();
   const episodeUrl = linkPath
     ? (linkPath.startsWith("http") ? linkPath : `${BASE_URL}${linkPath.startsWith("/") ? "" : "/"}${linkPath}`)
     : "";
 
-  // Direct audio URL from manifestations
-  const manifestations = Array.isArray(item.manifestations) ? item.manifestations : [];
+  const manifestations = Array.isArray(item.manifestations) && item.manifestations.length
+    ? item.manifestations
+    : (item.manifestation && typeof item.manifestation === "object" ? [item.manifestation] : []);
   const audioManifest = manifestations.find((m) => m?.model === "ManifestationAudio") || manifestations[0];
   const downloadUrl = String(audioManifest?.url || "").trim();
 
-  // Published date from playerInfo.publishedDate (unix seconds)
-  const publishedTs = Number(item.playerInfo?.publishedDate || item.playerInfo?.startDate || 0);
+  let publishedTs = Number(item.playerInfo?.publishedDate || item.playerInfo?.startDate || 0);
+  if (!publishedTs && item.publishedDate) {
+    publishedTs = parseFipFrenchPublishedDate(item.publishedDate);
+  }
   const publishedDate = publishedTs ? new Date(publishedTs * 1000).toISOString().slice(0, 10) : "";
 
-  // Duration (seconds or ISO 8601)
-  const durationRaw = item.playerInfo?.duration || item.duration;
+  const durationRaw = item.playerInfo?.duration || item.duration || audioManifest?.duration;
   const duration = String(durationRaw || "").trim();
 
   // Genres from conceptId + item taxonomies (none usually at item level)
@@ -704,35 +741,48 @@ async function fetchFipShowList(useCache = true) {
 
 // ── Program metadata ─────────────────────────────────────────────────────────
 
+function isCurrentFipSummaryCache(meta) {
+  return meta && Number(meta._cacheVer) === FIP_SUMMARY_CACHE_VER;
+}
+
+/**
+ * Build translated show metadata from a dereferenced Concept object (shared by fetchShowMeta and episode fetch).
+ */
+async function buildFipShowMetaFromConcept(concept, _slug) {
+  const { english: airtimeEn, cadence, runSchedule, schedulerRunSchedule } = parseFipAirtime(concept.airtime || "");
+  const [titleEn, descEn, genresEn] = await Promise.all([
+    translateFr(concept.title || ""),
+    translateFr((concept.description || "").slice(0, 450)),
+    translateMetadataList(concept.genres || [], 2)
+  ]);
+  return {
+    _cacheVer: FIP_SUMMARY_CACHE_VER,
+    uuid: concept.id,
+    title: titleEn || concept.title,
+    description: descEn || concept.description,
+    image: concept.image,
+    genres: genresEn.length ? genresEn : (concept.genres || []),
+    hosts: concept.hosts || [],
+    airtime: concept.airtime || "",
+    airtimeEn,
+    cadence,
+    runSchedule: schedulerRunSchedule || runSchedule || ""
+  };
+}
+
 /**
  * Fetch show metadata via /__data.json page parse.
  * Returns { uuid, title, description, image, genres }.
  */
 async function fetchShowMeta(slug) {
-  if (summaryCache.has(slug)) {
-    return patchCachedFipMetaRunSchedule(summaryCache.get(slug));
+  const cached = summaryCache.get(slug);
+  if (cached && isCurrentFipSummaryCache(cached)) {
+    return patchCachedFipMetaRunSchedule(cached);
   }
   try {
     const { concept } = await fetchPageData(slug);
     if (concept && concept.title) {
-      const { english: airtimeEn, cadence, runSchedule, schedulerRunSchedule } = parseFipAirtime(concept.airtime);
-      const [titleEn, descEn, genresEn] = await Promise.all([
-        translateFr(concept.title || ""),
-        translateFr((concept.description || "").slice(0, 450)),
-        translateMetadataList(concept.genres || [], 2)
-      ]);
-      const meta = {
-        uuid: concept.id,
-        title: titleEn || concept.title,
-        description: descEn || concept.description,
-        image: concept.image,
-        genres: genresEn.length ? genresEn : (concept.genres || []),
-        hosts: concept.hosts || [],
-        airtime: concept.airtime || "",
-        airtimeEn,
-        cadence,
-        runSchedule: schedulerRunSchedule || runSchedule || ""
-      };
+      const meta = await buildFipShowMetaFromConcept(concept, slug);
       summaryCache.set(slug, meta);
       return meta;
     }
@@ -802,9 +852,10 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
     if (prevCursor === undefined) break; // no more pages
     try {
       const { concept, nextCursor } = await fetchPageData(slug, prevCursor);
-      // Cache the concept from first page fetch
-      if (concept && !summaryCache.has(slug)) {
-        summaryCache.set(slug, { uuid: concept.id, title: concept.title, description: concept.description, image: concept.image, genres: concept.genres || [], hosts: concept.hosts || [] });
+      if (concept && concept.title && !isCurrentFipSummaryCache(summaryCache.get(slug))) {
+        try {
+          summaryCache.set(slug, await buildFipShowMetaFromConcept(concept, slug));
+        } catch { /* keep going; fetchShowMeta will fill later */ }
       }
       cursors.push(nextCursor !== null ? nextCursor : undefined);
       cursorCache.set(slug, cursors);
@@ -827,6 +878,11 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
       concept = result.concept;
       episodes = result.items.filter(Boolean);
       nextCursor = result.nextCursor;
+      if (concept && concept.title && !isCurrentFipSummaryCache(summaryCache.get(slug))) {
+        try {
+          summaryCache.set(slug, await buildFipShowMetaFromConcept(concept, slug));
+        } catch { /* fetchShowMeta below */ }
+      }
       if (nextCursor !== null && !cursors[safePage]) {
         cursors[safePage] = nextCursor;
         cursorCache.set(slug, cursors);
@@ -1041,6 +1097,7 @@ async function searchFipPrograms(query) {
 async function getFipEpisodeStream(episodeUrl, runYtDlpJson) {
   const url = String(episodeUrl || "").trim();
   if (!url) throw new Error("episodeUrl is required.");
+  assertUrlHostSuffixes(url, FIP_FETCH_SUFFIXES, "FIP episode");
 
   // Try yt-dlp if available
   if (runYtDlpJson) {
@@ -1331,5 +1388,6 @@ module.exports = {
   getFipEpisodeTracklist,
   normalizeFipProgramUrl,
   parseFipAirtime,
+  parseFipFrenchPublishedDate,
   configure
 };

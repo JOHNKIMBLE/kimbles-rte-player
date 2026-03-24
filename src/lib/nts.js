@@ -21,6 +21,7 @@ let _diskCache = null;
 function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 
 const { cleanText, stripHtml } = require("./utils");
+const { assertUrlHostSuffixes } = require("./url-safety");
 
 function normalizeShowUrl(inputUrl) {
   const raw = String(inputUrl || "").trim();
@@ -75,15 +76,16 @@ const FETCH_HEADERS = {
 };
 
 async function fetchText(url) {
+  const safe = assertUrlHostSuffixes(url, ["nts.live", "ntslive.net"], "NTS");
   if (typeof fetch !== "undefined") {
-    const response = await fetch(url, { headers: FETCH_HEADERS });
+    const response = await fetch(safe, { headers: FETCH_HEADERS });
     if (!response.ok) throw new Error(`Failed to load NTS: ${response.status} ${response.statusText}`);
     return response.text();
   }
   return new Promise((resolve, reject) => {
-    const u = new URL(url);
+    const u = new URL(safe);
     const mod = u.protocol === "https:" ? require("node:https") : require("node:http");
-    const req = mod.get(url, { headers: FETCH_HEADERS }, (res) => {
+    const req = mod.get(safe, { headers: FETCH_HEADERS }, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`Failed to load NTS: ${res.statusCode} ${res.statusMessage}`));
         return;
@@ -98,8 +100,9 @@ async function fetchText(url) {
 }
 
 async function fetchJson(url) {
+  const safe = assertUrlHostSuffixes(url, ["nts.live", "ntslive.net"], "NTS");
   if (typeof fetch !== "undefined") {
-    const response = await fetch(url, { headers: { ...FETCH_HEADERS, Accept: "application/json" } });
+    const response = await fetch(safe, { headers: { ...FETCH_HEADERS, Accept: "application/json" } });
     if (!response.ok) throw new Error(`Failed to load NTS: ${response.status} ${response.statusText}`);
     return response.json();
   }
@@ -664,16 +667,7 @@ function extractTracklistHtml(html) {
 }
 
 function decodeNtsHtmlText(input) {
-  return cleanText(
-    String(input || "")
-      .replace(/&amp;/g, "&")
-      .replace(/&quot;/g, "\"")
-      .replace(/&#39;/g, "'")
-      .replace(/&apos;/g, "'")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&nbsp;/g, " ")
-  );
+  return cleanText(String(input || ""));
 }
 
 function looksLikeNtsErrorPage(html) {
@@ -699,7 +693,9 @@ function parseTracklistFromEpisodeHtml(html) {
   while ((m = itemPattern.exec(listHtml)) !== null) {
     const itemHtml = String(m[1] || "");
     const timestampText = decodeNtsHtmlText(itemHtml.match(/<span[^>]+class=["'][^"']*track__timestamp[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] || "");
-    const artistMatches = Array.from(itemHtml.matchAll(/<span[^>]+class=["'][^"']*track__artist(?:\s|--|[^"'])*["'][^>]*>([\s\S]*?)<\/span>/gi));
+    const artistMatches = Array.from(itemHtml.matchAll(
+      /<span\b[^>]{0,240}?class=["'][^"']{0,120}?track__artist[^"']{0,120}?["'][^>]{0,240}?>([\s\S]{0,8000}?)<\/span>/gi
+    ));
     const artists = artistMatches
       .map((entry) => decodeNtsHtmlText(stripHtml(entry[1] || "")))
       .filter(Boolean);
@@ -809,7 +805,8 @@ async function getNtsProgramSummary(showUrl) {
 
   const html = await fetchText(url);
   const titleMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i) || html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  const title = cleanText(titleMatch?.[1] || "").replace(/<[^>]+>/g, "") || url.split("/shows/")[1] || "NTS Show";
+  const title =
+    cleanText(stripHtml(titleMatch?.[1] || "")) || url.split("/shows/")[1]?.split("/")[0]?.replace(/-/g, " ") || "NTS Show";
   const descMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
   const description = cleanText(descMatch?.[1] || "");
   const imgMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);

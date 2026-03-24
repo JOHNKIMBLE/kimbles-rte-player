@@ -1,4 +1,5 @@
 const https = require("https");
+const { parseWwfScheduleJsonSlice } = require("../src/lib/wwf-schedule-json");
 const opts = { headers: { "User-Agent": "Mozilla/5.0" } };
 https.get("https://www.worldwidefm.net/schedule", opts, (r) => {
   let b = "";
@@ -9,13 +10,12 @@ https.get("https://www.worldwidefm.net/schedule", opts, (r) => {
     const endIdx = html.indexOf("}]", startIdx);
     if (startIdx >= 0 && endIdx > startIdx) {
       const raw = html.slice(startIdx, endIdx + 2);
-      const unescaped = raw.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-      try {
-        const arr = JSON.parse(unescaped);
+      const arr = parseWwfScheduleJsonSlice(raw);
+      if (arr.length) {
         console.log("Parsed array length:", arr.length);
         console.log("First item:", JSON.stringify(arr[0], null, 2).slice(0, 500));
-      } catch (e) {
-        console.log("Parse err:", e.message);
+      } else {
+        console.log("Parse err: empty or invalid schedule JSON slice");
       }
     }
     const re = /\\"show_time\\":\\"(\d{2}:\d{2})\\"[^}]*\\"date\\":\\"(\d{4}-\d{2}-\d{2})\\"[^}]*\\"name\\":\\"((?:[^"\\]|\\.)*)\\"[^}]*\\"url\\":\\"([^"]+)\\"[^}]*\\"picture\\":\\"([^"]+)\\"/g;

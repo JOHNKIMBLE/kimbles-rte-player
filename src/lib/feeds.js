@@ -248,7 +248,7 @@ async function rebuildProgramFeedsFromSchedules({ feedExportEnabled, getDataDir,
   }
   await Promise.all(Array.from({ length: Math.min(limit, jobs.length) || 1 }, () => worker()));
 
-  let message = "";
+  let message;
   if (errors.length) {
     message = `Rebuilt ${rebuilt} feed file(s); ${errors.length} subscription(s) could not be refreshed.`;
   } else if (rebuilt > 0) {

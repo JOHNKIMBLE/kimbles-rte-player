@@ -91,6 +91,11 @@ const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSche
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
+  assertGenericNotificationWebhookUrl,
+  hostMatchesAnySuffix,
+  hostMatchesSuffix
+} = require("./lib/url-safety");
+const {
   buildMetadataIndex,
   buildScheduleMetadataDocs,
   buildFeedMetadataDocs,
@@ -464,13 +469,13 @@ function inferProgramNameFromUrl(inputUrl) {
     if (parts[0] === "radio" && parts.length >= 3) {
       return parts[2].replace(/-/g, " ");
     }
-    if (parsed.hostname.includes("bbc.")) {
+    if (hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
       return "BBC";
     }
-    if (parsed.hostname.includes("worldwidefm.net")) {
+    if (hostMatchesSuffix(parsed.hostname, "worldwidefm.net")) {
       return "Worldwide FM";
     }
-    if (parsed.hostname.includes("nts.live")) {
+    if (hostMatchesSuffix(parsed.hostname, "nts.live")) {
       return "NTS";
     }
   } catch {
@@ -486,7 +491,7 @@ function toCanonicalBbcEpisodeUrl(inputUrl) {
   }
   try {
     const parsed = new URL(raw);
-    if (!/bbc\./i.test(parsed.hostname)) {
+    if (!hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
       return raw;
     }
     const match = parsed.pathname.match(/\/sounds\/play\/([a-z0-9]{8})/i);
@@ -3102,8 +3107,14 @@ async function sendWebhookIfConfigured(payload) {
   if (!webhookUrl) {
     return;
   }
+  let safeUrl;
   try {
-    await fetch(webhookUrl, {
+    safeUrl = assertGenericNotificationWebhookUrl(webhookUrl);
+  } catch {
+    return;
+  }
+  try {
+    await fetch(safeUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload || {})
