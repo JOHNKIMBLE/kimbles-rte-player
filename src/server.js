@@ -103,6 +103,7 @@ const {
   fetchRteProxyUpstream
 } = require("./lib/outbound-http");
 const { createMutationRateLimiter, createGlobalRateLimiter } = require("./lib/http-rate-limit");
+const rateLimit = require("express-rate-limit");
 const {
   buildMetadataIndex,
   buildScheduleMetadataDocs,
@@ -142,6 +143,8 @@ const app = express();
 app.use(createGlobalRateLimiter({ windowMs: 60_000, maxRequests: 5000 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(createMutationRateLimiter({ windowMs: 60_000, maxRequests: 500 }));
+const audioStreamLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
+const rootLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
 const rendererDir = path.join(__dirname, "renderer");
 app.use(express.static(rendererDir));
 app.use("/build", express.static(path.join(__dirname, "..", "build")));
@@ -2352,7 +2355,7 @@ app.get("/api/wwf/ytdlp-pipe", (req, res) => {
   });
 });
 
-app.get("/api/wwf/temp-audio/:token", (req, res) => {
+app.get("/api/wwf/temp-audio/:token", audioStreamLimiter, (req, res) => {
   const token = String(req.params.token || "").trim();
   const entry = wwfTempTokens.get(token);
   if (!entry || !fs.existsSync(entry.path)) return res.status(404).end();
@@ -3009,7 +3012,7 @@ app.post("/api/settings", (req, res) => {
   }
 });
 
-app.post("/api/local-playback-url", (req, res) => {
+app.post("/api/local-playback-url", audioStreamLimiter, (req, res) => {
   try {
     const outputDir = path.resolve(String(req.body.outputDir || "").trim());
     const fileName = String(req.body.fileName || "").trim();
@@ -3031,7 +3034,7 @@ app.post("/api/local-playback-url", (req, res) => {
   }
 });
 
-app.get("/api/local-audio/:token", (req, res) => {
+app.get("/api/local-audio/:token", audioStreamLimiter, (req, res) => {
   const token = String(req.params.token || "").trim();
   const fullPath = resolveLocalPlaybackToken(token);
   if (!fullPath) {
@@ -4021,7 +4024,7 @@ app.delete("/api/kexp/scheduler/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/", (_req, res) => {
+app.get("/", rootLimiter, (_req, res) => {
   res.sendFile(path.join(rendererDir, "index.html"));
 });
 
