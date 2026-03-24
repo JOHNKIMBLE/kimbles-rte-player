@@ -124,14 +124,6 @@ function assertNtfyTopicUrl(raw) {
   return u.toString();
 }
 
-/** After allowlist check, return canonical href for fetch (helps static analysis). */
-function canonicalizeRteProxyTarget(inputUrl, isAllowedFn) {
-  if (typeof isAllowedFn !== "function" || !isAllowedFn(inputUrl)) {
-    throw new Error("Proxy target host is not allowed.");
-  }
-  return parseHttpUrl(inputUrl).toString();
-}
-
 module.exports = {
   isSsrfBlockedHostname,
   assertOutboundHttpUrl,
@@ -139,7 +131,6 @@ module.exports = {
   assertDiscordWebhookUrl,
   assertGenericNotificationWebhookUrl,
   assertNtfyTopicUrl,
-  canonicalizeRteProxyTarget,
   hostMatchesSuffix,
   hostMatchesAnySuffix
 };
