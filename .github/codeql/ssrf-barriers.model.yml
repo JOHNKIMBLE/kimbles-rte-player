@@ -1,0 +1,13 @@
+# Teach CodeQL that URLs returned by url-safety helpers are SSRF-sanitized (request-forgery barriers).
+# See: https://codeql.github.com/docs/codeql-language-guides/customizing-library-models-for-javascript/
+extensions:
+  - addsTo:
+      pack: codeql/javascript-all
+      extensible: barrierModel
+    data:
+      - ["src/lib/url-safety.js", "Member[assertOutboundHttpUrl].ReturnValue", "request-forgery"]
+      - ["src/lib/url-safety.js", "Member[assertUrlHostSuffixes].ReturnValue", "request-forgery"]
+      - ["src/lib/url-safety.js", "Member[assertDiscordWebhookUrl].ReturnValue", "request-forgery"]
+      - ["src/lib/url-safety.js", "Member[assertGenericNotificationWebhookUrl].ReturnValue", "request-forgery"]
+      - ["src/lib/url-safety.js", "Member[assertNtfyTopicUrl].ReturnValue", "request-forgery"]
+      - ["src/lib/url-safety.js", "Member[canonicalizeRteProxyTarget].ReturnValue", "request-forgery"]
