@@ -21,6 +21,7 @@ const episodesCache = {
 const { decodeHtml, cleanText, stripHtml } = require("./utils");
 const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 const { parseWwfScheduleJsonSlice } = require("./wwf-schedule-json");
+const { computeNextBroadcastStartUtc } = require("./scheduler");
 
 const WWF_FETCH_SUFFIXES = ["worldwidefm.net", "mixcloud.com", "cosmicjs.com", "radiocult.fm"];
 
@@ -1097,11 +1098,26 @@ async function getWwfProgramSummary(programNameOrUrl) {
   const hostMatch = name.match(/worldwidefm\.net\/hosts\/([^/?#]+)/i);
   if (hostMatch) {
     const hostSlug = hostMatch[1];
-    const [meta, hostEpisodes] = await Promise.all([
+    const [meta, hostEpisodes, scheduleEpisodes] = await Promise.all([
       fetchWwfHostMetadata(hostSlug, true).catch(() => null),
-      fetchWwfHostPageEpisodes(hostSlug, true).catch(() => [])
+      fetchWwfHostPageEpisodes(hostSlug, true).catch(() => []),
+      fetchWwfScheduleEpisodes(true).catch(() => [])
     ]);
     const schedInfo = inferWwfScheduleInfo(hostEpisodes);
+    const hostIdentityNames = buildHostIdentityNames(hostSlug, meta?.displayName);
+    const now = Date.now();
+    const futureSlots = scheduleEpisodes.filter(
+      (e) => e.startTimestamp != null && e.startTimestamp > now && episodeMatchesHostIdentity(e, hostIdentityNames)
+    );
+    futureSlots.sort((a, b) => (a.startTimestamp || 0) - (b.startTimestamp || 0));
+    const nextSlot = futureSlots[0];
+    let nextBroadcastAt = nextSlot && nextSlot.startTimestamp != null
+      ? new Date(nextSlot.startTimestamp).toISOString()
+      : "";
+    const nextBroadcastTitle = nextSlot ? String(nextSlot.fullTitle || nextSlot.title || "").trim() : "";
+    if (!nextBroadcastAt && schedInfo.runSchedule) {
+      nextBroadcastAt = computeNextBroadcastStartUtc(schedInfo.runSchedule);
+    }
     return {
       source: "wwf",
       programUrl: name,
@@ -1113,8 +1129,8 @@ async function getWwfProgramSummary(programNameOrUrl) {
       runSchedule: schedInfo.runSchedule || "",
       cadence: meta?.typeSlug || schedInfo.cadence || "irregular",
       averageDaysBetween: schedInfo.averageDaysBetween,
-      nextBroadcastAt: "",
-      nextBroadcastTitle: ""
+      nextBroadcastAt,
+      nextBroadcastTitle
     };
   }
   const [scheduleEpisodes, showsEpisodes] = await Promise.all([
@@ -1159,6 +1175,9 @@ async function getWwfProgramSummary(programNameOrUrl) {
         nextBroadcastTitle = nextForShow.fullTitle || nextForShow.title || "";
       }
     }
+  }
+  if (!nextBroadcastAt && schedInfo.runSchedule) {
+    nextBroadcastAt = computeNextBroadcastStartUtc(schedInfo.runSchedule);
   }
   return {
     source: "wwf",
@@ -1379,6 +1398,47 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
     .slice(0, 4)
     .map(([g]) => g);
 
+  const runScheduleLine = enrichedSchedInfo?.runSchedule || summary?.runSchedule || "";
+  let nextBroadcastAt = summary?.nextBroadcastAt || "";
+  let nextBroadcastTitle = summary?.nextBroadcastTitle || "";
+  const nowMs = Date.now();
+
+  if (!nextBroadcastAt && !isShowsUrl) {
+    if (isHostUrl && hostSlugFromUrl) {
+      const metaForIdentity = hostUrlMeta || discoveredHostMeta;
+      const hostIdentityNames = buildHostIdentityNames(hostSlugFromUrl, metaForIdentity?.displayName);
+      const futureSlots = scheduleEpisodes.filter(
+        (e) => e.startTimestamp != null && e.startTimestamp > nowMs && episodeMatchesHostIdentity(e, hostIdentityNames)
+      );
+      futureSlots.sort((a, b) => (a.startTimestamp || 0) - (b.startTimestamp || 0));
+      const next = futureSlots[0];
+      if (next && next.startTimestamp != null) {
+        nextBroadcastAt = new Date(next.startTimestamp).toISOString();
+        nextBroadcastTitle = String(next.fullTitle || next.title || "").trim();
+      }
+    } else {
+      const nameLower = programName.toLowerCase();
+      const matchEp = (e) => {
+        const show = (e.showName || "").toLowerCase();
+        const full = (e.fullTitle || "").toLowerCase();
+        if (show === nameLower || full === nameLower) return true;
+        if (full.startsWith(nameLower + ":") || full.startsWith(nameLower + " ")) return true;
+        const terms = nameLower.split(/\s+/).filter(Boolean);
+        return terms.length && terms.every((t) => show.includes(t) || full.includes(t));
+      };
+      const futureSlots = scheduleEpisodes.filter((e) => e.startTimestamp != null && e.startTimestamp > nowMs);
+      futureSlots.sort((a, b) => (a.startTimestamp || 0) - (b.startTimestamp || 0));
+      const nextForShow = futureSlots.find(matchEp);
+      if (nextForShow && nextForShow.startTimestamp != null) {
+        nextBroadcastAt = new Date(nextForShow.startTimestamp).toISOString();
+        nextBroadcastTitle = String(nextForShow.fullTitle || nextForShow.title || "").trim();
+      }
+    }
+  }
+  if (!nextBroadcastAt && runScheduleLine) {
+    nextBroadcastAt = computeNextBroadcastStartUtc(runScheduleLine);
+  }
+
   return {
     source: "wwf",
     programUrl: hostUrl,
@@ -1394,9 +1454,9 @@ async function getWwfProgramEpisodes(programNameOrUrl, page = 1) {
     numPages: Math.max(1, Math.ceil(visibleEpisodes.length / perPage)),
     cadence: effectiveMeta?.typeSlug || enrichedSchedInfo?.cadence || summary?.cadence || "irregular",
     averageDaysBetween: enrichedSchedInfo?.averageDaysBetween || summary?.averageDaysBetween || null,
-    runSchedule: enrichedSchedInfo?.runSchedule || summary?.runSchedule || "",
-    nextBroadcastAt: summary?.nextBroadcastAt || "",
-    nextBroadcastTitle: summary?.nextBroadcastTitle || ""
+    runSchedule: runScheduleLine,
+    nextBroadcastAt,
+    nextBroadcastTitle
   };
 }
 

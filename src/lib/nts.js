@@ -1056,8 +1056,13 @@ async function fetchAllNtsShows(useCache = true) {
  * NTS aliases follow patterns like "the-breakfast-show-flo", "morning-show-w-xxx", etc.
  */
 function generateSlugGuesses(q) {
-  const words = q.split(/\s+/).filter(Boolean).slice(0, 24);
-  const slug = q.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const raw = String(q || "").trim().split(/\s+/).filter(Boolean);
+  const NTS_SLUG_GUESS_MAX_WORDS = 24;
+  const words = [];
+  for (let wi = 0; wi < raw.length && words.length < NTS_SLUG_GUESS_MAX_WORDS; wi += 1) {
+    words.push(String(raw[wi]));
+  }
+  const slug = String(q || "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const guesses = new Set();
   if (slug) guesses.add(slug);
   if (slug) guesses.add(`the-${slug}`);
@@ -1089,7 +1094,8 @@ function generateSlugGuesses(q) {
     }
     // Drop each word and try the rest (handles extra words in query)
     if (words.length >= 3) {
-      for (let i = 0; i < words.length; i++) {
+      const nDrop = Math.min(words.length, NTS_SLUG_GUESS_MAX_WORDS);
+      for (let i = 0; i < nDrop; i += 1) {
         const without = words.filter((_, j) => j !== i).join("-");
         guesses.add(without);
         guesses.add("the-" + without);

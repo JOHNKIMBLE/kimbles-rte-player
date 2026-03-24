@@ -1,31 +1,17 @@
-# Kimble's RTE Player
+# Kimble's RTE Player (Docker)
 
-Browse, stream, download, schedule, and organize radio shows from:
+Web UI for **RTE**, **BBC Sounds**, **Worldwide FM**, **NTS**, **FIP**, and **KEXP**: browse, stream, download, schedule, and organize radio. Listens on port **8080** by default.
 
-- RTE
-- BBC Sounds
-- Worldwide FM
-- NTS
-- FIP
-- KEXP
+Image includes `yt-dlp`, `ffmpeg`, `songrec`, AtomicParsley, and Chromaprint/`fpcalc` where applicable.
 
-Served as a web UI on port `8080`.
+## Features (server UI)
 
-## Features
+- Six sources, live playback where supported, per-program explorers and episode downloads (KEXP includes extended archive when available)
+- `m4a` / `mp3` with embedded artwork, tags, tracklists, chapters; optional `.cue`
+- Schedulers, persistent download queue, Library (subscriptions, collections, feeds, metadata explorer, entity graph, diagnostics, vendor repair)
+- Settings: format, quality, naming, dedupe, tagging, feed export, webhooks, recognition (AudD / AcoustID / Songrec when configured)
 
-- 6 radio sources in one UI
-- Live browser playback for supported stations
-- Episode downloads via `yt-dlp` + `ffmpeg`
-- `m4a` and `mp3` output
-- Embedded artwork, tags, tracklists, and chapters
-- Optional physical `.cue` sidecar generation
-- Scheduler with automatic new-episode downloads and backfill
-- Persistent download queue with pause, resume, cancel, and rerun
-- Library tools: subscriptions, feeds, history, collections, metadata explorer, and entity graph
-- Diagnostics and one-click vendor repair from the UI
-- KEXP explorer includes older extended archive episodes when available
-
-## Quick Start
+## Quick start
 
 ```bash
 docker run -d \
@@ -37,7 +23,7 @@ docker run -d \
   johnkimble/kimbles-rte-player:latest
 ```
 
-Then open `http://localhost:8080` in your browser.
+Open `http://localhost:8080`.
 
 ## Docker Compose
 
@@ -59,52 +45,27 @@ services:
     restart: unless-stopped
 ```
 
-## Web UI Highlights
+## Volumes
 
-- Source tabs for RTE, BBC, Worldwide FM, NTS, FIP, and KEXP
-- Live now panels and station playback where supported
-- Per-program explorers with search, discovery, and episode listings
-- Scheduler management for automatic downloads
-- Library views for subscriptions, feed exports, download queue, and download history
-- Collections, graph-powered recommendations, and metadata/entity exploration
-- Settings for output format, quality, naming, duplicate handling, tagging, feed export, webhook, and recognition options
+| Mount | Contents |
+| --- | --- |
+| `/data` | Settings, schedules, queue/history, collections, feeds, cache, harvested + materialized metadata, graph snapshots |
+| `/downloads` | Audio files |
 
-## Storage
-
-`/data` stores:
-
-- settings
-- schedules and subscriptions
-- download queue and download history
-- collections
-- feed exports
-- cache and harvested metadata
-- materialized metadata and entity graph snapshots
-
-`/downloads` stores the downloaded audio files.
-
-## Environment Variables
+## Environment
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8080` | Web UI / API port inside the container |
-| `TZ` | `Europe/Dublin` | Timezone used for schedule display |
-| `DATA_DIR` | `/data` | App state, settings, schedules, feeds, cache, and library metadata |
-| `DOWNLOAD_DIR` | `/downloads` | Download destination for audio files |
-
-## Audio Metadata
-
-- `m4a`: artwork, tags, tracklists, and native chapters
-- `mp3`: artwork, tags, text tracklists, and ID3 chapter frames
-- Optional `.cue` file generation on download
-- Rebuild tags/chapters from History without redownloading
+| `PORT` | `8080` | HTTP port in container |
+| `TZ` | `Europe/Dublin` | Schedule display timezone |
+| `DATA_DIR` | `/data` | App state |
+| `DOWNLOAD_DIR` | `/downloads` | Download target |
 
 ## Notes
 
-- Most behavior is configured from the web UI after the container starts.
-- Download format, quality, dedupe mode, tagging, webhook, RSS feed export, and track recognition options are all saved under `/data`.
-- Recognition features can use AudD, AcoustID/Chromaprint, and Songrec when configured.
+- Configure almost everything from the UI after start; state persists under `/data`.
+- Rebuild tags/chapters from History without redownloading when needed.
 
 ## Source
 
-`https://github.com/johnkimble/kimbles-rte-player`
+https://github.com/johnkimble/kimbles-rte-player

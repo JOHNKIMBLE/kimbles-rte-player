@@ -85,6 +85,54 @@ function parseDaysExpression(input) {
   return days;
 }
 
+/**
+ * Next programme start (UTC) from runSchedule lines like "Mon - Fri • 18:00 - 20:00"
+ * or "Mon-Wed | 09:00 - 11:00". Used for subscription "next broadcast" display.
+ */
+function computeNextBroadcastStartUtc(runScheduleText, fromDate = new Date()) {
+  const raw = String(runScheduleText || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const segments = raw.split(/\s*,\s*/g);
+  let best = null;
+  const from = fromDate.getTime();
+  for (const segment of segments) {
+    const match = segment.match(/^(.*?)\s*[•|]\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/i);
+    if (!match) {
+      continue;
+    }
+    const days = parseDaysExpression(match[1]);
+    const startMin = parseHhMm(match[2]);
+    if (!days.length || startMin == null) {
+      continue;
+    }
+    for (let addDays = 0; addDays < 370; addDays += 1) {
+      const d = new Date(fromDate);
+      d.setUTCDate(d.getUTCDate() + addDays);
+      if (!days.includes(d.getUTCDay())) {
+        continue;
+      }
+      const at = Date.UTC(
+        d.getUTCFullYear(),
+        d.getUTCMonth(),
+        d.getUTCDate(),
+        Math.floor(startMin / 60),
+        startMin % 60,
+        0,
+        0
+      );
+      if (at > from) {
+        if (best === null || at < best) {
+          best = at;
+        }
+        break;
+      }
+    }
+  }
+  return best != null ? new Date(best).toISOString() : "";
+}
+
 function parseRunScheduleWindows(runScheduleText) {
   const raw = String(runScheduleText || "").trim();
   if (!raw) {
@@ -878,5 +926,6 @@ function createSchedulerStore({
 }
 
 module.exports = {
-  createSchedulerStore
+  createSchedulerStore,
+  computeNextBroadcastStartUtc
 };

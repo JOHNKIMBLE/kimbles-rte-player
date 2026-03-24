@@ -158,11 +158,12 @@ const FETCH_HEADERS = {
 };
 
 /** Bump when summary cache shape or translation policy changes (invalidates stale entries). */
-const FIP_SUMMARY_CACHE_VER = 2;
+const FIP_SUMMARY_CACHE_VER = 3;
 
 const { cleanText, stripHtml } = require("./utils");
 const { assertUrlHostSuffixes } = require("./url-safety");
 const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
+const { computeNextBroadcastStartUtc } = require("./scheduler");
 
 const FIP_FETCH_SUFFIXES = ["radiofrance.fr"];
 
@@ -735,8 +736,8 @@ function isCurrentFipSummaryCache(meta) {
 async function buildFipShowMetaFromConcept(concept, _slug) {
   const { english: airtimeEn, cadence, runSchedule, schedulerRunSchedule } = parseFipAirtime(concept.airtime || "");
   const [titleEn, descEn, genresEn] = await Promise.all([
-    translateFr(concept.title || ""),
-    translateFr((concept.description || "").slice(0, 450)),
+    translateFr({ text: concept.title || "", minLength: 4 }),
+    translateFr({ text: (concept.description || "").slice(0, 450), minLength: 4 }),
     translateMetadataList(concept.genres || [], 2)
   ]);
   return {
@@ -795,6 +796,8 @@ async function getFipProgramSummary(showUrl) {
   const slug = getSlugFromUrl(url);
   try {
     const meta = await fetchShowMeta(slug);
+    const nextBroadcastAt = computeNextBroadcastStartUtc(meta.runSchedule || "");
+    const nextBroadcastTitle = String(meta.airtimeEn || meta.airtime || meta.title || "").trim();
     return {
       source: "fip",
       programUrl: url,
@@ -804,13 +807,14 @@ async function getFipProgramSummary(showUrl) {
       uuid: meta.uuid,
       runSchedule: meta.runSchedule || "",
       cadence: meta.cadence || "irregular",
-      nextBroadcastAt: "",
+      nextBroadcastAt,
+      nextBroadcastTitle,
       genres: meta.genres,
       hosts: meta.hosts || [],
       airtime: meta.airtimeEn || meta.airtime || ""
     };
   } catch {
-    return { source: "fip", programUrl: url, title: slug.replace(/-/g, " "), description: "", image: "", uuid: "", runSchedule: "", cadence: "irregular", nextBroadcastAt: "", genres: [], hosts: [] };
+    return { source: "fip", programUrl: url, title: slug.replace(/-/g, " "), description: "", image: "", uuid: "", runSchedule: "", cadence: "irregular", nextBroadcastAt: "", nextBroadcastTitle: "", genres: [], hosts: [] };
   }
 }
 
@@ -927,6 +931,9 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
     hosts: ep?.hosts?.length ? ep.hosts : topHosts
   }));
 
+  const nextBroadcastAt = computeNextBroadcastStartUtc(meta?.runSchedule || "");
+  const nextBroadcastTitle = String(meta?.airtimeEn || meta?.airtime || meta?.title || "").trim();
+
   return {
     source: "fip",
     programUrl: url,
@@ -941,7 +948,8 @@ async function getFipProgramEpisodes(showUrl, page = 1) {
     averageDaysBetween: null,
     runSchedule: meta?.runSchedule || "",
     airtime: meta?.airtimeEn || meta?.airtime || "",
-    nextBroadcastAt: "",
+    nextBroadcastAt,
+    nextBroadcastTitle,
     genres: topGenres.length ? topGenres : undefined,
     hosts: topHosts.length ? topHosts : undefined
   };
