@@ -6,6 +6,7 @@
     const formatLocalDateTime = deps.formatLocalDateTime;
     const createProgressToken = deps.createProgressToken;
     const setSettingsStatus = deps.setSettingsStatus;
+    const setButtonBusy = typeof deps.setButtonBusy === "function" ? deps.setButtonBusy : () => {};
     const playFromDownloadedFile = deps.playFromDownloadedFile;
     const queueDownloadedFile = deps.queueDownloadedFile;
     const sourceLabels = deps.sourceLabels || {};
@@ -20,9 +21,17 @@
     let queueRecentVisibleCount = 10;
     let latestQueueSnapshot = null;
     let feedSearchTimer = null;
+    let feedsRefreshInFlight = false;
     let metadataSearchTimer = null;
     let metadataSearchState = { total: 0, results: [], metrics: { total: 0, sourceCount: 0, hostCount: 0, genreCount: 0 } };
     let metadataDiscoveryState = { totalCandidates: 0, results: [], facets: { hosts: [], genres: [], locations: [] } };
+    let subscriptionDiscoveryState = {
+      subscriptionCount: 0,
+      totalCandidates: 0,
+      results: [],
+      facets: { hosts: [], genres: [], locations: [] },
+      message: ""
+    };
     let entityGraphSearchTimer = null;
     let entityGraphState = { total: 0, results: [], metrics: { entityCount: 0, relationCount: 0, sourceCount: 0 } };
     let entityProfileState = { entity: null, metrics: { entityCount: 0, relationCount: 0, sourceCount: 0 } };
@@ -1117,6 +1126,42 @@
       renderMetadataDiscovery();
     }
 
+    async function loadSubscriptionDiscovery() {
+      if (typeof window.rteDownloader?.discoverSubscriptionPrograms !== "function") {
+        subscriptionDiscoveryState = {
+          subscriptionCount: 0,
+          totalCandidates: 0,
+          results: [],
+          facets: { hosts: [], genres: [], locations: [] },
+          message: ""
+        };
+        renderSubscriptionDiscovery();
+        return;
+      }
+      const sourceType = String(dom.metadataIndexSourceFilter?.value || "").trim();
+      const query = String(dom.metadataIndexSearchInput?.value || "").trim();
+      try {
+        subscriptionDiscoveryState = await window.rteDownloader.discoverSubscriptionPrograms({
+          limit: 12,
+          sourceType,
+          query
+        });
+      } catch {
+        subscriptionDiscoveryState = {
+          subscriptionCount: 0,
+          totalCandidates: 0,
+          results: [],
+          facets: { hosts: [], genres: [], locations: [] },
+          message: "Could not load subscription suggestions."
+        };
+      }
+      renderSubscriptionDiscovery();
+    }
+
+    function reloadMetadataIndexAndDiscovery() {
+      return Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery()]);
+    }
+
     async function loadEntityGraph(options = {}) {
       if (typeof window.rteDownloader?.searchEntityGraph !== "function") {
         entityGraphState = { total: 0, results: [], metrics: { entityCount: 0, relationCount: 0, sourceCount: 0 } };
@@ -1165,6 +1210,7 @@
       heavyLibraryViewsLoadingPromise = Promise.all([
         loadMetadataIndex(),
         loadMetadataDiscovery({ forceRefresh }),
+        loadSubscriptionDiscovery(),
         loadEntityGraph({ forceRefresh })
       ]).then(async () => {
         if (entityProfileState?.entity?.id) {
@@ -1237,6 +1283,53 @@
             ${canOpenFile ? `<button class="secondary" data-metadata-open-file="${escapeHtml(entry.filePath)}">Open File</button>` : ""}
             ${canOpenFolder ? `<button class="secondary" data-metadata-open-folder="${escapeHtml(entry.outputDir)}">Open Folder</button>` : ""}
             ${canCopyUrl ? `<button class="secondary" data-metadata-copy-url="${escapeHtml(targetUrl)}">Copy URL</button>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderSubscriptionDiscovery() {
+      if (!dom.subscriptionDiscoveryList) {
+        return;
+      }
+      const result = subscriptionDiscoveryState || { subscriptionCount: 0, totalCandidates: 0, results: [], message: "" };
+      const rows = Array.isArray(result.results) ? result.results : [];
+      const subs = Number(result.subscriptionCount || 0);
+      if (dom.subscriptionDiscoverySummary) {
+        if (result.message) {
+          dom.subscriptionDiscoverySummary.textContent = result.message;
+        } else if (!subs) {
+          dom.subscriptionDiscoverySummary.textContent = "Add subscriptions to rank discovery picks against your listening profile.";
+        } else if (rows.length) {
+          dom.subscriptionDiscoverySummary.textContent = `Based on ${subs} subscription${subs === 1 ? "" : "s"} — ${rows.length} suggestion${rows.length === 1 ? "" : "s"} from ${Number(result.totalCandidates || 0)} candidates.`;
+        } else {
+          dom.subscriptionDiscoverySummary.textContent = subs
+            ? "No extra programs matched your profile in the discovery cache yet. Refresh the discovery cache or broaden sources."
+            : "Add subscriptions to rank discovery picks against your listening profile.";
+        }
+      }
+      if (!rows.length) {
+        dom.subscriptionDiscoveryList.innerHTML = `<div class="item"><div class="item-meta">${escapeHtml(result.message || "No subscription-based suggestions yet.")}</div></div>`;
+        return;
+      }
+      dom.subscriptionDiscoveryList.innerHTML = rows.map((entry) => {
+        const sourceKey = String(entry.sourceType || "");
+        const sourceLabel = getSourceLabel(sourceKey);
+        const canCopyUrl = Boolean(entry.programUrl || entry.episodeUrl);
+        const targetUrl = entry.programUrl || entry.episodeUrl || "";
+        const explorerPayload = buildExplorerPayload(entry);
+        const score = Number(entry.recommendationScore || 0);
+        return `<div class="item feed-entry">
+          <div class="feed-entry-main">
+            <div class="item-title"><span class="source-badge source-badge-${escapeHtml(sourceKey)}">${escapeHtml(sourceLabel)}</span> ${escapeHtml(entry.title || "Untitled")}</div>
+            <div class="item-meta">${escapeHtml(entry.kindLabel || "Item")}${score ? ` • score ${escapeHtml(String(score))}` : ""}</div>
+            ${renderMetadataDetails(entry)}
+          </div>
+          <div class="feed-actions">
+            <button type="button" class="secondary" data-open-explorer="${encodeDataPayload(explorerPayload)}">Open Explorer</button>
+            <button type="button" class="secondary" data-save-collection="${encodeDataPayload(buildCollectionEntryPayload(entry))}">Save</button>
+            <button type="button" class="secondary" data-metadata-use-query="${escapeHtml(String(entry.title || ""))}">Find Similar</button>
+            ${canCopyUrl ? `<button type="button" class="secondary" data-metadata-copy-url="${escapeHtml(targetUrl)}">Copy URL</button>` : ""}
           </div>
         </div>`;
       }).join("");
@@ -1606,6 +1699,37 @@
         state.libraryFeeds = [];
       }
       renderFeeds();
+    }
+
+    async function refreshProgramFeedsUi() {
+      if (!dom.feedsRefreshBtn || feedsRefreshInFlight) {
+        return;
+      }
+      feedsRefreshInFlight = true;
+      const summaryEl = dom.feedsSummary;
+      setButtonBusy(dom.feedsRefreshBtn, true, "Refresh Feeds", "Refreshing…");
+      if (summaryEl) {
+        summaryEl.textContent = "Refreshing: re-fetching each subscription’s latest episodes to update JSON/RSS exports…";
+      }
+      try {
+        if (typeof window.rteDownloader?.refreshProgramFeeds !== "function") {
+          await loadFeeds();
+          setSettingsStatus("Feeds reloaded from disk.");
+          return;
+        }
+        const payload = await window.rteDownloader.refreshProgramFeeds();
+        const rows = Array.isArray(payload?.feeds) ? payload.feeds : [];
+        state.libraryFeeds = rows;
+        renderFeeds();
+        const msg = String(payload?.message || "").trim() || (rows.length ? "Program feeds refreshed." : "No feed files found yet.");
+        setSettingsStatus(msg);
+      } catch (error) {
+        setSettingsStatus(String(error?.message || error || "Feed refresh failed"), true);
+        await loadFeeds().catch(() => {});
+      } finally {
+        setButtonBusy(dom.feedsRefreshBtn, false, "Refresh Feeds");
+        feedsRefreshInFlight = false;
+      }
     }
 
     function renderFeeds() {
@@ -2404,7 +2528,7 @@
       });
 
       dom.feedsRefreshBtn?.addEventListener("click", () => {
-        loadFeeds().catch((error) => setSettingsStatus(error.message, true));
+        refreshProgramFeedsUi().catch((error) => setSettingsStatus(String(error?.message || error), true));
       });
 
       dom.feedsSourceFilter?.addEventListener("change", () => {
@@ -2422,10 +2546,10 @@
       });
 
       dom.metadataIndexSourceFilter?.addEventListener("change", () => {
-        Promise.all([loadMetadataIndex(), loadMetadataDiscovery()]).catch((error) => setSettingsStatus(error.message, true));
+        reloadMetadataIndexAndDiscovery().catch((error) => setSettingsStatus(error.message, true));
       });
       dom.metadataIndexKindFilter?.addEventListener("change", () => {
-        Promise.all([loadMetadataIndex(), loadMetadataDiscovery()]).catch((error) => setSettingsStatus(error.message, true));
+        reloadMetadataIndexAndDiscovery().catch((error) => setSettingsStatus(error.message, true));
       });
       for (const input of [dom.metadataIndexHostFilter, dom.metadataIndexGenreFilter, dom.metadataIndexLocationFilter]) {
         input?.addEventListener("input", () => {
@@ -2434,11 +2558,8 @@
           }
           metadataSearchTimer = setTimeout(() => {
             metadataSearchTimer = null;
-            Promise.all([
-              loadMetadataIndex(),
-              loadMetadataDiscovery()
-            ]).catch((error) => setSettingsStatus(error.message, true));
-          }, 120);
+            reloadMetadataIndexAndDiscovery().catch((error) => setSettingsStatus(error.message, true));
+          }, 220);
         });
       }
       dom.metadataIndexSearchInput?.addEventListener("input", () => {
@@ -2447,11 +2568,8 @@
         }
         metadataSearchTimer = setTimeout(() => {
           metadataSearchTimer = null;
-          Promise.all([
-            loadMetadataIndex(),
-            loadMetadataDiscovery()
-          ]).catch((error) => setSettingsStatus(error.message, true));
-        }, 120);
+          reloadMetadataIndexAndDiscovery().catch((error) => setSettingsStatus(error.message, true));
+        }, 220);
       });
       dom.entityGraphSourceFilter?.addEventListener("change", () => {
         loadEntityGraph().catch((error) => setSettingsStatus(error.message, true));
@@ -2476,10 +2594,10 @@
           setSettingsStatus("Refreshing harvested discovery metadata...");
           if (typeof window.rteDownloader?.refreshMetadataHarvest === "function") {
             const result = await window.rteDownloader.refreshMetadataHarvest();
-            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadEntityGraph({ forceRefresh: true })]);
+            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadEntityGraph({ forceRefresh: true })]);
             setSettingsStatus(`Discovery cache refreshed (${Number(result?.count || 0)} harvested items).`);
           } else {
-            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadEntityGraph({ forceRefresh: true })]);
+            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadEntityGraph({ forceRefresh: true })]);
             setSettingsStatus("Discovery cache refreshed.");
           }
         } catch (error) {
@@ -2487,7 +2605,10 @@
         }
       });
       dom.metadataDiscoveryRefreshBtn?.addEventListener("click", () => {
-        loadMetadataDiscovery({ forceRefresh: true }).catch((error) => setSettingsStatus(error.message, true));
+        Promise.all([loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery()]).catch((error) => setSettingsStatus(error.message, true));
+      });
+      dom.subscriptionDiscoveryRefreshBtn?.addEventListener("click", () => {
+        loadSubscriptionDiscovery().catch((error) => setSettingsStatus(error.message, true));
       });
       dom.metadataRepairAddBtn?.addEventListener("click", async () => {
         try {
@@ -2644,7 +2765,7 @@
         const queryButton = event.target.closest("[data-metadata-use-query]");
         if (queryButton && dom.metadataIndexSearchInput) {
           dom.metadataIndexSearchInput.value = queryButton.getAttribute("data-metadata-use-query") || "";
-          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
+          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadEntityGraph()]);
           return;
         }
         const copyButton = event.target.closest("[data-metadata-copy-url]");
@@ -2652,6 +2773,40 @@
           const url = copyButton.getAttribute("data-metadata-copy-url") || "";
           const ok = await copyTextToClipboard(url);
           setSettingsStatus(ok ? "Discovery URL copied." : "No URL available.", !ok);
+        }
+      });
+
+      dom.subscriptionDiscoveryList?.addEventListener("click", async (event) => {
+        const explorerButton = event.target.closest("[data-open-explorer]");
+        if (explorerButton) {
+          try {
+            await handleOpenExplorerButton(explorerButton);
+          } catch (error) {
+            setSettingsStatus(error.message, true);
+          }
+          return;
+        }
+        const saveButton = event.target.closest("[data-save-collection]");
+        if (saveButton) {
+          try {
+            await handleSaveCollectionButton(saveButton);
+            setSettingsStatus("Saved to collection.");
+          } catch (error) {
+            setSettingsStatus(error.message, true);
+          }
+          return;
+        }
+        const queryButton = event.target.closest("[data-metadata-use-query]");
+        if (queryButton && dom.metadataIndexSearchInput) {
+          dom.metadataIndexSearchInput.value = queryButton.getAttribute("data-metadata-use-query") || "";
+          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadEntityGraph()]);
+          return;
+        }
+        const copyButton = event.target.closest("[data-metadata-copy-url]");
+        if (copyButton) {
+          const url = copyButton.getAttribute("data-metadata-copy-url") || "";
+          const ok = await copyTextToClipboard(url);
+          setSettingsStatus(ok ? "URL copied." : "No URL available.", !ok);
         }
       });
 
@@ -2693,7 +2848,7 @@
             const type = String(queryButton.getAttribute("data-entity-query-type") || "").trim().toLowerCase();
             dom.metadataIndexKindFilter.value = ["host", "episode"].includes(type) ? type : "";
           }
-          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
+          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadEntityGraph()]);
           focusLibrarySection("libraryMetadataExplorerSection");
         }
       });
@@ -2767,7 +2922,7 @@
               const type = String(queryButton.getAttribute("data-entity-query-type") || "").trim().toLowerCase();
               dom.metadataIndexKindFilter.value = ["host", "episode"].includes(type) ? type : "";
             }
-            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
+            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadEntityGraph()]);
             focusLibrarySection("libraryMetadataExplorerSection");
           }
         });
@@ -2790,7 +2945,7 @@
           } else if (dom.metadataIndexSearchInput) {
             dom.metadataIndexSearchInput.value = value;
           }
-          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadEntityGraph()]);
+          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadEntityGraph()]);
         });
       }
 

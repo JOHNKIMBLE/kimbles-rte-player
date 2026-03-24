@@ -1,4 +1,4 @@
-﻿const fs = require("node:fs");
+const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
@@ -132,6 +132,20 @@ function getUtcNowParts(date = new Date()) {
     day,
     minuteOfDay: Number.isFinite(minuteOfDay) ? minuteOfDay : 0
   };
+}
+
+function episodePublishedSortMillis(episode) {
+  const ts = Number(episode?.broadcastStartTs || 0);
+  if (Number.isFinite(ts) && ts > 0) {
+    return ts * 1000;
+  }
+  const parsed = Date.parse(String(episode?.publishedTime || "").trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortEpisodesNewestFirstForScheduler(episodes) {
+  const list = (Array.isArray(episodes) ? episodes : []).filter((episode) => episode?.clipId);
+  return list.sort((a, b) => episodePublishedSortMillis(b) - episodePublishedSortMillis(a));
 }
 
 function shouldRunInScheduleWindow(schedule, now = new Date()) {
@@ -720,7 +734,8 @@ function createSchedulerStore({
       }
     }
 
-    for (const episode of latest.episodes.slice(0, 10)) {
+    const newestFirst = sortEpisodesNewestFirstForScheduler(latest.episodes).slice(0, 10);
+    for (const episode of newestFirst) {
       if (!episode.clipId) {
         continue;
       }

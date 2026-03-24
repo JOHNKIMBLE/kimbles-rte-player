@@ -90,7 +90,7 @@ const {
   resolveProgramRule,
   mergeRuleSettings
 } = require("./lib/download-rules");
-const { listProgramFeedFiles, writeProgramFeedFiles } = require("./lib/feeds");
+const { listProgramFeedFiles, writeProgramFeedFiles, rebuildProgramFeedsFromSchedules } = require("./lib/feeds");
 const { readCueChaptersForAudio } = require("./lib/cue-reader");
 const { runCueTaskInChild } = require("./lib/cue-worker-client");
 const {
@@ -102,7 +102,8 @@ const {
   applyMetadataRepairRules,
   searchMetadataIndex,
   discoverMetadataIndex,
-  buildCollectionRecommendations
+  buildCollectionRecommendations,
+  buildSubscriptionDiscoveryRecommendations
 } = require("./lib/metadata-index");
 const { createMetadataRepairStore } = require("./lib/metadata-repair-store");
 const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
@@ -2197,6 +2198,35 @@ const kexpScheduler = createSchedulerStore({
     })
 });
 
+async function executeServerProgramFeedsRefresh() {
+  try {
+    const result = await rebuildProgramFeedsFromSchedules({
+      feedExportEnabled: readSettings().feedExportEnabled,
+      getDataDir: feedDataDirFor,
+      sources: [
+        { sourceType: "rte", listSchedules: () => scheduler.list(), getEpisodes: (url, page) => getProgramEpisodes(url, page) },
+        { sourceType: "bbc", listSchedules: () => bbcScheduler.list(), getEpisodes: (url, page) => getBbcProgramEpisodes(url, runYtDlpJson, page) },
+        { sourceType: "wwf", listSchedules: () => wwfScheduler.list(), getEpisodes: (url, page) => getWwfProgramEpisodes(url, page) },
+        { sourceType: "nts", listSchedules: () => ntsScheduler.list(), getEpisodes: (url, page) => getNtsProgramEpisodes(url, page) },
+        { sourceType: "fip", listSchedules: () => fipScheduler.list(), getEpisodes: (url, page) => getFipProgramEpisodes(url, page) },
+        { sourceType: "kexp", listSchedules: () => kexpScheduler.list(), getEpisodes: (url, page) => getKexpProgramEpisodes(url, page) }
+      ]
+    });
+    if (result.ok && result.rebuilt > 0) {
+      patchMaterializedFeeds();
+    }
+    return { ...result, feeds: listAllProgramFeeds() };
+  } catch (error) {
+    return {
+      ok: false,
+      rebuilt: 0,
+      errors: [],
+      message: String(error?.message || error || "Feed refresh failed"),
+      feeds: listAllProgramFeeds()
+    };
+  }
+}
+
 if (process.env.NODE_ENV !== "test") {
   materializedMetadataCache = getMaterializedMetadataSnapshot();
   setTimeout(() => {
@@ -3100,6 +3130,11 @@ app.get("/api/feeds", (_req, res) => {
   res.json({ feeds: listAllProgramFeeds() });
 });
 
+app.post("/api/feeds/refresh", async (_req, res) => {
+  const payload = await executeServerProgramFeedsRefresh();
+  res.json(payload);
+});
+
 app.get("/api/metadata/search", async (req, res) => {
   try {
     const snapshot = await ensureMaterializedMetadata();
@@ -3181,6 +3216,20 @@ app.get("/api/metadata/discover", async (req, res) => {
         limit: Number(req.query.limit || 12)
       }
     );
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/metadata/subscription-discovery", async (req, res) => {
+  try {
+    const snapshot = await ensureMaterializedMetadata({ allowStale: true });
+    const result = buildSubscriptionDiscoveryRecommendations(snapshot.index, {
+      limit: Number(req.query.limit || 12),
+      sourceType: String(req.query.sourceType || ""),
+      query: String(req.query.q || "")
+    });
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });

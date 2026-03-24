@@ -1104,6 +1104,13 @@ button:disabled {
 @media (max-width: 700px) {
   .health-grid { grid-template-columns: repeat(3, 1fr); }
 }
+.health-card-interactive {
+  cursor: pointer;
+}
+.health-card-interactive:focus-visible {
+  outline: 2px solid var(--accent, #2ec4b6);
+  outline-offset: 2px;
+}
 .health-card {
   background: var(--itembg);
   border-radius: 6px;
@@ -1304,6 +1311,10 @@ button:disabled {
 .scheduler-v-muted {
   color: var(--muted);
   font-size: 0.88rem;
+}
+.scheduler-v-stack {
+  display: block;
+  margin-top: 0.12rem;
 }
 .scheduler-latest-genres {
   margin-top: 0.12rem;
