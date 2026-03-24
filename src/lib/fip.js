@@ -178,6 +178,21 @@ function parseDurationSeconds(str) {
   return 0;
 }
 
+/** Drop ?query and #fragment without regex backtracking on uncontrolled URLs. */
+function stripUrlQueryAndHash(input) {
+  const str = String(input || "");
+  let end = str.length;
+  const q = str.indexOf("?");
+  const h = str.indexOf("#");
+  if (q >= 0) {
+    end = Math.min(end, q);
+  }
+  if (h >= 0) {
+    end = Math.min(end, h);
+  }
+  return str.slice(0, end);
+}
+
 async function fetchJson(url, extraHeaders = {}) {
   const safe = assertUrlHostSuffixes(url, FIP_FETCH_SUFFIXES, "FIP");
   const headers = { ...FETCH_HEADERS, Accept: "application/json", ...extraHeaders };
@@ -1175,7 +1190,7 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
   if (!startTs) {
     // Fetch episode /__data.json to extract playerInfo timing
     try {
-      const cleanUrl = url.replace(/[?#].*$/, "");
+      const cleanUrl = stripUrlQueryAndHash(url);
       const dataUrl  = cleanUrl.endsWith("/__data.json") ? cleanUrl : `${cleanUrl}/__data.json`;
       const json     = await fetchJson(dataUrl);
       const nodes    = Array.isArray(json?.nodes) ? json.nodes : [];

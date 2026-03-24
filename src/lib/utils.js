@@ -1,38 +1,80 @@
 // Shared utilities used across all source lib files (rte, bbc, nts, worldwidefm, fip).
 
+/** Semicolon-terminated named refs (no leading &), longest checked first where needed. */
+const NAMED_HTML_ENTITIES = new Map(
+  Object.entries({
+    hellip: "\u2026",
+    mdash: "\u2014",
+    ndash: "\u2013",
+    rsquo: "\u2019",
+    lsquo: "\u2018",
+    apos: "'",
+    quot: '"',
+    amp: "&",
+    nbsp: " ",
+    lt: "<",
+    gt: ">"
+  })
+);
+
+/** One linear pass over `&...;` spans (no chained .replace). */
+function decodeHtmlOnce(sIn) {
+  const s = String(sIn || "");
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (s.charCodeAt(i) !== 38 /* & */) {
+      out += s[i];
+      i += 1;
+      continue;
+    }
+    const semi = s.indexOf(";", i + 1);
+    if (semi < 0 || semi - i > 48) {
+      out += "&";
+      i += 1;
+      continue;
+    }
+    const inner = s.slice(i + 1, semi);
+    let rep = null;
+
+    if (/^#[Xx][0-9a-fA-F]+$/.test(inner)) {
+      const code = Number.parseInt(inner.slice(2), 16);
+      if (Number.isFinite(code) && code >= 0 && code <= 0x10ffff) {
+        rep = String.fromCodePoint(code);
+      }
+    } else if (/^#[0-9]+$/.test(inner)) {
+      const code = Number(inner.slice(1));
+      if (Number.isFinite(code) && code >= 0 && code <= 0x10ffff) {
+        rep = String.fromCodePoint(code);
+      }
+    } else {
+      rep = NAMED_HTML_ENTITIES.get(inner.toLowerCase()) ?? null;
+    }
+
+    if (rep != null) {
+      out += rep;
+      i = semi + 1;
+    } else {
+      out += "&";
+      i += 1;
+    }
+  }
+  return out;
+}
+
 /**
- * Decode HTML entities. Numeric references run before named entities so nested forms
- * resolve in one pass (shared across libs to avoid duplicate decode chains).
+ * Decode HTML entities (bounded passes so nested forms like &amp;#38; still resolve).
  */
 function decodeHtml(input) {
-  return String(input || "")
-    .replace(/&#x([0-9a-fA-F]+);/gi, (match, hex) => {
-      const code = Number.parseInt(hex, 16);
-      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
-        return match;
-      }
-      return String.fromCodePoint(code);
-    })
-    .replace(/&#(\d+);/g, (match, num) => {
-      const code = Number(num);
-      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
-        return match;
-      }
-      return String.fromCodePoint(code);
-    })
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#039;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&ndash;/g, "\u2013")
-    .replace(/&mdash;/g, "\u2014")
-    .replace(/&rsquo;/g, "\u2019")
-    .replace(/&lsquo;/g, "\u2018")
-    .replace(/&hellip;/g, "\u2026");
+  let cur = String(input || "");
+  for (let p = 0; p < 12; p += 1) {
+    const next = decodeHtmlOnce(cur);
+    if (next === cur) {
+      return cur;
+    }
+    cur = next;
+  }
+  return cur;
 }
 
 /** Decode HTML entities and collapse whitespace. */
