@@ -54,6 +54,42 @@ function matchesListFilter(values, expected) {
   return normalizeMetadataList(values).some((value) => normalizeText(value).toLowerCase() === wanted);
 }
 
+/**
+ * Normalize programme URLs so subscription rows match harvest rows (trailing slash, hostname case).
+ */
+function normalizeProgramUrlForSubscriptionMatch(url) {
+  const raw = normalizeText(url);
+  if (!raw) {
+    return "";
+  }
+  try {
+    const u = new URL(raw);
+    const path = u.pathname.replace(/\/+/g, "/").replace(/\/+$/, "") || "";
+    return `${u.protocol}//${u.hostname.toLowerCase()}${path}`.toLowerCase();
+  } catch {
+    return raw.replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+/** Discovery rows often use presenter as title and show name as programTitle; do not use title || programTitle alone. */
+function rowMatchesSubscribedProgramTitles(row, savedTitleKeys) {
+  const st = normalizeText(row.sourceType).toLowerCase();
+  if (!st) {
+    return false;
+  }
+  const candidates = [
+    normalizeText(row.title).toLowerCase(),
+    normalizeText(row.programTitle).toLowerCase(),
+    normalizeText(row.subtitle).toLowerCase()
+  ].filter(Boolean);
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (savedTitleKeys.has(`${st}|${candidates[i]}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function applyMetadataRepairRules(index, repairRules = []) {
   const docs = Array.isArray(index) ? index : [];
   const rules = (Array.isArray(repairRules) ? repairRules : [])
@@ -424,7 +460,7 @@ function buildCollectionRecommendations(index, collection, options = {}) {
   const query = queryOverride || terms.slice(0, 6).join(" ");
   const savedKeys = new Set(entries.map((entry) => [
     normalizeText(entry.sourceType).toLowerCase(),
-    normalizeText(entry.programUrl),
+    normalizeProgramUrlForSubscriptionMatch(entry.programUrl),
     normalizeText(entry.episodeUrl),
     normalizeText(entry.title).toLowerCase(),
     normalizeText(entry.value).toLowerCase()
@@ -457,13 +493,12 @@ function buildCollectionRecommendations(index, collection, options = {}) {
     for (const row of Array.isArray(rows) ? rows : []) {
       const rowKey = [
         normalizeText(row.sourceType).toLowerCase(),
-        normalizeText(row.programUrl),
+        normalizeProgramUrlForSubscriptionMatch(row.programUrl),
         normalizeText(row.episodeUrl),
         normalizeText(row.title).toLowerCase(),
         normalizeText(row.programTitle).toLowerCase()
       ].join("|");
-      const titleKey = `${normalizeText(row.sourceType).toLowerCase()}|${normalizeText(row.title || row.programTitle).toLowerCase()}`;
-      if (savedKeys.has(rowKey) || savedTitleKeys.has(titleKey) || seen.has(rowKey)) {
+      if (savedKeys.has(rowKey) || rowMatchesSubscribedProgramTitles(row, savedTitleKeys) || seen.has(rowKey)) {
         continue;
       }
       seen.add(rowKey);
@@ -520,7 +555,7 @@ function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
   const query = queryOverride || terms.slice(0, 8).join(" ");
   const savedKeys = new Set(subscriptions.map((entry) => [
     normalizeText(entry.sourceType).toLowerCase(),
-    normalizeText(entry.programUrl),
+    normalizeProgramUrlForSubscriptionMatch(entry.programUrl),
     normalizeText(entry.episodeUrl),
     normalizeText(entry.title).toLowerCase(),
     normalizeText(entry.programTitle).toLowerCase()
@@ -536,7 +571,7 @@ function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
   const subscribedProgramUrls = new Map();
   for (const sub of subscriptions) {
     const st = normalizeText(sub.sourceType).toLowerCase();
-    const url = normalizeText(sub.programUrl);
+    const url = normalizeProgramUrlForSubscriptionMatch(sub.programUrl);
     if (!st || !url) {
       continue;
     }
@@ -563,7 +598,7 @@ function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
 
   function isSubscribedProgramUrl(row) {
     const st = normalizeText(row.sourceType).toLowerCase();
-    const url = normalizeText(row.programUrl);
+    const url = normalizeProgramUrlForSubscriptionMatch(row.programUrl);
     if (!st || !url) {
       return false;
     }
@@ -581,13 +616,12 @@ function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
       }
       const rowKey = [
         normalizeText(row.sourceType).toLowerCase(),
-        normalizeText(row.programUrl),
+        normalizeProgramUrlForSubscriptionMatch(row.programUrl),
         normalizeText(row.episodeUrl),
         normalizeText(row.title).toLowerCase(),
         normalizeText(row.programTitle).toLowerCase()
       ].join("|");
-      const titleKey = `${normalizeText(row.sourceType).toLowerCase()}|${normalizeText(row.title || row.programTitle).toLowerCase()}`;
-      if (savedKeys.has(rowKey) || savedTitleKeys.has(titleKey) || seen.has(rowKey)) {
+      if (savedKeys.has(rowKey) || rowMatchesSubscribedProgramTitles(row, savedTitleKeys) || seen.has(rowKey)) {
         continue;
       }
       seen.add(rowKey);
