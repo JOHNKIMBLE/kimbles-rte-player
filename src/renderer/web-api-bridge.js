@@ -713,6 +713,7 @@
     getEntityGraphEntity: (payload = {}) => API.getJson(`/api/entity-graph/entity?entityId=${encodeURIComponent(payload.entityId || "")}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     discoverMetadataIndex: (payload = {}) => API.getJson(`/api/metadata/discover?q=${encodeURIComponent(payload.query || "")}&sourceType=${encodeURIComponent(payload.sourceType || "")}&kind=${encodeURIComponent(payload.kind || "")}&limit=${encodeURIComponent(payload.limit || 12)}${payload.forceRefresh ? "&forceRefresh=true" : ""}`),
     discoverSubscriptionPrograms: (payload = {}) => API.getJson(`/api/metadata/subscription-discovery?limit=${encodeURIComponent(payload.limit || 12)}&sourceType=${encodeURIComponent(payload.sourceType || "")}&q=${encodeURIComponent(payload.query || "")}`),
+    discoverForYouPrograms: (payload = {}) => API.getJson(`/api/metadata/for-you?limit=${encodeURIComponent(payload.limit || 16)}`),
     refreshMetadataHarvest: () => API.sendJson("/api/metadata/harvest-refresh", "POST", {}),
     refreshMetadataHarvestSource: (sourceType, options = {}) => API.sendJson("/api/metadata/harvest-refresh/source", "POST", {
       sourceType,

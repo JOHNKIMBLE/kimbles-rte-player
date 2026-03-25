@@ -113,7 +113,8 @@ const {
   searchMetadataIndex,
   discoverMetadataIndex,
   buildCollectionRecommendations,
-  buildSubscriptionDiscoveryRecommendations
+  buildSubscriptionDiscoveryRecommendations,
+  buildForYouRecommendations
 } = require("./lib/metadata-index");
 const { createMetadataRepairStore } = require("./lib/metadata-repair-store");
 const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
@@ -3248,6 +3249,18 @@ app.get("/api/metadata/subscription-discovery", async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error("[SUBS] subscription-discovery FAILED:", error?.stack || error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/metadata/for-you", async (req, res) => {
+  try {
+    const snapshot = await ensureMaterializedMetadata({ allowStale: true });
+    const result = buildForYouRecommendations(snapshot.index, {
+      limit: Number(req.query.limit || 16)
+    });
+    res.json(result);
+  } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
