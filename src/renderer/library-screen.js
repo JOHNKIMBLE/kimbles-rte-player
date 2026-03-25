@@ -32,6 +32,13 @@
       facets: { hosts: [], genres: [], locations: [] },
       message: ""
     };
+    let forYouDiscoveryState = {
+      subscriptionCount: 0,
+      totalCandidates: 0,
+      results: [],
+      diversifiedSourceCount: 0,
+      message: ""
+    };
     let entityGraphSearchTimer = null;
     let entityGraphState = { total: 0, results: [], metrics: { entityCount: 0, relationCount: 0, sourceCount: 0 } };
     let entityProfileState = { entity: null, metrics: { entityCount: 0, relationCount: 0, sourceCount: 0 } };
@@ -409,13 +416,17 @@
         return;
       }
       const list = Array.isArray(metrics) ? metrics.filter(Boolean) : [];
-      container.innerHTML = list.map((metric) => `
-        <div class="library-metric-card library-metric-${escapeHtml(String(metric.tone || "neutral"))}">
+      container.innerHTML = list.map((metric) => {
+        const summary = [String(metric.label || ""), String(metric.value ?? ""), metric.detail ? String(metric.detail) : ""]
+          .filter(Boolean)
+          .join(", ");
+        return `
+        <div class="library-metric-card library-metric-${escapeHtml(String(metric.tone || "neutral"))}" role="group" aria-label="${escapeHtml(summary)}">
           <div class="library-metric-label">${escapeHtml(String(metric.label || ""))}</div>
           <div class="library-metric-value">${escapeHtml(String(metric.value ?? ""))}</div>
           ${metric.detail ? `<div class="library-metric-detail">${escapeHtml(String(metric.detail))}</div>` : ""}
-        </div>
-      `).join("");
+        </div>`;
+      }).join("");
     }
 
     function buildFeedMetrics(entries) {
@@ -478,6 +489,18 @@
         { label: "Candidates", value: Number(result?.totalCandidates || 0), detail: "Harvested pool", tone: "neutral" },
         { label: "Hosts", value: Array.isArray(facets.hosts) ? facets.hosts.length : 0, detail: "Quick chips", tone: "neutral" },
         { label: "Genres", value: Array.isArray(facets.genres) ? facets.genres.length : 0, detail: "Quick chips", tone: "neutral" }
+      ];
+    }
+
+    function buildForYouMetrics(result) {
+      const rows = Array.isArray(result?.results) ? result.results : [];
+      const sources = new Set(rows.map((r) => String(r.sourceType || "").toLowerCase()).filter(Boolean));
+      const div = Number(result?.diversifiedSourceCount || sources.size || 0);
+      return [
+        { label: "Suggestions", value: rows.length, detail: "Cross-source picks", tone: rows.length ? "ok" : "neutral" },
+        { label: "Sources", value: div, detail: "Networks in this row", tone: div > 1 ? "ok" : "neutral" },
+        { label: "Subscriptions", value: Number(result?.subscriptionCount || 0), detail: "Listening profile", tone: result?.subscriptionCount ? "ok" : "neutral" },
+        { label: "Candidates", value: Number(result?.totalCandidates || 0), detail: "Scored pool", tone: "neutral" }
       ];
     }
 
@@ -1158,8 +1181,34 @@
       renderSubscriptionDiscovery();
     }
 
+    async function loadForYouDiscovery() {
+      if (typeof window.rteDownloader?.discoverForYouPrograms !== "function") {
+        forYouDiscoveryState = {
+          subscriptionCount: 0,
+          totalCandidates: 0,
+          results: [],
+          diversifiedSourceCount: 0,
+          message: "For-you suggestions are not available in this build."
+        };
+        renderForYouDiscovery();
+        return;
+      }
+      try {
+        forYouDiscoveryState = await window.rteDownloader.discoverForYouPrograms({ limit: 16 });
+      } catch {
+        forYouDiscoveryState = {
+          subscriptionCount: 0,
+          totalCandidates: 0,
+          results: [],
+          diversifiedSourceCount: 0,
+          message: "Could not load for-you suggestions."
+        };
+      }
+      renderForYouDiscovery();
+    }
+
     function reloadMetadataIndexAndDiscovery() {
-      return Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery()]);
+      return Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadForYouDiscovery()]);
     }
 
     async function loadEntityGraph(options = {}) {
@@ -1211,6 +1260,7 @@
         loadMetadataIndex(),
         loadMetadataDiscovery({ forceRefresh }),
         loadSubscriptionDiscovery(),
+        loadForYouDiscovery(),
         loadEntityGraph({ forceRefresh })
       ]).then(async () => {
         if (entityProfileState?.entity?.id) {
@@ -1313,6 +1363,59 @@
         return;
       }
       dom.subscriptionDiscoveryList.innerHTML = rows.map((entry) => {
+        const sourceKey = String(entry.sourceType || "");
+        const sourceLabel = getSourceLabel(sourceKey);
+        const canCopyUrl = Boolean(entry.programUrl || entry.episodeUrl);
+        const targetUrl = entry.programUrl || entry.episodeUrl || "";
+        const explorerPayload = buildExplorerPayload(entry);
+        const score = Number(entry.recommendationScore || 0);
+        return `<div class="item feed-entry">
+          <div class="feed-entry-main">
+            <div class="item-title"><span class="source-badge source-badge-${escapeHtml(sourceKey)}">${escapeHtml(sourceLabel)}</span> ${escapeHtml(entry.title || "Untitled")}</div>
+            <div class="item-meta">${escapeHtml(entry.kindLabel || "Item")}${score ? ` • score ${escapeHtml(String(score))}` : ""}</div>
+            ${renderMetadataDetails(entry)}
+          </div>
+          <div class="feed-actions">
+            <button type="button" class="secondary" data-open-explorer="${encodeDataPayload(explorerPayload)}">Open Explorer</button>
+            <button type="button" class="secondary" data-save-collection="${encodeDataPayload(buildCollectionEntryPayload(entry))}">Save</button>
+            <button type="button" class="secondary" data-metadata-use-query="${escapeHtml(String(entry.title || ""))}">Find Similar</button>
+            ${canCopyUrl ? `<button type="button" class="secondary" data-metadata-copy-url="${escapeHtml(targetUrl)}">Copy URL</button>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderForYouDiscovery() {
+      if (!dom.forYouDiscoveryList) {
+        return;
+      }
+      const result = forYouDiscoveryState || {
+        subscriptionCount: 0,
+        totalCandidates: 0,
+        results: [],
+        diversifiedSourceCount: 0,
+        message: ""
+      };
+      const rows = Array.isArray(result.results) ? result.results : [];
+      const subs = Number(result.subscriptionCount || 0);
+      if (dom.forYouDiscoverySummary) {
+        if (result.message) {
+          dom.forYouDiscoverySummary.textContent = result.message;
+        } else if (!subs) {
+          dom.forYouDiscoverySummary.textContent = "Add subscriptions and refresh the discovery cache to see cross-source suggestions.";
+        } else if (rows.length) {
+          const div = Number(result.diversifiedSourceCount || 0);
+          dom.forYouDiscoverySummary.textContent = `Based on ${subs} subscription${subs === 1 ? "" : "s"} — ${rows.length} picks across ${div || 1} source${(div || 1) === 1 ? "" : "s"} (from ${Number(result.totalCandidates || 0)} candidates).`;
+        } else {
+          dom.forYouDiscoverySummary.textContent = "No cross-source matches yet. Refresh discovery or harvest more metadata.";
+        }
+      }
+      renderMetricCards(dom.forYouDiscoveryMetrics, buildForYouMetrics(result));
+      if (!rows.length) {
+        dom.forYouDiscoveryList.innerHTML = `<div class="item"><div class="item-meta">${escapeHtml(result.message || "No suggestions yet.")}</div></div>`;
+        return;
+      }
+      dom.forYouDiscoveryList.innerHTML = rows.map((entry) => {
         const sourceKey = String(entry.sourceType || "");
         const sourceLabel = getSourceLabel(sourceKey);
         const canCopyUrl = Boolean(entry.programUrl || entry.episodeUrl);
@@ -2594,10 +2697,10 @@
           setSettingsStatus("Refreshing harvested discovery metadata...");
           if (typeof window.rteDownloader?.refreshMetadataHarvest === "function") {
             const result = await window.rteDownloader.refreshMetadataHarvest();
-            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadEntityGraph({ forceRefresh: true })]);
+            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadForYouDiscovery(), loadEntityGraph({ forceRefresh: true })]);
             setSettingsStatus(`Discovery cache refreshed (${Number(result?.count || 0)} harvested items).`);
           } else {
-            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadEntityGraph({ forceRefresh: true })]);
+            await Promise.all([loadMetadataIndex(), loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadForYouDiscovery(), loadEntityGraph({ forceRefresh: true })]);
             setSettingsStatus("Discovery cache refreshed.");
           }
         } catch (error) {
@@ -2605,10 +2708,13 @@
         }
       });
       dom.metadataDiscoveryRefreshBtn?.addEventListener("click", () => {
-        Promise.all([loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery()]).catch((error) => setSettingsStatus(error.message, true));
+        Promise.all([loadMetadataDiscovery({ forceRefresh: true }), loadSubscriptionDiscovery(), loadForYouDiscovery()]).catch((error) => setSettingsStatus(error.message, true));
       });
       dom.subscriptionDiscoveryRefreshBtn?.addEventListener("click", () => {
         loadSubscriptionDiscovery().catch((error) => setSettingsStatus(error.message, true));
+      });
+      dom.forYouDiscoveryRefreshBtn?.addEventListener("click", () => {
+        loadForYouDiscovery().catch((error) => setSettingsStatus(error.message, true));
       });
       dom.metadataRepairAddBtn?.addEventListener("click", async () => {
         try {
@@ -2800,6 +2906,40 @@
         if (queryButton && dom.metadataIndexSearchInput) {
           dom.metadataIndexSearchInput.value = queryButton.getAttribute("data-metadata-use-query") || "";
           await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadEntityGraph()]);
+          return;
+        }
+        const copyButton = event.target.closest("[data-metadata-copy-url]");
+        if (copyButton) {
+          const url = copyButton.getAttribute("data-metadata-copy-url") || "";
+          const ok = await copyTextToClipboard(url);
+          setSettingsStatus(ok ? "URL copied." : "No URL available.", !ok);
+        }
+      });
+
+      dom.forYouDiscoveryList?.addEventListener("click", async (event) => {
+        const explorerButton = event.target.closest("[data-open-explorer]");
+        if (explorerButton) {
+          try {
+            await handleOpenExplorerButton(explorerButton);
+          } catch (error) {
+            setSettingsStatus(error.message, true);
+          }
+          return;
+        }
+        const saveButton = event.target.closest("[data-save-collection]");
+        if (saveButton) {
+          try {
+            await handleSaveCollectionButton(saveButton);
+            setSettingsStatus("Saved to collection.");
+          } catch (error) {
+            setSettingsStatus(error.message, true);
+          }
+          return;
+        }
+        const queryButton = event.target.closest("[data-metadata-use-query]");
+        if (queryButton && dom.metadataIndexSearchInput) {
+          dom.metadataIndexSearchInput.value = queryButton.getAttribute("data-metadata-use-query") || "";
+          await Promise.all([loadMetadataIndex(), loadMetadataDiscovery(), loadSubscriptionDiscovery(), loadForYouDiscovery(), loadEntityGraph()]);
           return;
         }
         const copyButton = event.target.closest("[data-metadata-copy-url]");

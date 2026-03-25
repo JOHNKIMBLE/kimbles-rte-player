@@ -106,7 +106,8 @@ const {
   searchMetadataIndex,
   discoverMetadataIndex,
   buildCollectionRecommendations,
-  buildSubscriptionDiscoveryRecommendations
+  buildSubscriptionDiscoveryRecommendations,
+  buildForYouRecommendations
 } = require("./lib/metadata-index");
 const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
 const { createCollectionsStore } = require("./lib/collections-store");
@@ -2949,6 +2950,10 @@ ipcMain.handle("metadata-discover", async (_event, payload = {}) => {
 ipcMain.handle("metadata-subscription-discovery", async (_event, payload = {}) => {
   const snapshot = await ensureMaterializedMetadata();
   return buildSubscriptionDiscoveryRecommendations(snapshot.index, payload || {});
+});
+ipcMain.handle("metadata-for-you-discovery", async (_event, payload = {}) => {
+  const snapshot = await ensureMaterializedMetadata();
+  return buildForYouRecommendations(snapshot.index, payload || {});
 });
 ipcMain.handle("metadata-harvest-refresh", async () => {
   const items = await refreshMetadataHarvestCache(true);

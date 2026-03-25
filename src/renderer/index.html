@@ -9,11 +9,12 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#schedulesTabContent">Skip to library</a>
   <main class="app-shell">
     <header>
       <div class="row">
         <h1>Kimble's RTÉ Player</h1>
-        <button id="themeToggleBtn" class="secondary">Light Mode</button>
+        <button type="button" id="themeToggleBtn" class="secondary" aria-label="Toggle light or dark theme">Light Mode</button>
       </div>
       <p class="hint">Live player, program browser, per-episode downloads, and auto scheduler.</p>
       <div class="row tab-row">
@@ -497,12 +498,13 @@
         <div class="row" style="justify-content:space-between;align-items:center;">
           <h2 style="margin:0;font-size:1rem;">Library Jump</h2>
           <div class="row" style="gap:0.5rem;margin-bottom:0;">
-            <button type="button" class="secondary" data-library-expand-all>Expand All</button>
-            <button type="button" class="secondary" data-library-collapse-all>Collapse All</button>
+            <button type="button" class="secondary" data-library-expand-all aria-label="Expand all library sections">Expand All</button>
+            <button type="button" class="secondary" data-library-collapse-all aria-label="Collapse all library sections">Collapse All</button>
           </div>
         </div>
-        <div id="libraryQuickNav" class="library-quick-nav">
+        <nav id="libraryQuickNav" class="library-quick-nav" aria-label="Jump to library sections">
           <button type="button" class="secondary library-jump-btn" data-library-jump="healthDashboardSection">Health</button>
+          <button type="button" class="secondary library-jump-btn" data-library-jump="libraryForYouSection">For you</button>
           <button type="button" class="secondary library-jump-btn" data-library-jump="subscriptionsSection">Subscriptions</button>
           <button type="button" class="secondary library-jump-btn" data-library-jump="libraryCollectionsSection">Collections</button>
           <button type="button" class="secondary library-jump-btn" data-library-jump="libraryEntityGraphSection">Graph</button>
@@ -512,8 +514,17 @@
           <button type="button" class="secondary library-jump-btn" data-library-jump="feedsSection">Feeds</button>
           <button type="button" class="secondary library-jump-btn" data-library-jump="queueSection">Queue</button>
           <button type="button" class="secondary library-jump-btn" data-library-jump="historySection">History</button>
-          <button type="button" class="secondary library-jump-btn" data-library-jump="diagnosticsSection">Diagnostics</button>
+        </nav>
+      </section>
+      <section class="panel" id="libraryForYouSection" data-library-section="for-you" data-library-label="For you">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">You may like</h2>
+          <button type="button" id="forYouDiscoveryRefreshBtn" class="secondary">Refresh</button>
         </div>
+        <p class="hint">Cross-source picks from your subscriptions and discovery cache. Excludes shows you already subscribe to.</p>
+        <div id="forYouDiscoverySummary" class="hint" aria-live="polite">Loading suggestions…</div>
+        <div id="forYouDiscoveryMetrics" class="library-metrics-grid" aria-label="Suggestion summary"></div>
+        <div id="forYouDiscoveryList" class="list" aria-label="Suggested programs"></div>
       </section>
       <section class="panel" id="subscriptionsSection" data-library-section="subscriptions" data-library-label="Subscriptions">
         <div class="row" style="justify-content:space-between;align-items:center;">

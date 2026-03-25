@@ -436,6 +436,31 @@ function pickDiscoveryResults(pool, count) {
   return selected;
 }
 
+/**
+ * BBC programme/brand pages expose the canonical page title in
+ * `.br-masthead__title > a[href*="/programmes/"]` (presenter or programme name).
+ * Prefer this over loose HTML/JSON-LD when present — it matches what users see in the masthead.
+ */
+function extractBbcMastheadTitleHost(html, programTitle = "") {
+  const re = /<div[^>]*\bbr-masthead__title\b[^>]*>\s*<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i;
+  const m = String(html || "").match(re);
+  if (!m) {
+    return "";
+  }
+  const href = String(m[1] || "").trim();
+  const name = cleanText(stripHtml(m[2] || ""));
+  if (!name || !href) {
+    return "";
+  }
+  if (!/\/programmes\/[a-z0-9]+/i.test(href)) {
+    return "";
+  }
+  if (!isLikelyBbcHostName(name, programTitle)) {
+    return "";
+  }
+  return name;
+}
+
 function collectBbcPeople(value, bucket) {
   if (!value) {
     return;
@@ -473,6 +498,10 @@ function collectBbcPeople(value, bucket) {
 
 function extractBbcHostsFromHtml(html, programTitle = "") {
   const hosts = [];
+  const mastheadHost = extractBbcMastheadTitleHost(html, programTitle);
+  if (mastheadHost) {
+    hosts.push(mastheadHost);
+  }
   for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
       const data = JSON.parse(match[1]);

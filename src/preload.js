@@ -154,6 +154,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   getEntityGraphEntity: (payload = {}) => ipcRenderer.invoke("entity-graph-detail", payload || {}),
   discoverMetadataIndex: (payload = {}) => ipcRenderer.invoke("metadata-discover", payload || {}),
   discoverSubscriptionPrograms: (payload = {}) => ipcRenderer.invoke("metadata-subscription-discovery", payload || {}),
+  discoverForYouPrograms: (payload = {}) => ipcRenderer.invoke("metadata-for-you-discovery", payload || {}),
   refreshMetadataHarvest: () => ipcRenderer.invoke("metadata-harvest-refresh"),
   refreshMetadataHarvestSource: (sourceType, options = {}) => ipcRenderer.invoke("metadata-harvest-refresh-source", {
     sourceType,

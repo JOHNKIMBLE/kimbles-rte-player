@@ -499,7 +499,7 @@ function buildCollectionRecommendations(index, collection, options = {}) {
 
 function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
   const docs = Array.isArray(index) ? index : buildMetadataIndex(index);
-  const limit = Math.max(1, Math.min(50, Number(options.limit || 12) || 12));
+  const limit = Math.max(1, Math.min(100, Number(options.limit || 12) || 12));
   const sourceType = normalizeText(options.sourceType).toLowerCase();
   const queryOverride = normalizeText(options.query);
   const subscriptions = docs.filter((doc) => normalizeText(doc.kind).toLowerCase() === "subscription" && (!sourceType || doc.sourceType === sourceType));
@@ -619,6 +619,71 @@ function buildSubscriptionDiscoveryRecommendations(index, options = {}) {
     results,
     facets: buildFacets(merged),
     message: ""
+  };
+}
+
+/**
+ * Subscription-weighted picks with per-source caps so one network does not fill the whole row
+ * (cross-source "you may like" for the Library home strip).
+ */
+function diversifyScoredRowsBySource(rows, displayLimit, maxPerSource) {
+  const sorted = [...(rows || [])].sort((a, b) => {
+    const diff = Number(b.recommendationScore || 0) - Number(a.recommendationScore || 0);
+    if (diff !== 0) {
+      return diff;
+    }
+    return getDocumentTimestamp(b) - getDocumentTimestamp(a);
+  });
+  const cap = Math.max(1, Number(maxPerSource) || 3);
+  const counts = new Map();
+  const picked = [];
+  const overflow = [];
+  for (const row of sorted) {
+    const st = normalizeText(row.sourceType).toLowerCase() || "_";
+    const n = counts.get(st) || 0;
+    if (n < cap) {
+      picked.push(row);
+      counts.set(st, n + 1);
+      if (picked.length >= displayLimit) {
+        return picked;
+      }
+    } else {
+      overflow.push(row);
+    }
+  }
+  for (const row of overflow) {
+    if (picked.length >= displayLimit) {
+      break;
+    }
+    picked.push(row);
+  }
+  return picked.slice(0, displayLimit);
+}
+
+function buildForYouRecommendations(index, options = {}) {
+  const displayLimit = Math.max(4, Math.min(48, Number(options.limit || 16) || 16));
+  const pool = buildSubscriptionDiscoveryRecommendations(index, {
+    sourceType: "",
+    query: "",
+    limit: 100
+  });
+  if (!Array.isArray(pool.results) || !pool.results.length) {
+    return {
+      ...pool,
+      forYou: true,
+      diversifiedSourceCount: 0
+    };
+  }
+  const maxPer = Math.max(2, Math.ceil(displayLimit / 6));
+  const diversified = diversifyScoredRowsBySource(pool.results, displayLimit, maxPer);
+  const diversifiedSourceCount = new Set(
+    diversified.map((row) => normalizeText(row.sourceType).toLowerCase()).filter(Boolean)
+  ).size;
+  return {
+    ...pool,
+    results: diversified,
+    forYou: true,
+    diversifiedSourceCount
   };
 }
 
@@ -909,5 +974,6 @@ module.exports = {
   searchMetadataIndex,
   discoverMetadataIndex,
   buildCollectionRecommendations,
-  buildSubscriptionDiscoveryRecommendations
+  buildSubscriptionDiscoveryRecommendations,
+  buildForYouRecommendations
 };

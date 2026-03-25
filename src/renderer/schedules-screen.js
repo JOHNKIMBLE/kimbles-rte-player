@@ -210,7 +210,7 @@
           dotClass = retries > 0 ? "health-dot-yellow" : "health-dot-green";
         }
         const lastRunStr = lastRun ? new Date(lastRun).toLocaleDateString() : "Never";
-        return `<div class="health-card health-card-interactive" role="button" tabindex="0" data-health-source="${escapeHtml(key)}" title="Open Subscriptions filtered to ${escapeHtml(name)}">
+        return `<div class="health-card health-card-interactive" role="button" tabindex="0" data-health-source="${escapeHtml(key)}" title="Open Subscriptions filtered to ${escapeHtml(name)}" aria-label="${escapeHtml(name)}: ${count} schedule${count !== 1 ? "s" : ""}, last run ${escapeHtml(lastRunStr)}${retries > 0 ? `, ${retries} retries pending` : ""}. Open subscriptions filtered to this source.">
           <div class="health-card-name"><span class="health-dot ${dotClass}"></span>${escapeHtml(name)}</div>
           <div class="health-card-meta">${count} schedule${count !== 1 ? "s" : ""}</div>
           <div class="health-card-meta">Last run: ${escapeHtml(lastRunStr)}</div>
