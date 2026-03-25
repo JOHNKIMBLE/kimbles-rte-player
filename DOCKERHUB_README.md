@@ -8,7 +8,7 @@ Image includes `yt-dlp`, `ffmpeg`, `songrec`, AtomicParsley, and Chromaprint/`fp
 
 - Six sources, live playback where supported, per-program explorers and episode downloads (KEXP includes extended archive when available)
 - `m4a` / `mp3` with embedded artwork, tags, tracklists, chapters; optional `.cue`
-- Schedulers, persistent download queue, Library (subscriptions, collections, feeds, metadata explorer, entity graph, diagnostics, vendor repair)
+- Schedulers, persistent download queue, Library (**You may like** cross-source suggestions, subscriptions, collections, feeds, metadata explorer, entity graph, diagnostics, vendor repair), keyboard- and screen-reader-friendly controls (skip link, focus outlines, labeled jump nav and metrics)
 - Settings: format, quality, naming, dedupe, tagging, feed export, webhooks, recognition (AudD / AcoustID / Songrec when configured)
 
 ## Quick start
