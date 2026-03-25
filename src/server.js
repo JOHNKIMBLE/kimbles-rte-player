@@ -3237,7 +3237,12 @@ app.get("/api/metadata/discover", async (req, res) => {
 
 app.get("/api/metadata/subscription-discovery", async (req, res) => {
   try {
-    console.log("[SUBS] subscription-discovery request", { sourceType: req.query.sourceType, q: req.query.q });
+    const subsSource = String(req.query.sourceType || "").trim();
+    const subsQ = String(req.query.q || "").trim();
+    console.log("[SUBS] subscription-discovery request", {
+      sourceType: subsSource || "(all sources)",
+      q: subsQ || "(no query)"
+    });
     const snapshot = await ensureMaterializedMetadata({ allowStale: true });
     console.log(`[SUBS] snapshot has ${Array.isArray(snapshot?.index) ? snapshot.index.length : 0} docs`);
     const result = buildSubscriptionDiscoveryRecommendations(snapshot.index, {
@@ -3245,7 +3250,7 @@ app.get("/api/metadata/subscription-discovery", async (req, res) => {
       sourceType: String(req.query.sourceType || ""),
       query: String(req.query.q || "")
     });
-    console.log(`[SUBS] returning ${Array.isArray(result?.programs) ? result.programs.length : 0} recommendations`);
+    console.log(`[SUBS] returning ${Array.isArray(result?.results) ? result.results.length : 0} recommendations`);
     res.json(result);
   } catch (error) {
     console.error("[SUBS] subscription-discovery FAILED:", error?.stack || error);
