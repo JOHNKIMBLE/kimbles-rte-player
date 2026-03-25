@@ -103,7 +103,6 @@ const {
   fetchRteProxyUpstream
 } = require("./lib/outbound-http");
 const { createMutationRateLimiter, createGlobalRateLimiter } = require("./lib/http-rate-limit");
-const rateLimit = require("express-rate-limit");
 const {
   buildMetadataIndex,
   buildScheduleMetadataDocs,
@@ -143,8 +142,8 @@ const app = express();
 app.use(createGlobalRateLimiter({ windowMs: 60_000, maxRequests: 5000 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(createMutationRateLimiter({ windowMs: 60_000, maxRequests: 500 }));
-const audioStreamLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
-const rootLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+const audioStreamLimiter = createGlobalRateLimiter({ windowMs: 60_000, maxRequests: 120 });
+const rootLimiter = createGlobalRateLimiter({ windowMs: 60_000, maxRequests: 60 });
 const rendererDir = path.join(__dirname, "renderer");
 app.use(express.static(rendererDir));
 app.use("/build", express.static(path.join(__dirname, "..", "build")));
@@ -738,14 +737,20 @@ function markMaterializedMetadataDirty(options = {}) {
 
 async function refreshMaterializedMetadataSnapshot(_options = {}) {
   if (materializedMetadataRefreshPromise) {
+    console.log("[META] refresh already in progress, coalescing");
     return materializedMetadataRefreshPromise;
   }
+  console.log("[META] refreshMaterializedMetadataSnapshot starting…");
   materializedMetadataRefreshPromise = Promise.resolve().then(() => {
     const snapshot = buildMaterializedMetadataSnapshot();
+    console.log(`[META] built snapshot: ${Array.isArray(snapshot?.index) ? snapshot.index.length : 0} docs`);
     materializedMetadataStore.replace(snapshot);
     materializedMetadataCache = snapshot;
     materializedMetadataDirty = false;
     return snapshot;
+  }).catch((err) => {
+    console.error("[META] refreshMaterializedMetadataSnapshot FAILED:", err?.stack || err);
+    throw err;
   }).finally(() => {
     materializedMetadataRefreshPromise = null;
   });
@@ -3231,21 +3236,27 @@ app.get("/api/metadata/discover", async (req, res) => {
 
 app.get("/api/metadata/subscription-discovery", async (req, res) => {
   try {
+    console.log("[SUBS] subscription-discovery request", { sourceType: req.query.sourceType, q: req.query.q });
     const snapshot = await ensureMaterializedMetadata({ allowStale: true });
+    console.log(`[SUBS] snapshot has ${Array.isArray(snapshot?.index) ? snapshot.index.length : 0} docs`);
     const result = buildSubscriptionDiscoveryRecommendations(snapshot.index, {
       limit: Number(req.query.limit || 12),
       sourceType: String(req.query.sourceType || ""),
       query: String(req.query.q || "")
     });
+    console.log(`[SUBS] returning ${Array.isArray(result?.programs) ? result.programs.length : 0} recommendations`);
     res.json(result);
   } catch (error) {
+    console.error("[SUBS] subscription-discovery FAILED:", error?.stack || error);
     res.status(400).json({ error: error.message });
   }
 });
 
 app.post("/api/metadata/harvest-refresh", async (_req, res) => {
   try {
+    console.log("[HARVEST] full harvest-refresh requested");
     const items = await refreshMetadataHarvestCache(true);
+    console.log(`[HARVEST] completed: ${items.length} items`);
     void sendNotificationsIfConfigured({
       event: "harvest.complete",
       source: "all",
@@ -3254,6 +3265,7 @@ app.post("/api/metadata/harvest-refresh", async (_req, res) => {
     });
     res.json({ ok: true, count: items.length, updatedAt: metadataHarvestStore.getUpdatedAt() });
   } catch (error) {
+    console.error("[HARVEST] harvest-refresh FAILED:", error?.stack || error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -4028,24 +4040,41 @@ app.get("/", rootLimiter, (_req, res) => {
   res.sendFile(path.join(rendererDir, "index.html"));
 });
 
+/* ── Global error handlers — surface all stderr ─────────────────────── */
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught exception:", err?.stack || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[ERROR] Unhandled rejection:", reason instanceof Error ? reason.stack : reason);
+});
+
+/* ── Express error-handling middleware (must be last use/route) ────── */
+app.use((err, _req, res, _next) => {
+  console.error("[EXPRESS]", err?.stack || err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 if (require.main === module) {
   scheduler.start();
-  scheduler.runAll().catch(() => {});
+  scheduler.runAll().catch((e) => console.error("[SCHED:rte] runAll failed:", e?.message || e));
   bbcScheduler.start();
-  bbcScheduler.runAll().catch(() => {});
+  bbcScheduler.runAll().catch((e) => console.error("[SCHED:bbc] runAll failed:", e?.message || e));
   wwfScheduler.start();
-  wwfScheduler.runAll().catch(() => {});
+  wwfScheduler.runAll().catch((e) => console.error("[SCHED:wwf] runAll failed:", e?.message || e));
   ntsScheduler.start();
-  ntsScheduler.runAll().catch(() => {});
+  ntsScheduler.runAll().catch((e) => console.error("[SCHED:nts] runAll failed:", e?.message || e));
   fipScheduler.start();
-  fipScheduler.runAll().catch(() => {});
+  fipScheduler.runAll().catch((e) => console.error("[SCHED:fip] runAll failed:", e?.message || e));
   kexpScheduler.start();
-  kexpScheduler.runAll().catch(() => {});
+  kexpScheduler.runAll().catch((e) => console.error("[SCHED:kexp] runAll failed:", e?.message || e));
 
   app.listen(PORT, () => {
     console.log(`Kimble's RTE Player API listening on ${PORT}`);
     console.log(`DATA_DIR=${DATA_DIR}`);
     console.log(`DOWNLOAD_DIR=${DOWNLOAD_DIR}`);
+    console.log(`Node ${process.version} | PID ${process.pid} | ${new Date().toISOString()}`);
   });
 }
 
