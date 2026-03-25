@@ -54,6 +54,8 @@ const SOURCE_SEED_TERMS = {
 
 const DEFAULT_SOURCE_HARVEST_CADENCE_MS = 1000 * 60 * 60 * 6;
 const DEFAULT_MAX_EPISODE_PAGES = 3;
+/** Retained harvest docs per `sourceType` after merge (richest + newest win). Not a global snapshot cap—the materialized index also includes subscriptions, feeds, and history. */
+const DEFAULT_MAX_HARVEST_DOCS_PER_SOURCE = 400;
 
 function tokenizePhrase(value) {
   return normalizeText(value)
@@ -160,7 +162,7 @@ function pickPreferredDoc(a, b) {
   return bTime >= aTime ? b : a;
 }
 
-function mergeHarvestDocs(existingDocs = [], incomingDocs = [], maxPerSource = 160) {
+function mergeHarvestDocs(existingDocs = [], incomingDocs = [], maxPerSource = DEFAULT_MAX_HARVEST_DOCS_PER_SOURCE) {
   const mergedByKey = new Map();
   for (const doc of [...(Array.isArray(existingDocs) ? existingDocs : []), ...(Array.isArray(incomingDocs) ? incomingDocs : [])]) {
     const key = [
@@ -540,6 +542,7 @@ async function harvestMetadataDocs({ sources = [], searchTerms = [] } = {}) {
 module.exports = {
   DEFAULT_TERMS,
   DEFAULT_SOURCE_HARVEST_CADENCE_MS,
+  DEFAULT_MAX_HARVEST_DOCS_PER_SOURCE,
   deriveHarvestSearchTerms,
   harvestMetadataDocs,
   mergeHarvestDocs,
