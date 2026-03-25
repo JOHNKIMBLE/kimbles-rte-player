@@ -7,6 +7,7 @@
   --accent: #06a0b4;
   --accent2: #d9791f;
   --muted: #b8c3cc;
+  --metric-sub: #c4ced6;
   --itembg: #161e27;
   --itemhover: #202a35;
   --inputbg: #0f141b;
@@ -22,6 +23,7 @@ body.light-mode {
   --accent: #0d6a6e;
   --accent2: #cc6b16;
   --muted: #5d6a72;
+  --metric-sub: #3d4c55;
   --itembg: #ffffff;
   --itemhover: #f8f6ef;
   --inputbg: #ffffff;
@@ -31,6 +33,37 @@ body.light-mode {
 
 * {
   box-sizing: border-box;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.65rem;
+  z-index: 10000;
+  padding: 0.45rem 0.9rem;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-radius: 6px;
+  text-decoration: none;
+  border: 2px solid transparent;
+}
+.skip-link:focus {
+  left: 0.65rem;
+  outline: none;
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+button:focus-visible,
+a:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 body {
@@ -1161,7 +1194,7 @@ button:disabled {
   margin-top: 0.12rem;
 }
 .library-metric-detail {
-  color: var(--muted);
+  color: var(--metric-sub);
   font-size: 0.8rem;
   margin-top: 0.14rem;
 }
