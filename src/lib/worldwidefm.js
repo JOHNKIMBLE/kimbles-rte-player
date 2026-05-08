@@ -50,8 +50,8 @@ function buildRscRefMap(html) {
   const refs = {};
   const payloads = extractRscPayloads(html);
   const combined = payloads.join("");
-  // Match patterns like "25:T58f," which means ref $25, text of 0x58f bytes
-  const refPattern = /(\d+):T[0-9a-fA-F]+,/g;
+  // Match patterns like "25:T58f," or "2a:T58f," (RSC uses base-36 ref IDs)
+  const refPattern = /([0-9a-zA-Z]+):T[0-9a-fA-F]+,/g;
   let rm;
   while ((rm = refPattern.exec(combined)) !== null) {
     const refId = "$" + rm[1];
@@ -1715,7 +1715,7 @@ async function getWwfEpisodePlaylist(episodeUrl) {
   const epDetail = parseRscEpisodeDetail(html);
   let tracklistHtml = epDetail?.metadata?.tracklist || "";
   // Resolve RSC "$N" references (tracklist stored as separate text chunk)
-  if (tracklistHtml && /^\$\d+$/.test(tracklistHtml)) {
+  if (tracklistHtml && /^\$[0-9a-zA-Z]+$/.test(tracklistHtml)) {
     const refMap = buildRscRefMap(html);
     tracklistHtml = refMap[tracklistHtml] || "";
   }
