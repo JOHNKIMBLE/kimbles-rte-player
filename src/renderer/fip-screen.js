@@ -234,6 +234,7 @@
               <button class="secondary" data-fip-play-local-url="${escapeHtml(episodeUrl)}" data-fip-play-local-title="${escapeHtml(fullTitle)}" data-fip-play-local-program-title="${escapeHtml(programTitle)}" data-fip-play-local-image="${escapeHtml(episode.image || "")}" data-fip-track-start-ts="${escapeHtml(String(startTs || 0))}" data-fip-track-duration="${escapeHtml(durSecs)}">Play Local</button>
               <button data-fip-download-url="${escapeHtml(episodeUrl)}" data-fip-episode-title="${escapeHtml(fullTitle)}" data-fip-program-title="${escapeHtml(programTitle)}" data-fip-published="${escapeHtml(published)}" data-fip-image="${escapeHtml(episode.image || "")}" data-fip-description="${escapeHtml(desc)}" data-fip-location="${escapeHtml(location)}" data-fip-hosts="${escapeHtml(JSON.stringify(hosts))}" data-fip-genres="${escapeHtml(JSON.stringify(episodeGenres))}">Download</button>
               <button class="secondary" data-fip-generate-cue-url="${escapeHtml(episodeUrl)}" data-fip-generate-cue-title="${escapeHtml(fullTitle)}" data-fip-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
+              ${episodeUrl ? `<button class="secondary" data-fip-open-url="${escapeHtml(episodeUrl)}">Open in Browser</button>` : ""}
             </div>
             <div class="item-meta episode-status" data-fip-episode-status="${statusKey}" style="display:none;"></div>
             <div class="cue-debug-log" data-fip-episode-cue-debug="${statusKey}" style="display:none;"></div>
@@ -601,6 +602,13 @@
           detachCueProgress();
           setButtonBusy(cueBtn, false, "Generate CUE");
         }
+        return;
+      }
+
+      const openBtn = event.target.closest("button[data-fip-open-url]");
+      if (openBtn) {
+        const url = openBtn.getAttribute("data-fip-open-url") || "";
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
         return;
       }
 
