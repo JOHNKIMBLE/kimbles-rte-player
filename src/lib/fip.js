@@ -548,7 +548,7 @@ function mapPageItem(item, showSlug) {
 
   const tp = item.titleProps && typeof item.titleProps === "object" ? item.titleProps : null;
   const title = cleanText(tp?.title || tp?.text || item.title || "");
-  const description = cleanText(stripHtml(item.description || item.standFirst || tp?.text || ""));
+  const description = cleanText(stripHtml(item.chapo || item.description || item.standFirst || tp?.text || ""));
   const image = resolveImageUrl(item.visual?.src || "");
 
   // Episode path: legacy `link` or Svelte titleProps.href
@@ -566,6 +566,11 @@ function mapPageItem(item, showSlug) {
   let publishedTs = Number(item.playerInfo?.publishedDate || item.playerInfo?.startDate || 0);
   if (!publishedTs && item.publishedDate) {
     publishedTs = parseFipFrenchPublishedDate(item.publishedDate);
+  }
+  // New RF structure: startDate is a unix timestamp directly on the episode
+  if (!publishedTs) {
+    const sdRaw = Number(item.startDate || 0);
+    if (sdRaw > 1_000_000) publishedTs = sdRaw;
   }
   const publishedDate = publishedTs ? new Date(publishedTs * 1000).toISOString().slice(0, 10) : "";
 
@@ -1203,12 +1208,13 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
   const url = String(episodeUrl || "").trim();
   if (!url) return [];
 
-  // ── 1. Get episode broadcast timing ───────────────────────────────────────
-  let startTs      = Number(opts.startTs      || 0);
-  let durationSecs = Number(opts.durationSecs || 0);
+  // ── 1. Get episode broadcast timing (and optionally embedded tracklist) ──
+  let startTs       = Number(opts.startTs      || 0);
+  let durationSecs  = Number(opts.durationSecs || 0);
+  let embeddedTracks = null; // populated if episode page embeds a trackList directly
 
   if (!startTs) {
-    // Fetch episode /__data.json to extract playerInfo timing
+    // Fetch episode /__data.json to extract timing + optional embedded trackList
     try {
       const cleanUrl = stripUrlQueryAndHash(url);
       const dataUrl  = cleanUrl.endsWith("/__data.json") ? cleanUrl : `${cleanUrl}/__data.json`;
@@ -1219,23 +1225,80 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
         const arr = Array.isArray(node?.data) ? node.data : [];
         for (const v of arr) {
           if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-          const piRaw = v.playerInfo;
-          if (piRaw == null) continue;
-          const pi = deref(piRaw, arr);
-          if (!pi || typeof pi !== "object") continue;
-          const ts = Number(pi.publishedDate || pi.startDate || 0);
-          if (ts > 1_000_000) {
-            startTs = ts;
-            if (!durationSecs) {
-              const durRaw = pi.duration || v.duration;
-              if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
-            }
-            break outer;
+
+          // New RF structure: check for embedded trackList on Expression objects
+          // (trackList is an array of Song objects with titleProps/visual fields)
+          if (!embeddedTracks && Array.isArray(deref(v.trackList, arr)) && deref(v.trackList, arr).length > 0) {
+            const rawTracks = deref(v.trackList, arr);
+            const epStart = Number(deref(v.startDate, arr) || 0);
+            embeddedTracks = rawTracks.map((t) => {
+              const tr = deref(t, arr);
+              if (!tr || typeof tr !== "object") return null;
+              const tp = deref(tr.titleProps, arr);
+              const vis = deref(tr.visual, arr);
+              const artist = cleanText(String(deref(tp?.title, arr) || ""));
+              const title = cleanText(String(deref(tp?.text, arr) || ""));
+              const image = String(deref(vis?.src, arr) || "").trim();
+              // Parse label time like "20h05" to startSeconds offset
+              const labelStr = String(deref(tr.label, arr) || "");
+              const labelMatch = labelStr.match(/(\d{1,2})h(\d{2})/);
+              let startSeconds = 0;
+              if (labelMatch && epStart > 0) {
+                const labelUtc = new Date(epStart * 1000);
+                const h = parseInt(labelMatch[1], 10);
+                const m = parseInt(labelMatch[2], 10);
+                // reconstruct label UTC using Paris offset (UTC+1 or UTC+2)
+                // approximate: use label hour against broadcast start hour
+                const epHour = labelUtc.getUTCHours();
+                let diffH = h - ((epHour + 1) % 24); // assume UTC+1 approx
+                if (diffH < -12) diffH += 24;
+                startSeconds = Math.max(0, diffH * 3600 + m * 60);
+              }
+              if (!artist && !title) return null;
+              return { artist, title, album: "", year: null, image, links: [], startSeconds };
+            }).filter(Boolean);
           }
+
+          // Legacy playerInfo structure
+          if (!startTs) {
+            const piRaw = v.playerInfo;
+            if (piRaw != null) {
+              const pi = deref(piRaw, arr);
+              if (pi && typeof pi === "object") {
+                const ts = Number(pi.publishedDate || pi.startDate || 0);
+                if (ts > 1_000_000) {
+                  startTs = ts;
+                  if (!durationSecs) {
+                    const durRaw = pi.duration || v.duration;
+                    if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
+                  }
+                }
+              }
+            }
+          }
+
+          // New RF structure: startDate directly on Expression
+          if (!startTs) {
+            const ts = Number(deref(v.startDate, arr) || 0);
+            if (ts > 1_000_000) {
+              startTs = ts;
+              if (!durationSecs) {
+                const durRaw = deref(v.duration, arr);
+                if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
+              }
+            }
+          }
+
+          if ((embeddedTracks || startTs) && !embeddedTracks) break;
+          if (embeddedTracks && startTs) break outer;
         }
+        if (embeddedTracks && startTs) break;
       }
     } catch {}
   }
+
+  // If the episode page embedded a full tracklist, return it directly
+  if (embeddedTracks && embeddedTracks.length > 0) return embeddedTracks;
 
   if (!startTs) return [];
   if (!durationSecs) durationSecs = 7200; // 2h default
