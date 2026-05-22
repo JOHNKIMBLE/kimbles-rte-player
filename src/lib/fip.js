@@ -11,6 +11,21 @@ const ICECAST_BASE = "https://icecast.radiofrance.fr";
 const translationCache = new Map();
 let _diskCache = null;
 function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
+
+/** Unofficial Google Translate endpoint — no key required, high rate limit. */
+async function translateViaGoogle(text) {
+  try {
+    const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=fr&tl=en&dt=t&q=" + encodeURIComponent(text);
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const data = await res.json();
+    // Response: [[["translated","original",...], ...], null, "fr"]
+    const translated = (Array.isArray(data[0]) ? data[0] : []).map((c) => c[0] || "").join("").trim();
+    return translated.length > 2 ? translated : "";
+  } catch {
+    return "";
+  }
+}
+
 async function translateFr(text) {
   let minLength = 10;
   let value = text;
@@ -25,21 +40,31 @@ async function translateFr(text) {
     if (cached != null) translationCache.set(key, cached);
   }
   if (translationCache.has(key)) return translationCache.get(key);
+  let result = value;
   try {
+    // Primary: MyMemory (free, attribution-friendly)
     const memUrl = new URL("https://api.mymemory.translated.net/get");
     memUrl.searchParams.set("q", key);
     memUrl.searchParams.set("langpair", "fr|en");
     const res = await fetch(memUrl.toString(), { signal: AbortSignal.timeout(6000) });
     const json = await res.json();
     const translated = (json?.responseData?.translatedText || "").trim();
-    // Reject if translation looks like an error message or is too short
-    const result = (translated.length > 2 && !translated.toLowerCase().includes("mymemory")) ? translated : value;
-    translationCache.set(key, result);
-    if (_diskCache) _diskCache.set("fip:trans:" + key, result);
-    return result;
+    const memOk = translated.length > 2 && !translated.toLowerCase().includes("mymemory") && !translated.toUpperCase().includes("QUOTA");
+    if (memOk) {
+      result = translated;
+    } else {
+      // Fallback: unofficial Google Translate (no key, higher limit)
+      const gtResult = await translateViaGoogle(key);
+      if (gtResult) result = gtResult;
+    }
   } catch {
-    return value;
+    // Fallback: unofficial Google Translate
+    const gtResult = await translateViaGoogle(key).catch(() => "");
+    if (gtResult) result = gtResult;
   }
+  translationCache.set(key, result);
+  if (_diskCache) _diskCache.set("fip:trans:" + key, result);
+  return result;
 }
 
 async function translateMetadataList(values, minLength = 2) {
