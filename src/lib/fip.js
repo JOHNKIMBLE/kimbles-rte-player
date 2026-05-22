@@ -390,10 +390,21 @@ async function fetchPageData(slug, cursor = null) {
     }
   }
 
-  // Find the Concept (show) object - model may be a string or an integer index
+  // Find the Concept (show) object - detect by __typename="Concept" (new RF structure)
+  // or legacy standFirst+visual_400x400 fields (old structure)
   let conceptObj = null;
   for (const v of arr) {
-    if (v && typeof v === "object" && !Array.isArray(v) && "standFirst" in v && "visual_400x400" in v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    // New Radio France structure: __typename field resolves to "Concept"
+    if ("__typename" in v) {
+      const typenameVal = typeof v.__typename === "number" ? arr[v.__typename] : v.__typename;
+      if (typenameVal === "Concept") {
+        conceptObj = deref(v, arr);
+        break;
+      }
+    }
+    // Legacy structure: standFirst + visual_400x400 with model="Concept"
+    if ("standFirst" in v && "visual_400x400" in v) {
       const modelVal = typeof v.model === "number" ? arr[v.model] : v.model;
       if (modelVal === "Concept") {
         conceptObj = deref(v, arr);
@@ -409,8 +420,10 @@ async function fetchPageData(slug, cursor = null) {
   const concept = conceptObj ? {
     id: String(conceptObj.id || "").trim(),
     title: cleanText(conceptObj.title || slug.replace(/-/g, " ")),
-    description: cleanText(stripHtml(conceptObj.standFirst || conceptObj.description || "")),
-    image: resolveImageUrl(conceptObj.visual_400x400?.src || conceptObj.visual?.src || ""),
+    // New RF: description in "chapo"; legacy: "standFirst"; fallback: "description"
+    description: cleanText(stripHtml(conceptObj.chapo || conceptObj.standFirst || conceptObj.description || "")),
+    // New RF: visual.src; legacy: visual_400x400.src
+    image: resolveImageUrl(conceptObj.visual?.src || conceptObj.visual_400x400?.src || ""),
     genres: extractGenres(conceptObj),
     hosts: extractHosts(conceptObj),
     airtime: String(conceptObj.airtime || "").trim()
@@ -499,7 +512,7 @@ function extractHosts(obj) {
     return [];
   }
   const hosts = [];
-  for (const field of ["authors", "author", "hosts", "host", "personalities", "personality", "presenters", "presenter", "contributors", "contributor", "guests", "guest", "tagsAndPersonalities"]) {
+  for (const field of ["team", "authors", "author", "hosts", "host", "personalities", "personality", "presenters", "presenter", "contributors", "contributor", "guests", "guest", "tagsAndPersonalities"]) {
     if (obj[field]) {
       collectFipPeople(obj[field], hosts);
     }
@@ -688,22 +701,52 @@ async function fetchFipShowList(useCache = true) {
   const shows = [];
   const seen = new Set();
 
+  // Primary: fetch __data.json from listing page — returns Concept objects with correct slugs
   try {
-    const html = await fetchText(`${BASE_URL}/fip/podcasts`);
-    const pattern = /href=["']\/fip\/podcasts\/([a-z0-9][a-z0-9-]{1,80})["'][^>]*>([\s\S]*?)<\//gi;
-    let m;
-    while ((m = pattern.exec(html)) !== null) {
-      const slug = m[1];
-      if (seen.has(slug) || /^\d+$/.test(slug) || slug === "page") continue;
+    const bust = `_=${Date.now()}`;
+    const listJson = await fetchJson(`${BASE_URL}/fip/podcasts/__data.json?${bust}`);
+    const listNodes = Array.isArray(listJson?.nodes) ? listJson.nodes : [];
+    let listArr = [];
+    for (const node of listNodes) {
+      const nd = node?.data;
+      if (Array.isArray(nd) && nd.length > listArr.length) listArr = nd;
+    }
+    for (const v of listArr) {
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      if (!("__typename" in v) && !("href" in v)) continue;
+      const typenameVal = typeof v.__typename === "number" ? listArr[v.__typename] : v.__typename;
+      if (typenameVal !== "Concept") continue;
+      const hrefVal = typeof v.href === "number" ? listArr[v.href] : v.href;
+      const titleVal = typeof v.title === "number" ? listArr[v.title] : v.title;
+      if (!hrefVal || typeof hrefVal !== "string") continue;
+      const slugMatch = hrefVal.match(/\/fip\/podcasts\/([^/?#]+)/);
+      if (!slugMatch) continue;
+      const slug = slugMatch[1];
+      if (seen.has(slug) || /^\d+$/.test(slug)) continue;
       seen.add(slug);
-      const rawTitle = stripHtml(m[2] || "").trim();
-      shows.push({ slug, title: cleanText(rawTitle) || slug.replace(/-/g, " ") });
+      shows.push({ slug, title: cleanText(titleVal || "") || slug.replace(/-/g, " ") });
     }
   } catch {}
 
-  // Seed list of known FIP podcasts (fallback if scraping fails)
+  // Fallback: HTML scraping
+  if (!shows.length) {
+    try {
+      const html = await fetchText(`${BASE_URL}/fip/podcasts`);
+      const pattern = /href=["']\/fip\/podcasts\/([a-z0-9][a-z0-9'-]{1,80})["'][^>]*>([\s\S]*?)<\//gi;
+      let m;
+      while ((m = pattern.exec(html)) !== null) {
+        const slug = m[1];
+        if (seen.has(slug) || /^\d+$/.test(slug) || slug === "page") continue;
+        seen.add(slug);
+        const rawTitle = stripHtml(m[2] || "").trim();
+        shows.push({ slug, title: cleanText(rawTitle) || slug.replace(/-/g, " ") });
+      }
+    } catch {}
+  }
+
+  // Seed list of known FIP podcasts (updated slugs — fallback if both scraping methods fail)
   const seeds = [
-    { slug: "certains-laiment-fip",       title: "certains l'aiment fip" },
+    { slug: "certains-l-aiment-fip",      title: "certains l'aiment fip" },
     { slug: "live-a-fip",                 title: "live à fip" },
     { slug: "fip-tape",                   title: "fip tape" },
     { slug: "speciales-fip",              title: "spéciales fip" },
