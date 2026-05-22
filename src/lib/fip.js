@@ -35,8 +35,9 @@ async function translateFr(text) {
   }
   if (!value || String(value).length < minLength) return value;
   const key = String(value).slice(0, 450);
+  const diskKey = "fip:trans:v2:" + key;
   if (!translationCache.has(key) && _diskCache) {
-    const cached = _diskCache.get("fip:trans:" + key, 0); // permanent
+    const cached = _diskCache.get(diskKey, 0); // permanent
     if (cached != null) translationCache.set(key, cached);
   }
   if (translationCache.has(key)) return translationCache.get(key);
@@ -63,7 +64,7 @@ async function translateFr(text) {
     if (gtResult) result = gtResult;
   }
   translationCache.set(key, result);
-  if (_diskCache) _diskCache.set("fip:trans:" + key, result);
+  if (_diskCache) _diskCache.set(diskKey, result);
   return result;
 }
 
