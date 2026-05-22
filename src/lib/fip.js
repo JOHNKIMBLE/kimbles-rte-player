@@ -390,10 +390,21 @@ async function fetchPageData(slug, cursor = null) {
     }
   }
 
-  // Find the Concept (show) object - model may be a string or an integer index
+  // Find the Concept (show) object - detect by __typename="Concept" (new RF structure)
+  // or legacy standFirst+visual_400x400 fields (old structure)
   let conceptObj = null;
   for (const v of arr) {
-    if (v && typeof v === "object" && !Array.isArray(v) && "standFirst" in v && "visual_400x400" in v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    // New Radio France structure: __typename field resolves to "Concept"
+    if ("__typename" in v) {
+      const typenameVal = typeof v.__typename === "number" ? arr[v.__typename] : v.__typename;
+      if (typenameVal === "Concept") {
+        conceptObj = deref(v, arr);
+        break;
+      }
+    }
+    // Legacy structure: standFirst + visual_400x400 with model="Concept"
+    if ("standFirst" in v && "visual_400x400" in v) {
       const modelVal = typeof v.model === "number" ? arr[v.model] : v.model;
       if (modelVal === "Concept") {
         conceptObj = deref(v, arr);
@@ -409,8 +420,10 @@ async function fetchPageData(slug, cursor = null) {
   const concept = conceptObj ? {
     id: String(conceptObj.id || "").trim(),
     title: cleanText(conceptObj.title || slug.replace(/-/g, " ")),
-    description: cleanText(stripHtml(conceptObj.standFirst || conceptObj.description || "")),
-    image: resolveImageUrl(conceptObj.visual_400x400?.src || conceptObj.visual?.src || ""),
+    // New RF: description in "chapo"; legacy: "standFirst"; fallback: "description"
+    description: cleanText(stripHtml(conceptObj.chapo || conceptObj.standFirst || conceptObj.description || "")),
+    // New RF: visual.src; legacy: visual_400x400.src
+    image: resolveImageUrl(conceptObj.visual?.src || conceptObj.visual_400x400?.src || ""),
     genres: extractGenres(conceptObj),
     hosts: extractHosts(conceptObj),
     airtime: String(conceptObj.airtime || "").trim()
@@ -499,7 +512,7 @@ function extractHosts(obj) {
     return [];
   }
   const hosts = [];
-  for (const field of ["authors", "author", "hosts", "host", "personalities", "personality", "presenters", "presenter", "contributors", "contributor", "guests", "guest", "tagsAndPersonalities"]) {
+  for (const field of ["team", "authors", "author", "hosts", "host", "personalities", "personality", "presenters", "presenter", "contributors", "contributor", "guests", "guest", "tagsAndPersonalities"]) {
     if (obj[field]) {
       collectFipPeople(obj[field], hosts);
     }
@@ -535,7 +548,7 @@ function mapPageItem(item, showSlug) {
 
   const tp = item.titleProps && typeof item.titleProps === "object" ? item.titleProps : null;
   const title = cleanText(tp?.title || tp?.text || item.title || "");
-  const description = cleanText(stripHtml(item.description || item.standFirst || tp?.text || ""));
+  const description = cleanText(stripHtml(item.chapo || item.description || item.standFirst || tp?.text || ""));
   const image = resolveImageUrl(item.visual?.src || "");
 
   // Episode path: legacy `link` or Svelte titleProps.href
@@ -553,6 +566,11 @@ function mapPageItem(item, showSlug) {
   let publishedTs = Number(item.playerInfo?.publishedDate || item.playerInfo?.startDate || 0);
   if (!publishedTs && item.publishedDate) {
     publishedTs = parseFipFrenchPublishedDate(item.publishedDate);
+  }
+  // New RF structure: startDate is a unix timestamp directly on the episode
+  if (!publishedTs) {
+    const sdRaw = Number(item.startDate || 0);
+    if (sdRaw > 1_000_000) publishedTs = sdRaw;
   }
   const publishedDate = publishedTs ? new Date(publishedTs * 1000).toISOString().slice(0, 10) : "";
 
@@ -688,22 +706,52 @@ async function fetchFipShowList(useCache = true) {
   const shows = [];
   const seen = new Set();
 
+  // Primary: fetch __data.json from listing page — returns Concept objects with correct slugs
   try {
-    const html = await fetchText(`${BASE_URL}/fip/podcasts`);
-    const pattern = /href=["']\/fip\/podcasts\/([a-z0-9][a-z0-9-]{1,80})["'][^>]*>([\s\S]*?)<\//gi;
-    let m;
-    while ((m = pattern.exec(html)) !== null) {
-      const slug = m[1];
-      if (seen.has(slug) || /^\d+$/.test(slug) || slug === "page") continue;
+    const bust = `_=${Date.now()}`;
+    const listJson = await fetchJson(`${BASE_URL}/fip/podcasts/__data.json?${bust}`);
+    const listNodes = Array.isArray(listJson?.nodes) ? listJson.nodes : [];
+    let listArr = [];
+    for (const node of listNodes) {
+      const nd = node?.data;
+      if (Array.isArray(nd) && nd.length > listArr.length) listArr = nd;
+    }
+    for (const v of listArr) {
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      if (!("__typename" in v) && !("href" in v)) continue;
+      const typenameVal = typeof v.__typename === "number" ? listArr[v.__typename] : v.__typename;
+      if (typenameVal !== "Concept") continue;
+      const hrefVal = typeof v.href === "number" ? listArr[v.href] : v.href;
+      const titleVal = typeof v.title === "number" ? listArr[v.title] : v.title;
+      if (!hrefVal || typeof hrefVal !== "string") continue;
+      const slugMatch = hrefVal.match(/\/fip\/podcasts\/([^/?#]+)/);
+      if (!slugMatch) continue;
+      const slug = slugMatch[1];
+      if (seen.has(slug) || /^\d+$/.test(slug)) continue;
       seen.add(slug);
-      const rawTitle = stripHtml(m[2] || "").trim();
-      shows.push({ slug, title: cleanText(rawTitle) || slug.replace(/-/g, " ") });
+      shows.push({ slug, title: cleanText(titleVal || "") || slug.replace(/-/g, " ") });
     }
   } catch {}
 
-  // Seed list of known FIP podcasts (fallback if scraping fails)
+  // Fallback: HTML scraping
+  if (!shows.length) {
+    try {
+      const html = await fetchText(`${BASE_URL}/fip/podcasts`);
+      const pattern = /href=["']\/fip\/podcasts\/([a-z0-9][a-z0-9'-]{1,80})["'][^>]*>([\s\S]*?)<\//gi;
+      let m;
+      while ((m = pattern.exec(html)) !== null) {
+        const slug = m[1];
+        if (seen.has(slug) || /^\d+$/.test(slug) || slug === "page") continue;
+        seen.add(slug);
+        const rawTitle = stripHtml(m[2] || "").trim();
+        shows.push({ slug, title: cleanText(rawTitle) || slug.replace(/-/g, " ") });
+      }
+    } catch {}
+  }
+
+  // Seed list of known FIP podcasts (updated slugs — fallback if both scraping methods fail)
   const seeds = [
-    { slug: "certains-laiment-fip",       title: "certains l'aiment fip" },
+    { slug: "certains-l-aiment-fip",      title: "certains l'aiment fip" },
     { slug: "live-a-fip",                 title: "live à fip" },
     { slug: "fip-tape",                   title: "fip tape" },
     { slug: "speciales-fip",              title: "spéciales fip" },
@@ -1160,12 +1208,13 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
   const url = String(episodeUrl || "").trim();
   if (!url) return [];
 
-  // ── 1. Get episode broadcast timing ───────────────────────────────────────
-  let startTs      = Number(opts.startTs      || 0);
-  let durationSecs = Number(opts.durationSecs || 0);
+  // ── 1. Get episode broadcast timing (and optionally embedded tracklist) ──
+  let startTs       = Number(opts.startTs      || 0);
+  let durationSecs  = Number(opts.durationSecs || 0);
+  let embeddedTracks = null; // populated if episode page embeds a trackList directly
 
   if (!startTs) {
-    // Fetch episode /__data.json to extract playerInfo timing
+    // Fetch episode /__data.json to extract timing + optional embedded trackList
     try {
       const cleanUrl = stripUrlQueryAndHash(url);
       const dataUrl  = cleanUrl.endsWith("/__data.json") ? cleanUrl : `${cleanUrl}/__data.json`;
@@ -1176,23 +1225,80 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
         const arr = Array.isArray(node?.data) ? node.data : [];
         for (const v of arr) {
           if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-          const piRaw = v.playerInfo;
-          if (piRaw == null) continue;
-          const pi = deref(piRaw, arr);
-          if (!pi || typeof pi !== "object") continue;
-          const ts = Number(pi.publishedDate || pi.startDate || 0);
-          if (ts > 1_000_000) {
-            startTs = ts;
-            if (!durationSecs) {
-              const durRaw = pi.duration || v.duration;
-              if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
-            }
-            break outer;
+
+          // New RF structure: check for embedded trackList on Expression objects
+          // (trackList is an array of Song objects with titleProps/visual fields)
+          if (!embeddedTracks && Array.isArray(deref(v.trackList, arr)) && deref(v.trackList, arr).length > 0) {
+            const rawTracks = deref(v.trackList, arr);
+            const epStart = Number(deref(v.startDate, arr) || 0);
+            embeddedTracks = rawTracks.map((t) => {
+              const tr = deref(t, arr);
+              if (!tr || typeof tr !== "object") return null;
+              const tp = deref(tr.titleProps, arr);
+              const vis = deref(tr.visual, arr);
+              const artist = cleanText(String(deref(tp?.title, arr) || ""));
+              const title = cleanText(String(deref(tp?.text, arr) || ""));
+              const image = String(deref(vis?.src, arr) || "").trim();
+              // Parse label time like "20h05" to startSeconds offset
+              const labelStr = String(deref(tr.label, arr) || "");
+              const labelMatch = labelStr.match(/(\d{1,2})h(\d{2})/);
+              let startSeconds = 0;
+              if (labelMatch && epStart > 0) {
+                const labelUtc = new Date(epStart * 1000);
+                const h = parseInt(labelMatch[1], 10);
+                const m = parseInt(labelMatch[2], 10);
+                // reconstruct label UTC using Paris offset (UTC+1 or UTC+2)
+                // approximate: use label hour against broadcast start hour
+                const epHour = labelUtc.getUTCHours();
+                let diffH = h - ((epHour + 1) % 24); // assume UTC+1 approx
+                if (diffH < -12) diffH += 24;
+                startSeconds = Math.max(0, diffH * 3600 + m * 60);
+              }
+              if (!artist && !title) return null;
+              return { artist, title, album: "", year: null, image, links: [], startSeconds };
+            }).filter(Boolean);
           }
+
+          // Legacy playerInfo structure
+          if (!startTs) {
+            const piRaw = v.playerInfo;
+            if (piRaw != null) {
+              const pi = deref(piRaw, arr);
+              if (pi && typeof pi === "object") {
+                const ts = Number(pi.publishedDate || pi.startDate || 0);
+                if (ts > 1_000_000) {
+                  startTs = ts;
+                  if (!durationSecs) {
+                    const durRaw = pi.duration || v.duration;
+                    if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
+                  }
+                }
+              }
+            }
+          }
+
+          // New RF structure: startDate directly on Expression
+          if (!startTs) {
+            const ts = Number(deref(v.startDate, arr) || 0);
+            if (ts > 1_000_000) {
+              startTs = ts;
+              if (!durationSecs) {
+                const durRaw = deref(v.duration, arr);
+                if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
+              }
+            }
+          }
+
+          if ((embeddedTracks || startTs) && !embeddedTracks) break;
+          if (embeddedTracks && startTs) break outer;
         }
+        if (embeddedTracks && startTs) break;
       }
     } catch {}
   }
+
+  // If the episode page embedded a full tracklist, return it directly
+  if (embeddedTracks && embeddedTracks.length > 0) return embeddedTracks;
 
   if (!startTs) return [];
   if (!durationSecs) durationSecs = 7200; // 2h default
