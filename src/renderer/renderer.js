@@ -234,10 +234,12 @@ const settingsStatus = document.getElementById("settingsStatus");
 const tabRteBtn = document.getElementById("tabRteBtn");
 const tabBbcBtn = document.getElementById("tabBbcBtn");
 const tabSchedulesBtn = document.getElementById("tabSchedulesBtn");
+const tabHistoryBtn = document.getElementById("tabHistoryBtn");
 const tabSettingsBtn = document.getElementById("tabSettingsBtn");
 const rteTabContent = document.getElementById("rteTabContent");
 const bbcTabContent = document.getElementById("bbcTabContent");
 const schedulesTabContent = document.getElementById("schedulesTabContent");
+const historyTabContent = document.getElementById("historyTabContent");
 const settingsTabContent = document.getElementById("settingsTabContent");
 const allSchedulesList = document.getElementById("allSchedulesList");
 const allSchedulesSummary = document.getElementById("allSchedulesSummary");
@@ -865,7 +867,9 @@ const libraryScreen = window.KimbleLibraryScreen.create({
   sourceLabels: SOURCE_LABELS,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target),
   activateLibraryView: (sectionId = "") => {
-    appShell?.setActiveTab?.("schedules");
+    const historyIds = ["subscriptionsSection", "historySection"];
+    const targetTab = historyIds.includes(sectionId) ? "history" : "schedules";
+    appShell?.setActiveTab?.(targetTab);
     window.requestAnimationFrame(() => {
       if (sectionId) {
         document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -895,7 +899,7 @@ const schedulesScreen = window.KimbleSchedulesScreen.create({
     if (allSchedulesSourceFilter) {
       allSchedulesSourceFilter.value = sourceKey;
     }
-    appShell?.setActiveTab?.("schedules");
+    appShell?.setActiveTab?.("history");
     window.requestAnimationFrame(() => {
       document.getElementById("subscriptionsSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -1403,6 +1407,7 @@ appShell = window.KimbleAppShell.create({
     tabFipBtn,
     tabKexpBtn,
     tabSchedulesBtn,
+    tabHistoryBtn,
     tabSettingsBtn,
     themeToggleBtn,
     scheduleBackfillMode,
@@ -1416,6 +1421,7 @@ appShell = window.KimbleAppShell.create({
     fipTabContent,
     kexpTabContent,
     schedulesTabContent,
+    historyTabContent,
     settingsTabContent,
     wwfStationSelect,
     ntsStationSelect,
