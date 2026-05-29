@@ -23,6 +23,7 @@
     const formatRunNowResult = deps.formatRunNowResult;
     const setEpisodeChapters = deps.setEpisodeChapters;
     const setSettingsStatus = deps.setSettingsStatus;
+    const openProgramExplorer = deps.openProgramExplorer;
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -530,6 +531,24 @@
     }
 
     async function handleScheduleClick(event) {
+      const programPageBtn = event.target.closest("[data-schedule-open-program]");
+      if (programPageBtn) {
+        const url = String(programPageBtn.getAttribute("data-schedule-open-program") || "").trim();
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
+        return;
+      }
+      const openExplorerBtn = event.target.closest("[data-schedule-open-explorer]");
+      if (openExplorerBtn) {
+        const url = String(openExplorerBtn.getAttribute("data-schedule-open-explorer") || "").trim();
+        if (url) {
+          try {
+            await openProgramExplorer?.({ sourceType: "rte", programUrl: url });
+          } catch (error) {
+            setSettingsStatus(String(error?.message || "Could not open explorer."), true);
+          }
+        }
+        return;
+      }
       const playLatestBtn = event.target.closest("button[data-schedule-play-output]");
       if (playLatestBtn) {
         try {

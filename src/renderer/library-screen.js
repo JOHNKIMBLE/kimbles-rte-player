@@ -3132,11 +3132,22 @@
       dom.historyList?.addEventListener("click", async (event) => {
         const explorerButton = event.target.closest("[data-open-explorer]");
         if (explorerButton) {
+          const prevText = explorerButton.textContent;
+          explorerButton.disabled = true;
+          explorerButton.textContent = "Opening...";
           try {
             await handleOpenExplorerButton(explorerButton);
           } catch (error) {
             setSettingsStatus(error.message, true);
+            explorerButton.textContent = "Not Found";
+            setTimeout(() => {
+              explorerButton.textContent = prevText;
+              explorerButton.disabled = false;
+            }, 2500);
+            return;
           }
+          explorerButton.textContent = prevText;
+          explorerButton.disabled = false;
           return;
         }
         const saveButton = event.target.closest("[data-save-collection]");
