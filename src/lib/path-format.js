@@ -110,12 +110,13 @@ function buildDownloadTarget({
   programTitle,
   episodeTitle,
   publishedTime,
+  publishedTimeFormatted,
   clipId,
   episodeUrl,
   hosts = []
 }) {
   const radio = sourceType === "bbc" ? "BBC" : sourceType === "wwf" ? "Worldwide FM" : sourceType === "nts" ? "NTS" : sourceType === "fip" ? "FIP" : sourceType === "kexp" ? "KEXP" : "RTE";
-  const releaseDate = extractReleaseDate(publishedTime) || extractReleaseDate(episodeTitle);
+  const releaseDate = extractReleaseDate(publishedTime) || extractReleaseDate(episodeTitle) || extractReleaseDate(publishedTimeFormatted);
   const [year = "", month = "", day = ""] = String(releaseDate).split("-");
   const sourceId = pickSourceId({ clipId, episodeUrl });
   const safeHosts = (Array.isArray(hosts) ? hosts : [])

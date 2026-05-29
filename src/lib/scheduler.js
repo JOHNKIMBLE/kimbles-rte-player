@@ -806,7 +806,10 @@ function createSchedulerStore({
         const result = await runEpisodeDownloadWithRecovery({
           ...episode,
           title: String(episode.fullTitle || episode.title || ""),
-          programTitle: schedule.title
+          programTitle: schedule.title,
+          // If the API returned no date, fall back to today's date — this is a
+          // scheduled run so we're downloading the current broadcast.
+          publishedTime: episode.publishedTime || episode.publishedTimeFormatted || new Date().toISOString().slice(0, 10)
         });
         downloaded.push({
           clipId: episode.clipId,
