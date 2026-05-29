@@ -1234,96 +1234,110 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
   const url = String(episodeUrl || "").trim();
   if (!url) return [];
 
-  // ── 1. Get episode broadcast timing (and optionally embedded tracklist) ──
+  // ── 1. Always fetch __data.json to check for embedded tracklist ──────────────
+  // (also extracts startTs / durationSecs if not already provided via opts)
   let startTs       = Number(opts.startTs      || 0);
   let durationSecs  = Number(opts.durationSecs || 0);
-  let embeddedTracks = null; // populated if episode page embeds a trackList directly
+  let embeddedTracks = null;
 
-  if (!startTs) {
-    // Fetch episode /__data.json to extract timing + optional embedded trackList
-    try {
-      const cleanUrl = stripUrlQueryAndHash(url);
-      const dataUrl  = cleanUrl.endsWith("/__data.json") ? cleanUrl : `${cleanUrl}/__data.json`;
-      const json     = await fetchJson(dataUrl);
-      const nodes    = Array.isArray(json?.nodes) ? json.nodes : [];
+  try {
+    const cleanUrl = stripUrlQueryAndHash(url);
+    const dataUrl  = cleanUrl.endsWith("/__data.json") ? cleanUrl : `${cleanUrl}/__data.json`;
+    const json     = await fetchJson(dataUrl);
+    const nodes    = Array.isArray(json?.nodes) ? json.nodes : [];
 
-      outer: for (const node of nodes) {
-        const arr = Array.isArray(node?.data) ? node.data : [];
-        for (const v of arr) {
-          if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    outer: for (const node of nodes) {
+      const arr = Array.isArray(node?.data) ? node.data : [];
+      for (const v of arr) {
+        if (!v || typeof v !== "object" || Array.isArray(v)) continue;
 
-          // New RF structure: check for embedded trackList on Expression objects
-          // (trackList is an array of Song objects with titleProps/visual fields)
-          if (!embeddedTracks && Array.isArray(deref(v.trackList, arr)) && deref(v.trackList, arr).length > 0) {
-            const rawTracks = deref(v.trackList, arr);
+        // Embedded trackList on Expression objects (Song objects with titleProps/visual/label)
+        if (!embeddedTracks) {
+          const rawTrackList = deref(v.trackList, arr);
+          if (Array.isArray(rawTrackList) && rawTrackList.length > 0) {
             const epStart = Number(deref(v.startDate, arr) || 0);
-            embeddedTracks = rawTracks.map((t) => {
+            const parsed = rawTrackList.map((t) => {
               const tr = deref(t, arr);
               if (!tr || typeof tr !== "object") return null;
-              const tp = deref(tr.titleProps, arr);
+              const tp  = deref(tr.titleProps, arr);
               const vis = deref(tr.visual, arr);
               const artist = cleanText(String(deref(tp?.title, arr) || ""));
-              const title = cleanText(String(deref(tp?.text, arr) || ""));
-              const image = String(deref(vis?.src, arr) || "").trim();
-              // Parse label time like "20h05" to startSeconds offset
-              const labelStr = String(deref(tr.label, arr) || "");
+              const title  = cleanText(String(deref(tp?.text,  arr) || ""));
+              const image  = String(deref(vis?.src, arr) || "").trim();
+              // Resolve album / label from additionalInfos (plain strings or objects)
+              const addlRaw = deref(tr.additionalInfos, arr);
+              const addlList = Array.isArray(addlRaw) ? addlRaw.map((x) => String(deref(x, arr) || "").trim()).filter(Boolean) : [];
+              const albumEntry = addlList.find((s) => /^Album:/i.test(s));
+              const album = albumEntry ? albumEntry.replace(/^Album:\s*/i, "").trim() : "";
+              // Resolve Spotify / Deezer / iTunes links
+              const spotifyRaw = deref(tr.spotifyLink, arr);
+              const deezerRaw  = deref(tr.deezerLink, arr);
+              const itunesRaw  = deref(tr.itunesLink, arr);
+              const links = [];
+              if (spotifyRaw && spotifyRaw !== -1) links.push({ type: "spotify", url: String(spotifyRaw) });
+              if (deezerRaw  && deezerRaw  !== -1) links.push({ type: "deezer",  url: String(deezerRaw) });
+              if (itunesRaw  && itunesRaw  !== -1) links.push({ type: "itunes",  url: String(itunesRaw) });
+              // Convert air-time label ("20h05") to seconds offset from episode start
+              const labelStr  = String(deref(tr.label, arr) || "");
               const labelMatch = labelStr.match(/(\d{1,2})h(\d{2})/);
               let startSeconds = 0;
               if (labelMatch && epStart > 0) {
-                const labelUtc = new Date(epStart * 1000);
-                const h = parseInt(labelMatch[1], 10);
-                const m = parseInt(labelMatch[2], 10);
-                // reconstruct label UTC using Paris offset (UTC+1 or UTC+2)
-                // approximate: use label hour against broadcast start hour
-                const epHour = labelUtc.getUTCHours();
-                let diffH = h - ((epHour + 1) % 24); // assume UTC+1 approx
+                const lh = parseInt(labelMatch[1], 10);
+                const lm = parseInt(labelMatch[2], 10);
+                // Paris is UTC+1 (CET) or UTC+2 (CEST); derive offset from epStart
+                const epDate = new Date(epStart * 1000);
+                const epMonth = epDate.getUTCMonth(); // 0=Jan … 11=Dec
+                const parisOffset = (epMonth >= 2 && epMonth <= 9) ? 2 : 1; // rough CEST/CET
+                const epLocalHour = (epDate.getUTCHours() + parisOffset) % 24;
+                let diffH = lh - epLocalHour;
                 if (diffH < -12) diffH += 24;
-                startSeconds = Math.max(0, diffH * 3600 + m * 60);
+                if (diffH > 12)  diffH -= 24;
+                startSeconds = Math.max(0, diffH * 3600 + lm * 60);
               }
               if (!artist && !title) return null;
-              return { artist, title, album: "", year: null, image, links: [], startSeconds };
+              return { artist, title, album, year: null, image, links, startSeconds };
             }).filter(Boolean);
+            if (parsed.length > 0) embeddedTracks = parsed;
           }
+        }
 
-          // Legacy playerInfo structure
-          if (!startTs) {
-            const piRaw = v.playerInfo;
-            if (piRaw != null) {
-              const pi = deref(piRaw, arr);
-              if (pi && typeof pi === "object") {
-                const ts = Number(pi.publishedDate || pi.startDate || 0);
-                if (ts > 1_000_000) {
-                  startTs = ts;
-                  if (!durationSecs) {
-                    const durRaw = pi.duration || v.duration;
-                    if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
-                  }
+        // Legacy playerInfo
+        if (!startTs) {
+          const piRaw = v.playerInfo;
+          if (piRaw != null) {
+            const pi = deref(piRaw, arr);
+            if (pi && typeof pi === "object") {
+              const ts = Number(pi.publishedDate || pi.startDate || 0);
+              if (ts > 1_000_000) {
+                startTs = ts;
+                if (!durationSecs) {
+                  const durRaw = pi.duration || v.duration;
+                  if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
                 }
               }
             }
           }
+        }
 
-          // New RF structure: startDate directly on Expression
-          if (!startTs) {
-            const ts = Number(deref(v.startDate, arr) || 0);
-            if (ts > 1_000_000) {
-              startTs = ts;
-              if (!durationSecs) {
-                const durRaw = deref(v.duration, arr);
-                if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
-              }
+        // New RF structure: startDate directly on Expression
+        if (!startTs) {
+          const ts = Number(deref(v.startDate, arr) || 0);
+          if (ts > 1_000_000) {
+            startTs = ts;
+            if (!durationSecs) {
+              const durRaw = deref(v.duration, arr);
+              if (durRaw != null) durationSecs = parseDurationSeconds(String(durRaw));
             }
           }
-
-          if ((embeddedTracks || startTs) && !embeddedTracks) break;
-          if (embeddedTracks && startTs) break outer;
         }
-        if (embeddedTracks && startTs) break;
-      }
-    } catch {}
-  }
 
-  // If the episode page embedded a full tracklist, return it directly
+        if (embeddedTracks && startTs) break outer;
+      }
+      if (embeddedTracks && startTs) break;
+    }
+  } catch {}
+
+  // Embedded tracklist takes priority — return immediately
   if (embeddedTracks && embeddedTracks.length > 0) return embeddedTracks;
 
   if (!startTs) return [];
