@@ -60,6 +60,7 @@ const FETCH_HEADERS = {
 
 const { assertUrlHostSuffixes } = require("./url-safety");
 const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
+const { recordParserWarning } = require("./parser-diagnostics");
 const KEXP_FETCH_SUFFIXES = ["kexp.org", "cloudfront.net", "splixer.com", "tkatlabs.com", "streamguys1.com"];
 
 async function fetchJson(url) {
@@ -475,6 +476,14 @@ async function getKexpProgramSummary(programUrl) {
   const mapped = mapProgram(program);
   const month = new Date().getMonth() + 1;
   const timeslots = (slotsRes.results || []).map((t) => mapTimeslot(t, month));
+  if (!timeslots.length) {
+    recordParserWarning({
+      sourceType: "kexp",
+      code: "program_timeslots_empty",
+      message: "KEXP program summary had no timeslot metadata.",
+      url: `${API_BASE}/programs/${id}/`
+    });
+  }
   return enrichKexpProgramSummary({
     source: "kexp",
     programUrl: `${API_BASE}/programs/${id}/`,

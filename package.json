@@ -8,6 +8,7 @@
     "start:server": "node src/server.js",
     "postinstall": "node scripts/bootstrap-yt-dlp.js",
     "bootstrap:all-binaries": "node -e \"process.env.BOOTSTRAP_ALL_VENDOR_BINARIES='1'; require('./scripts/bootstrap-yt-dlp.js')\"",
+    "bootstrap:force-binaries": "node -e \"process.env.BOOTSTRAP_ALL_VENDOR_BINARIES='1'; process.env.BOOTSTRAP_FORCE_VENDOR_BINARIES='1'; require('./scripts/bootstrap-yt-dlp.js')\"",
     "test": "jest",
     "lint": "eslint src/",
     "test:extract": "node scripts/test-extract.js",
@@ -20,7 +21,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^5.2.1"
   },
   "overrides": {
     "tar": ">=7.5.11",
@@ -28,17 +29,30 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "electron": "^37.0.0",
+    "electron": "^41.7.1",
     "electron-builder": "^26.0.12",
-    "eslint": "^10.0.3",
-    "jest": "^30.3.0",
-    "png-to-ico": "^2.1.8",
-    "sharp": "^0.34.4",
+    "eslint": "^10.4.0",
+    "jest": "^30.4.2",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "supertest": "^7.2.2"
   },
   "jest": {
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.claude/",
+      "<rootDir>/dist/",
+      "<rootDir>/data/",
+      "<rootDir>/downloads/"
+    ],
     "setupFilesAfterEnv": [
       "<rootDir>/tests/jest-fetch-http-bridge.cjs"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/.claude/",
+      "<rootDir>/dist/",
+      "<rootDir>/data/",
+      "<rootDir>/downloads/"
     ]
   },
   "build": {

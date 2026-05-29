@@ -12,6 +12,7 @@ const ffmpegReleaseUrl = "https://github.com/eugeneware/ffmpeg-static/releases/d
 const chromaprintVersion = "1.6.0";
 const chromaprintReleaseUrl = `https://github.com/acoustid/chromaprint/releases/download/v${chromaprintVersion}`;
 const atomicParsleyReleaseApiUrl = "https://api.github.com/repos/wez/atomicparsley/releases/latest";
+const forceVendorBinaries = /^(1|true|yes)$/i.test(String(process.env.BOOTSTRAP_FORCE_VENDOR_BINARIES || "").trim());
 
 const binaryTargets = [
   {
@@ -237,13 +238,22 @@ function extractArchive(archivePath, destDir, archiveType) {
       return;
     }
 
+    const pythonZip = spawnSync("python3", ["-m", "zipfile", "-e", archivePath, destDir], {
+      stdio: "pipe",
+      encoding: "utf8",
+      shell: false
+    });
+    if (pythonZip.status === 0) {
+      return;
+    }
+
     const tarZip = spawnSync("tar", ["-xf", archivePath, "-C", destDir], {
       stdio: "pipe",
       encoding: "utf8",
       shell: false
     });
     if (tarZip.status !== 0) {
-      throw new Error(`zip extract failed: ${unzip.stderr || unzip.stdout || tarZip.stderr || tarZip.stdout || "unknown error"}`);
+      throw new Error(`zip extract failed: ${unzip.stderr || unzip.stdout || pythonZip.stderr || pythonZip.stdout || tarZip.stderr || tarZip.stdout || "unknown error"}`);
     }
     return;
   }
@@ -326,7 +336,7 @@ function fetchJson(url) {
 }
 
 async function ensureBinaryTarget(target) {
-  if (fs.existsSync(target.outPath)) {
+  if (fs.existsSync(target.outPath) && !forceVendorBinaries) {
     return "exists";
   }
 
@@ -350,7 +360,7 @@ async function ensureBinaryTarget(target) {
 }
 
 async function ensureOneFfmpegAsset(target, outPath, assets, label) {
-  if (fs.existsSync(outPath)) {
+  if (fs.existsSync(outPath) && !forceVendorBinaries) {
     return;
   }
 
@@ -378,7 +388,7 @@ async function ensureFfmpegTarget(target) {
 }
 
 async function ensureChromaprintTarget(target) {
-  if (fs.existsSync(target.outPath)) {
+  if (fs.existsSync(target.outPath) && !forceVendorBinaries) {
     return "exists";
   }
 
@@ -423,7 +433,7 @@ async function resolveAtomicParsleyAssetMap() {
 }
 
 async function ensureAtomicParsleyTarget(target, assetMap) {
-  if (fs.existsSync(target.outPath)) {
+  if (fs.existsSync(target.outPath) && !forceVendorBinaries) {
     return "exists";
   }
 

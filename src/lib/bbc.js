@@ -16,12 +16,14 @@ const bbcDiscoveryTermsCache = {
 };
 const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const { decodeHtml, cleanText, stripHtml, inferCadence } = require("./utils");
+const { decodeHtml, cleanText, stripHtml, extractMetaContent, inferCadence } = require("./utils");
 const { fetchWithHostAllowlist } = require("./outbound-http");
+const { hostMatchesAnySuffix } = require("./url-safety");
+const { recordParserWarning } = require("./parser-diagnostics");
 
 function normalizeBbcUrl(inputUrl) {
   const parsed = new URL(String(inputUrl || "").trim());
-  if (!/bbc\./i.test(parsed.hostname)) {
+  if (!hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
     throw new Error("Expected a BBC URL.");
   }
   parsed.hash = "";
@@ -30,7 +32,7 @@ function normalizeBbcUrl(inputUrl) {
 
 function normalizeBbcProgramUrl(inputUrl) {
   const parsed = new URL(String(inputUrl || "").trim());
-  if (!/bbc\./i.test(parsed.hostname)) {
+  if (!hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
     throw new Error("Expected a BBC program URL.");
   }
 
@@ -754,9 +756,12 @@ function normalizeImageUrl(input) {
 
 function extractJsonLdBlocks(html) {
   const blocks = [];
-  const pattern = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi;
+  const pattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
   for (const match of html.matchAll(pattern)) {
-    const raw = String(match[1] || "").trim();
+    if (!/\btype\s*=\s*["']application\/ld\+json["']/i.test(String(match[1] || ""))) {
+      continue;
+    }
+    const raw = String(match[2] || "").trim();
     if (!raw) {
       continue;
     }
@@ -1087,19 +1092,11 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
 
   try {
     const html = await fetchText(normalizedUrl);
-    title = parseMetaContent(html, [
-      /<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']title["']\s+content=["']([^"']+)["']/i,
+    title = extractMetaContent(html, ["og:title", "title"]) || parseMetaContent(html, [
       /<title>([^<]+)<\/title>/i
     ]);
-    description = parseMetaContent(html, [
-      /<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i
-    ]);
-    image = parseMetaContent(html, [
-      /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']twitter:image(?::src)?["']\s+content=["']([^"']+)["']/i
-    ]);
+    description = extractMetaContent(html, ["og:description", "description"]);
+    image = extractMetaContent(html, ["og:image", "twitter:image", "twitter:image:src"]);
     hosts = extractBbcHostsFromHtml(html, title || "");
     // Try to extract genres from JSON-LD schema.org markup
     for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -1116,15 +1113,29 @@ async function getBbcProgramSummary(programUrl, runYtDlpJson, options = {}) {
     }
     // Fallback: keywords meta tag
     if (!genres.length) {
-      const kwMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
-      if (kwMatch) {
-        genres = kwMatch[1].split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
+      const keywords = extractMetaContent(html, "keywords");
+      if (keywords) {
+        genres = keywords.split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
       }
     }
   } catch {
     title = "";
     description = "";
     image = "";
+  }
+
+  if (!title || !description || !image) {
+    recordParserWarning({
+      sourceType: "bbc",
+      code: "program_summary_incomplete",
+      message: "BBC program summary metadata was incomplete.",
+      url: normalizedUrl,
+      detail: [
+        !title ? "title" : "",
+        !description ? "description" : "",
+        !image ? "image" : ""
+      ].filter(Boolean).join(", ")
+    });
   }
 
   if ((!title || !description || !image) && typeof runYtDlpJson === "function") {

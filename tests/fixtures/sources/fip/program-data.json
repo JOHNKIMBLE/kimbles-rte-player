@@ -1,0 +1,20 @@
+{
+  "nodes": [
+    {
+      "data": [
+        "Concept",
+        {
+          "__typename": 0,
+          "id": "fip-golden-id",
+          "title": "Golden FIP Show",
+          "chapo": "FIP fixture description.",
+          "visual": { "src": "https://example.com/fip-golden.jpg" },
+          "taxonomies": [{ "title": "Jazz" }],
+          "authors": [{ "name": "FIP Host" }],
+          "airtime": "Tous les jours à 19h"
+        },
+        { "items": [], "next": null, "prev": null }
+      ]
+    }
+  ]
+}

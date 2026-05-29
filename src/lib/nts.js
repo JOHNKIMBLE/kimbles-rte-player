@@ -20,9 +20,10 @@ const allShowsCache = { shows: [], fetchedAt: 0, TTL_MS: 1000 * 60 * 30 };
 let _diskCache = null;
 function configure({ diskCache } = {}) { _diskCache = diskCache || null; }
 
-const { cleanText, stripHtml } = require("./utils");
+const { cleanText, stripHtml, extractMetaContent } = require("./utils");
 const { hostMatchesSuffix } = require("./url-safety");
 const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
+const { recordParserWarning } = require("./parser-diagnostics");
 
 function normalizeShowUrl(inputUrl) {
   const raw = String(inputUrl || "").trim();
@@ -743,12 +744,23 @@ async function getNtsEpisodeInfo(episodeUrl) {
   const url = normalizeEpisodeUrl(episodeUrl);
   if (!url) throw new Error("Invalid NTS episode URL.");
   const html = await fetchText(url);
-  const titleMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i) || html.match(/<title>([^<]+)<\/title>/i);
-  const title = cleanText(titleMatch?.[1] || "");
-  const descMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
-  const description = cleanText(descMatch?.[1] || "");
-  const imgMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-  const image = cleanText(imgMatch?.[1] || "");
+  const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+  const title = extractMetaContent(html, "og:title") || cleanText(titleMatch?.[1] || "");
+  const description = extractMetaContent(html, "og:description");
+  const image = extractMetaContent(html, "og:image");
+  if (!title || !description || !image) {
+    recordParserWarning({
+      sourceType: "nts",
+      code: "episode_info_incomplete",
+      message: "NTS episode metadata was incomplete.",
+      url,
+      detail: [
+        !title ? "title" : "",
+        !description ? "description" : "",
+        !image ? "image" : ""
+      ].filter(Boolean).join(", ")
+    });
+  }
   const slug = (url.match(/\/episodes\/([^/?#]+)/) || [])[1] || "";
   const tracklist = parseTracklistFromEpisodeHtml(html);
   const hosts = extractNtsHostsFromHtml(html);
@@ -795,13 +807,11 @@ async function getNtsProgramSummary(showUrl) {
   }
 
   const html = await fetchText(url);
-  const titleMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i) || html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const titleMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
   const title =
-    cleanText(stripHtml(titleMatch?.[1] || "")) || url.split("/shows/")[1]?.split("/")[0]?.replace(/-/g, " ") || "NTS Show";
-  const descMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
-  const description = cleanText(descMatch?.[1] || "");
-  const imgMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-  const image = cleanText(imgMatch?.[1] || "");
+    extractMetaContent(html, "og:title") || cleanText(stripHtml(titleMatch?.[1] || "")) || url.split("/shows/")[1]?.split("/")[0]?.replace(/-/g, " ") || "NTS Show";
+  const description = extractMetaContent(html, "og:description");
+  const image = extractMetaContent(html, "og:image");
   const hosts = extractNtsHostsFromHtml(html);
   const summary = {
     source: "nts",

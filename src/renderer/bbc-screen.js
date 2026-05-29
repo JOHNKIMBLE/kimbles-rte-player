@@ -30,6 +30,7 @@
     const buildBbcAutoplayCandidates = deps.buildBbcAutoplayCandidates;
     const setUrlParam = deps.setUrlParam;
     const openProgramExplorer = deps.openProgramExplorer;
+    const confirmSubscriptionPreview = deps.confirmSubscriptionPreview || (async () => true);
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -792,6 +793,10 @@
           if (!url || !window.rteDownloader?.addBbcSchedule) {
             return;
           }
+          const confirmed = await confirmSubscriptionPreview({ sourceType: "bbc", programUrl: url, backfillCount: 1 });
+          if (!confirmed) {
+            return;
+          }
           schedBtn.textContent = "Adding...";
           schedBtn.disabled = true;
           try {
@@ -834,6 +839,10 @@
           event.stopPropagation();
           const url = schedBtn.getAttribute("data-bbc-schedule-url") || "";
           if (!url || !window.rteDownloader?.addBbcSchedule) {
+            return;
+          }
+          const confirmed = await confirmSubscriptionPreview({ sourceType: "bbc", programUrl: url, backfillCount: 1 });
+          if (!confirmed) {
             return;
           }
           schedBtn.textContent = "Adding...";
@@ -999,6 +1008,10 @@
         const backfillCount = dom.scheduleBackfillMode?.value === "backfill"
           ? Math.max(1, Math.floor(Number(dom.scheduleBackfillCount?.value || 1)))
           : 0;
+        const confirmed = await confirmSubscriptionPreview({ sourceType: "bbc", programUrl: state.bbcProgramUrl, backfillCount });
+        if (!confirmed) {
+          return;
+        }
         setButtonBusy(dom.addScheduleBtn, true, "Add Scheduler", "Adding...");
         try {
           const added = await window.rteDownloader.addBbcSchedule(state.bbcProgramUrl, { backfillCount });

@@ -105,6 +105,47 @@ function stripHtml(input) {
   return out.replace(/\s+/g, " ").trim();
 }
 
+function parseHtmlTagAttributes(tag) {
+  const attrs = {};
+  const pattern = /([^\s=/<>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g;
+  for (const match of String(tag || "").matchAll(pattern)) {
+    const name = String(match[1] || "").trim().toLowerCase();
+    if (!name) {
+      continue;
+    }
+    attrs[name] = match[2] ?? match[3] ?? match[4] ?? "";
+  }
+  return attrs;
+}
+
+function extractMetaContent(html, keys) {
+  const wanted = new Set((Array.isArray(keys) ? keys : [keys])
+    .map((key) => String(key || "").trim().toLowerCase())
+    .filter(Boolean));
+  if (!wanted.size) {
+    return "";
+  }
+
+  for (const match of String(html || "").matchAll(/<meta\b[^>]*>/gi)) {
+    const attrs = parseHtmlTagAttributes(match[0]);
+    const identity = [
+      attrs.property,
+      attrs.name,
+      attrs.itemprop,
+      attrs["http-equiv"]
+    ].map((value) => String(value || "").trim().toLowerCase());
+    if (!identity.some((value) => wanted.has(value))) {
+      continue;
+    }
+    const content = cleanText(attrs.content || attrs.value || "");
+    if (content) {
+      return content;
+    }
+  }
+
+  return "";
+}
+
 /**
  * Infer broadcast cadence from an array of episodes with publishedTime fields.
  * Returns { cadence: "daily"|"weekly"|"irregular"|"unknown", averageDaysBetween: number|null }
@@ -131,4 +172,4 @@ function inferCadence(episodes) {
   return { cadence: "irregular", averageDaysBetween: Number(average.toFixed(2)) };
 }
 
-module.exports = { decodeHtml, cleanText, stripHtml, inferCadence };
+module.exports = { decodeHtml, cleanText, stripHtml, extractMetaContent, inferCadence };
