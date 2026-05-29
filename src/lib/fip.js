@@ -1263,7 +1263,7 @@ async function getFipEpisodeTracklist(episodeUrl, opts = {}) {
               const vis = deref(tr.visual, arr);
               const artist = cleanText(String(deref(tp?.title, arr) || ""));
               const title  = cleanText(String(deref(tp?.text,  arr) || ""));
-              const image  = String(deref(vis?.src, arr) || "").trim();
+              const image  = resolveImageUrl(String(deref(vis?.src, arr) || "").trim());
               // Resolve album / label from additionalInfos (plain strings or objects)
               const addlRaw = deref(tr.additionalInfos, arr);
               const addlList = Array.isArray(addlRaw) ? addlRaw.map((x) => String(deref(x, arr) || "").trim()).filter(Boolean) : [];
