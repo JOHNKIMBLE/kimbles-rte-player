@@ -449,7 +449,7 @@
         }
         updateDownloadDirPickerUi();
         const savedTab = String(localStorageRef.getItem("kimble_active_tab") || "").trim();
-        const allowedTabs = ["rte", "bbc", "wwf", "nts", "fip", "kexp", "schedules", "settings"];
+        const allowedTabs = ["rte", "bbc", "wwf", "nts", "fip", "kexp", "schedules", "history", "settings"];
         const initialTab = allowedTabs.includes(savedTab) ? savedTab : "rte";
         setActiveTab(initialTab);
         if (dom.scheduleBackfillCount) {

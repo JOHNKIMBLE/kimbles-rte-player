@@ -7,6 +7,7 @@
     const sourceLabels = deps.sourceLabels || {};
     const openProgramExplorer = deps.openProgramExplorer;
     const onHealthSourceNavigate = deps.onHealthSourceNavigate;
+    const setStatus = deps.setStatus || (() => {});
     let latestTaggedSchedules = [];
     let searchTimer = null;
 
@@ -310,11 +311,15 @@
         const openProgramBtn = event.target.closest("[data-schedule-open-program]");
         if (openProgramBtn) {
           const url = String(openProgramBtn.getAttribute("data-schedule-open-program") || "").trim();
-          if (url && typeof window.rteDownloader?.openExternalUrl === "function") {
+          if (!url) {
+            setStatus("No program URL is available.", true);
+            return;
+          }
+          if (typeof window.rteDownloader?.openExternalUrl === "function") {
             try {
               await window.rteDownloader.openExternalUrl(url);
             } catch (error) {
-              window.console?.error?.(error);
+              setStatus(String(error?.message || "Failed to open URL."), true);
             }
           }
           return;
@@ -338,7 +343,9 @@
                 sourceType: prefix.replace("-", "") || "rte",
                 programUrl: openBtn.getAttribute(openAttr) || ""
               });
-            } catch {}
+            } catch (error) {
+              setStatus(String(error?.message || "Could not open program explorer."), true);
+            }
             return;
           }
 
