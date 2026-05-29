@@ -41,6 +41,7 @@
     const renderPlaylistTracks = deps.renderPlaylistTracks;
     const playFromDownloadedFile = deps.playFromDownloadedFile;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
+    const openProgramExplorer = deps.openProgramExplorer;
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -169,6 +170,9 @@
       const schedBtn = showScheduleBtn
         ? `<button class="secondary fip-quick-schedule-btn" data-fip-schedule-url="${escapeHtml(show.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
         : "";
+      const programPageBtn = show.programUrl
+        ? `<button class="secondary" data-fip-open-url="${escapeHtml(show.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">Program Page</button>`
+        : "";
       return `
         <div class="item clickable" data-fip-program-url="${escapeHtml(show.programUrl)}">
           <div class="search-card">
@@ -180,6 +184,7 @@
               ${hosts.length ? `<div class="item-meta">Host${hosts.length === 1 ? "" : "s"}: ${escapeHtml(hosts.join(", "))}</div>` : ""}
               ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "..." : ""}</div>` : ""}
               ${genresHtml}
+              ${programPageBtn}
               ${schedBtn}
             </div>
           </div>
@@ -207,6 +212,7 @@
         const fullTitle = String(episode.fullTitle || episode.title || "").trim();
         const desc = String(episode.description || "").trim();
         const programTitle = String(payload?.title || "FIP").trim();
+        const programUrl = String(payload?.programUrl || state.fipProgramUrl || "").trim();
         const img = episode.image ? `<img src="${escapeHtml(episode.image)}" alt="" class="episode-thumb" loading="lazy" />` : "";
         const hosts = normalizeMetadataList(episode.hosts);
         const episodeGenres = Array.isArray(episode.genres) ? episode.genres : [];
@@ -232,7 +238,7 @@
             <div class="item-actions">
               <button class="secondary" data-fip-play-url="${escapeHtml(episodeUrl)}" data-fip-play-title="${escapeHtml(fullTitle)}" data-fip-play-program-title="${escapeHtml(programTitle)}" data-fip-play-image="${escapeHtml(episode.image || "")}" data-fip-track-start-ts="${escapeHtml(String(startTs || 0))}" data-fip-track-duration="${escapeHtml(durSecs)}">Play</button>
               <button class="secondary" data-fip-play-local-url="${escapeHtml(episodeUrl)}" data-fip-play-local-title="${escapeHtml(fullTitle)}" data-fip-play-local-program-title="${escapeHtml(programTitle)}" data-fip-play-local-image="${escapeHtml(episode.image || "")}" data-fip-track-start-ts="${escapeHtml(String(startTs || 0))}" data-fip-track-duration="${escapeHtml(durSecs)}">Play Local</button>
-              <button data-fip-download-url="${escapeHtml(episodeUrl)}" data-fip-episode-title="${escapeHtml(fullTitle)}" data-fip-program-title="${escapeHtml(programTitle)}" data-fip-published="${escapeHtml(published)}" data-fip-image="${escapeHtml(episode.image || "")}" data-fip-description="${escapeHtml(desc)}" data-fip-location="${escapeHtml(location)}" data-fip-hosts="${escapeHtml(JSON.stringify(hosts))}" data-fip-genres="${escapeHtml(JSON.stringify(episodeGenres))}">Download</button>
+              <button data-fip-download-url="${escapeHtml(episodeUrl)}" data-fip-episode-title="${escapeHtml(fullTitle)}" data-fip-program-title="${escapeHtml(programTitle)}" data-fip-program-url="${escapeHtml(programUrl)}" data-fip-published="${escapeHtml(published)}" data-fip-image="${escapeHtml(episode.image || "")}" data-fip-description="${escapeHtml(desc)}" data-fip-location="${escapeHtml(location)}" data-fip-hosts="${escapeHtml(JSON.stringify(hosts))}" data-fip-genres="${escapeHtml(JSON.stringify(episodeGenres))}">Download</button>
               <button class="secondary" data-fip-generate-cue-url="${escapeHtml(episodeUrl)}" data-fip-generate-cue-title="${escapeHtml(fullTitle)}" data-fip-generate-cue-program-title="${escapeHtml(programTitle)}">Generate CUE</button>
               ${episodeUrl ? `<button class="secondary" data-fip-open-url="${escapeHtml(episodeUrl)}">Open in Browser</button>` : ""}
             </div>
@@ -426,6 +432,7 @@
         return;
       }
       setButtonBusy(dom.discoverBtn, true, "Discover Shows", "Loading...");
+      dom.discoveryResult.classList.remove("hidden");
       dom.discoveryResult.innerHTML = `<div class="item muted">Fetching random shows...</div>`;
       try {
         const data = await window.rteDownloader.getFipDiscovery(getDiscoveryCount());
@@ -619,6 +626,7 @@
       const episodeUrl = downloadBtn.getAttribute("data-fip-download-url") || "";
       const title = downloadBtn.getAttribute("data-fip-episode-title") || "fip-episode";
       const programTitle = downloadBtn.getAttribute("data-fip-program-title") || "FIP";
+      const programUrl = downloadBtn.getAttribute("data-fip-program-url") || state.fipProgramUrl || "";
       const publishedTime = downloadBtn.getAttribute("data-fip-published") || "";
       const image = downloadBtn.getAttribute("data-fip-image") || "";
       const description = downloadBtn.getAttribute("data-fip-description") || "";
@@ -630,7 +638,7 @@
       const progressToken = createProgressToken("fip-episode");
       const detach = attachDownloadProgress(progressToken, (progress) => setEpisodeStatus(episodeUrl, formatProgressText(progress, "Downloading...")));
       try {
-        const data = await window.rteDownloader.downloadFromFipUrl(episodeUrl, progressToken, { title, programTitle, publishedTime, image, description, location, hosts, genres });
+        const data = await window.rteDownloader.downloadFromFipUrl(episodeUrl, progressToken, { title, programTitle, programUrl, publishedTime, image, description, location, hosts, genres });
         state.fipDownloadedAudioByEpisode[episodeUrl] = { outputDir: data.outputDir, fileName: data.fileName, episodeUrl, title, programTitle };
         if (Array.isArray(data?.cue?.chapters) && data.cue.chapters.length) {
           setEpisodeChapters(episodeUrl, data.cue.chapters);
@@ -646,6 +654,24 @@
     }
 
     async function handleScheduleClick(event) {
+      const programPageBtn = event.target.closest("[data-schedule-open-program]");
+      if (programPageBtn) {
+        const url = String(programPageBtn.getAttribute("data-schedule-open-program") || "").trim();
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
+        return;
+      }
+      const openExplorerBtn = event.target.closest("[data-fip-schedule-open-explorer]");
+      if (openExplorerBtn) {
+        const url = String(openExplorerBtn.getAttribute("data-fip-schedule-open-explorer") || "").trim();
+        if (url) {
+          try {
+            await openProgramExplorer?.({ sourceType: "fip", programUrl: url });
+          } catch (error) {
+            setEpisodeStatus("", String(error?.message || "Could not open explorer."), true);
+          }
+        }
+        return;
+      }
       const playLatestBtn = event.target.closest("button[data-fip-schedule-play-output]");
       if (playLatestBtn) {
         try {

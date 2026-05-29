@@ -1750,6 +1750,7 @@ async function downloadFipEpisode({
   episodeUrl,
   title,
   programTitle,
+  programUrl = "",
   publishedTime,
   artworkUrl = "",
   description = "",
@@ -1762,6 +1763,7 @@ async function downloadFipEpisode({
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const resolvedProgramUrl = String(programUrl || "").trim();
   const metadata = buildMetadata({ description, location, hosts, genres });
   const download = await downloadFromManifest({
     sourceUrl,
@@ -1779,6 +1781,7 @@ async function downloadFipEpisode({
       sourceType: "fip",
       episodeTitle: resolvedTitle,
       programTitle: programTitle || "FIP",
+      programUrl: resolvedProgramUrl,
       publishedTime: publishedTime || resolvedTitle,
       sourceUrl,
       artworkUrl: String(artworkUrl || "").trim(),
@@ -2570,6 +2573,7 @@ app.post("/api/download/fip/url", async (req, res) => {
     const forceDownload = Boolean(req.body.forceDownload);
     const providedTitle = String(req.body.title || "").trim();
     const providedProgramTitle = String(req.body.programTitle || "").trim();
+    const providedProgramUrl = String(req.body.programUrl || "").trim();
     const publishedTime = String(req.body.publishedTime || "").trim();
     const providedImage = String(req.body.image || "").trim();
     const { description, location, hosts, genres } = buildMetadata(req.body || {});
@@ -2577,6 +2581,7 @@ app.post("/api/download/fip/url", async (req, res) => {
       episodeUrl: pageUrl,
       title: providedTitle,
       programTitle: providedProgramTitle,
+      programUrl: providedProgramUrl,
       publishedTime,
       artworkUrl: providedImage,
       description,
