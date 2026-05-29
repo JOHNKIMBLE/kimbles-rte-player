@@ -29,6 +29,7 @@
     const setLiveOverlayTarget = deps.setLiveOverlayTarget;
     const buildBbcAutoplayCandidates = deps.buildBbcAutoplayCandidates;
     const setUrlParam = deps.setUrlParam;
+    const openProgramExplorer = deps.openProgramExplorer;
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -656,6 +657,24 @@
     }
 
     async function handleScheduleClick(event) {
+      const programPageBtn = event.target.closest("[data-schedule-open-program]");
+      if (programPageBtn) {
+        const url = String(programPageBtn.getAttribute("data-schedule-open-program") || "").trim();
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
+        return;
+      }
+      const openExplorerBtn = event.target.closest("[data-bbc-schedule-open-explorer]");
+      if (openExplorerBtn) {
+        const url = String(openExplorerBtn.getAttribute("data-bbc-schedule-open-explorer") || "").trim();
+        if (url) {
+          try {
+            await openProgramExplorer?.({ sourceType: "bbc", programUrl: url });
+          } catch (error) {
+            setSettingsStatus(String(error?.message || "Could not open explorer."), true);
+          }
+        }
+        return;
+      }
       const playLatestBtn = event.target.closest("button[data-bbc-schedule-play-output]");
       if (playLatestBtn) {
         try {
@@ -759,6 +778,13 @@
         dom.liveOverlayPlayBtn.classList.add("hidden");
       });
       dom.programSearchResult?.addEventListener("click", async (event) => {
+        const openUrlBtn = event.target.closest("[data-bbc-open-url]");
+        if (openUrlBtn) {
+          event.stopPropagation();
+          const url = openUrlBtn.getAttribute("data-bbc-open-url") || "";
+          if (url) window.rteDownloader?.openExternalUrl?.(url);
+          return;
+        }
         const schedBtn = event.target.closest(".bbc-quick-schedule-btn");
         if (schedBtn) {
           event.stopPropagation();
@@ -796,6 +822,13 @@
         runDiscovery().catch(() => {});
       });
       dom.discoveryResult?.addEventListener("click", async (event) => {
+        const openUrlBtn = event.target.closest("[data-bbc-open-url]");
+        if (openUrlBtn) {
+          event.stopPropagation();
+          const url = openUrlBtn.getAttribute("data-bbc-open-url") || "";
+          if (url) window.rteDownloader?.openExternalUrl?.(url);
+          return;
+        }
         const schedBtn = event.target.closest(".bbc-quick-schedule-btn");
         if (schedBtn) {
           event.stopPropagation();

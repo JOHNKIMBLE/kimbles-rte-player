@@ -21,6 +21,7 @@
     const playFromDownloadedFile = deps.playFromDownloadedFile;
     const formatNtsTimeSlotLocal = deps.formatNtsTimeSlotLocal;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
+    const openProgramExplorer = deps.openProgramExplorer;
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -134,6 +135,7 @@
                 ${hosts.length ? `<div class="item-meta">Host${hosts.length === 1 ? "" : "s"}: ${escapeHtml(hosts.join(", "))}</div>` : ""}
                 ${description ? `<div class="item-meta">${escapeHtml(description.slice(0, 180))}${description.length > 180 ? "..." : ""}</div>` : ""}
                 ${genresHtml}
+              ${result.programUrl && String(result.programUrl).startsWith("http") ? `<div class="item-actions" style="margin-top:0.5rem;"><button class="secondary" data-wwf-open-url="${escapeHtml(result.programUrl)}">Program Page</button></div>` : ""}
               </div>
             </div>
           </div>
@@ -635,6 +637,24 @@
     }
 
     async function handleScheduleClick(event) {
+      const programPageBtn = event.target.closest("[data-schedule-open-program]");
+      if (programPageBtn) {
+        const url = String(programPageBtn.getAttribute("data-schedule-open-program") || "").trim();
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
+        return;
+      }
+      const openExplorerBtn = event.target.closest("[data-wwf-schedule-open-explorer]");
+      if (openExplorerBtn) {
+        const url = String(openExplorerBtn.getAttribute("data-wwf-schedule-open-explorer") || "").trim();
+        if (url) {
+          try {
+            await openProgramExplorer?.({ sourceType: "wwf", programUrl: url });
+          } catch (error) {
+            setStatus(String(error?.message || "Could not open explorer."), true);
+          }
+        }
+        return;
+      }
       const playLatestBtn = event.target.closest("button[data-wwf-schedule-play-output]");
       if (playLatestBtn) {
         try {
@@ -770,6 +790,13 @@
       });
 
       dom.programSearchResult?.addEventListener("click", (event) => {
+        const openUrlBtn = event.target.closest("[data-wwf-open-url]");
+        if (openUrlBtn) {
+          event.stopPropagation();
+          const url = openUrlBtn.getAttribute("data-wwf-open-url") || "";
+          if (url) window.rteDownloader?.openExternalUrl?.(url);
+          return;
+        }
         const row = event.target.closest("[data-wwf-pick-program]");
         if (!row) {
           return;
@@ -787,6 +814,13 @@
       });
 
       dom.discoveryResult?.addEventListener("click", (event) => {
+        const openUrlBtn = event.target.closest("[data-wwf-open-url]");
+        if (openUrlBtn) {
+          event.stopPropagation();
+          const url = openUrlBtn.getAttribute("data-wwf-open-url") || "";
+          if (url) window.rteDownloader?.openExternalUrl?.(url);
+          return;
+        }
         const row = event.target.closest("[data-wwf-pick-program]");
         if (!row) {
           return;

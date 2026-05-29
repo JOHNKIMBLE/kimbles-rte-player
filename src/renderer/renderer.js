@@ -1007,7 +1007,8 @@ const rteScreen = window.KimbleRteScreen.create({
   formatRunNowResult,
   setEpisodeChapters,
   setSettingsStatus,
-  autoLoadVisiblePlaylists
+  autoLoadVisiblePlaylists,
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const bbcScreen = window.KimbleBbcScreen.create({
   state,
@@ -1064,7 +1065,8 @@ const bbcScreen = window.KimbleBbcScreen.create({
   setBbcStatus,
   setLiveOverlayTarget,
   buildBbcAutoplayCandidates,
-  setUrlParam
+  setUrlParam,
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const wwfScreen = window.KimbleWwfScreen.create({
   state,
@@ -1113,7 +1115,8 @@ const wwfScreen = window.KimbleWwfScreen.create({
   renderPlaylistTracks,
   playFromDownloadedFile,
   formatNtsTimeSlotLocal,
-  shouldArmForceRetry
+  shouldArmForceRetry,
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const ntsScreen = window.KimbleNtsScreen.create({
   state,
@@ -1163,7 +1166,8 @@ const ntsScreen = window.KimbleNtsScreen.create({
   playFromDownloadedFile,
   formatNtsTimeSlotLocal,
   setCachedChapters,
-  shouldArmForceRetry
+  shouldArmForceRetry,
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const fipScreen = window.KimbleFipScreen.create({
   state,
@@ -1210,7 +1214,8 @@ const fipScreen = window.KimbleFipScreen.create({
   renderSchedulerCard,
   renderPlaylistTracks,
   playFromDownloadedFile,
-  shouldArmForceRetry
+  shouldArmForceRetry,
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const kexpScreen = window.KimbleKexpScreen.create({
   state,
@@ -1266,7 +1271,8 @@ const kexpScreen = window.KimbleKexpScreen.create({
   playFromDownloadedFile,
   formatDurationFromSeconds,
   setCachedChapters,
-  shouldArmForceRetry
+  shouldArmForceRetry,
+  openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 playbackController = window.KimblePlaybackController.create({
   dom: {
@@ -1374,6 +1380,9 @@ function renderBbcShowCard(r, { showScheduleBtn = false } = {}) {
   const schedBtn = showScheduleBtn
     ? `<button class="secondary bbc-quick-schedule-btn" data-bbc-schedule-url="${escapeHtml(r.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
     : "";
+  const programPageBtn = r.programUrl
+    ? `<button class="secondary bbc-program-page-btn" data-bbc-open-url="${escapeHtml(r.programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">Program Page</button>`
+    : "";
   return `
   <div class="item clickable" data-load-bbc-program-url="${escapeHtml(r.programUrl)}">
     <div class="search-card">
@@ -1385,6 +1394,7 @@ function renderBbcShowCard(r, { showScheduleBtn = false } = {}) {
         ${location ? `<div class="item-meta">${escapeHtml(location)}</div>` : ""}
         ${desc ? `<div class="item-meta">${escapeHtml(desc.slice(0, 200))}${desc.length > 200 ? "..." : ""}</div>` : ""}
         ${genresHtml}
+        ${programPageBtn}
         ${schedBtn}
       </div>
     </div>

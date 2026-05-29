@@ -20,6 +20,7 @@
     const formatDurationFromSeconds = deps.formatDurationFromSeconds;
     const setCachedChapters = deps.setCachedChapters;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
+    const openProgramExplorer = deps.openProgramExplorer;
 
     const KEXP_STREAM_URL = "https://kexp.streamguys1.com/kexp160.aac";
     const KEXP_ARCHIVE_DAYS = 14;
@@ -259,6 +260,9 @@
       const cadenceHtml = cadence && cadence !== "irregular"
         ? `<div class="item-meta"><strong>${escapeHtml(cadence.charAt(0).toUpperCase() + cadence.slice(1))}</strong></div>`
         : "";
+      const programPageBtn = programUrl && programUrl.startsWith("http")
+        ? `<button class="secondary" data-kexp-open-url="${escapeHtml(programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">Program Page</button>`
+        : "";
       const scheduleBtn = showScheduleBtn
         ? `<button class="secondary kexp-quick-schedule-btn" data-kexp-schedule-url="${escapeHtml(programUrl)}" style="margin-top:0.4rem;font-size:0.8em;">+ Scheduler</button>`
         : "";
@@ -275,7 +279,10 @@
               ${location ? `<div class="item-meta">${escapeHtml(location)}</div>` : ""}
               ${description ? `<div class="item-meta">${escapeHtml(description.slice(0, 200))}${description.length > 200 ? "..." : ""}</div>` : ""}
               ${genresHtml}
-              ${scheduleBtn}
+              <div class="item-actions" style="margin-top:0.4rem;">
+                ${programPageBtn}
+                ${scheduleBtn}
+              </div>
             </div>
           </div>
         </div>
@@ -999,6 +1006,24 @@
     }
 
     async function handleScheduleClick(event) {
+      const programPageBtn = event.target.closest("[data-schedule-open-program]");
+      if (programPageBtn) {
+        const url = String(programPageBtn.getAttribute("data-schedule-open-program") || "").trim();
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
+        return;
+      }
+      const openExplorerBtn = event.target.closest("[data-kexp-schedule-open-explorer]");
+      if (openExplorerBtn) {
+        const url = String(openExplorerBtn.getAttribute("data-kexp-schedule-open-explorer") || "").trim();
+        if (url) {
+          try {
+            await openProgramExplorer?.({ sourceType: "kexp", programUrl: url });
+          } catch (error) {
+            setStatus(String(error?.message || "Could not open explorer."), true);
+          }
+        }
+        return;
+      }
       const playLatestBtn = event.target.closest("button[data-kexp-schedule-play-output]");
       if (playLatestBtn) {
         try {
@@ -1059,6 +1084,13 @@
       const hideOnPick = Boolean(options.hideOnPick);
       const preserveDiscoveryList = Boolean(options.preserveDiscoveryList);
       listElement?.addEventListener("click", (event) => {
+        const openUrlBtn = event.target.closest("[data-kexp-open-url]");
+        if (openUrlBtn) {
+          event.stopPropagation();
+          const url = openUrlBtn.getAttribute("data-kexp-open-url") || "";
+          if (url) window.rteDownloader?.openExternalUrl?.(url);
+          return;
+        }
         if (!extended) {
           const scheduleBtn = event.target.closest(".kexp-quick-schedule-btn");
           if (scheduleBtn) {

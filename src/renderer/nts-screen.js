@@ -45,6 +45,7 @@
     const formatNtsTimeSlotLocal = deps.formatNtsTimeSlotLocal;
     const setCachedChapters = deps.setCachedChapters;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
+    const openProgramExplorer = deps.openProgramExplorer;
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -209,7 +210,10 @@
               ${hosts.length ? `<div class="item-meta">Host${hosts.length === 1 ? "" : "s"}: ${escapeHtml(hosts.join(", "))}</div>` : ""}
               ${description ? `<div class="item-meta">${escapeHtml(description.slice(0, 180))}${description.length > 180 ? "..." : ""}</div>` : ""}
               ${genresHtml}
-              ${showScheduleBtn ? `<div class="item-actions" style="margin-top:0.5rem;"><button class="secondary nts-quick-schedule-btn" data-nts-schedule-url="${escapeHtml(programUrl)}">Quick Schedule</button></div>` : ""}
+              <div class="item-actions" style="margin-top:0.5rem;">
+                ${programUrl ? `<button class="secondary nts-open-url-btn" data-nts-open-url="${escapeHtml(programUrl)}">Program Page</button>` : ""}
+                ${showScheduleBtn ? `<button class="secondary nts-quick-schedule-btn" data-nts-schedule-url="${escapeHtml(programUrl)}">Quick Schedule</button>` : ""}
+              </div>
             </div>
           </div>
         </div>
@@ -680,6 +684,24 @@
     }
 
     async function handleScheduleClick(event) {
+      const programPageBtn = event.target.closest("[data-schedule-open-program]");
+      if (programPageBtn) {
+        const url = String(programPageBtn.getAttribute("data-schedule-open-program") || "").trim();
+        if (url) window.rteDownloader?.openExternalUrl?.(url);
+        return;
+      }
+      const openExplorerBtn = event.target.closest("[data-nts-schedule-open-explorer]");
+      if (openExplorerBtn) {
+        const url = String(openExplorerBtn.getAttribute("data-nts-schedule-open-explorer") || "").trim();
+        if (url) {
+          try {
+            await openProgramExplorer?.({ sourceType: "nts", programUrl: url });
+          } catch (error) {
+            setEpisodeStatus("", String(error?.message || "Could not open explorer."), true);
+          }
+        }
+        return;
+      }
       const playLatestBtn = event.target.closest("button[data-nts-schedule-play-output]");
       if (playLatestBtn) {
         try {
@@ -739,6 +761,13 @@
       const hideOnPick = Boolean(options.hideOnPick);
       const preserveDiscoveryList = Boolean(options.preserveDiscoveryList);
       listEl?.addEventListener("click", (event) => {
+        const openUrlBtn = event.target.closest("[data-nts-open-url]");
+        if (openUrlBtn) {
+          event.stopPropagation();
+          const url = openUrlBtn.getAttribute("data-nts-open-url") || "";
+          if (url) window.rteDownloader?.openExternalUrl?.(url);
+          return;
+        }
         const schedBtn = event.target.closest(".nts-quick-schedule-btn");
         if (schedBtn) {
           event.stopPropagation();
