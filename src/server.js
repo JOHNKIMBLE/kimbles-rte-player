@@ -353,7 +353,7 @@ function toCanonicalBbcEpisodeUrl(inputUrl) {
   }
   try {
     const parsed = new URL(raw);
-    if (!/bbc\./i.test(parsed.hostname)) {
+    if (!hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
       return raw;
     }
     const match = parsed.pathname.match(/\/sounds\/play\/([a-z0-9]{8})/i);
@@ -363,6 +363,19 @@ function toCanonicalBbcEpisodeUrl(inputUrl) {
     return raw;
   } catch {
     return raw;
+  }
+}
+
+function assertBbcPageUrl(inputUrl) {
+  const raw = String(inputUrl || "").trim();
+  try {
+    const parsed = new URL(raw);
+    if (!hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
+      throw new Error("Expected a BBC URL.");
+    }
+    return parsed.toString();
+  } catch {
+    throw new Error("A valid BBC page URL is required.");
   }
 }
 
@@ -2568,7 +2581,7 @@ app.get("/api/fip/episode/tracklist", async (req, res) => {
 
 app.post("/api/download/fip/url", async (req, res) => {
   try {
-    const pageUrl = String(req.body.pageUrl || "");
+    const pageUrl = assertBbcPageUrl(req.body.pageUrl || "");
     const progressToken = String(req.body.progressToken || "");
     const forceDownload = Boolean(req.body.forceDownload);
     const providedTitle = String(req.body.title || "").trim();
@@ -2845,7 +2858,7 @@ app.post("/api/download/bbc/url", async (req, res) => {
     const metadata = buildMetadata(req.body || {});
     const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
     const canonicalUrl = toCanonicalBbcEpisodeUrl(pageUrl);
-    const attemptUrls = Array.from(new Set([canonicalUrl, String(pageUrl).trim()].filter(Boolean)));
+    const attemptUrls = Array.from(new Set([canonicalUrl, pageUrl].filter(Boolean)));
     let download = null;
     let lastError = null;
     let usedUrl = canonicalUrl || String(pageUrl).trim();

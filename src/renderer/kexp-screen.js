@@ -21,6 +21,7 @@
     const setCachedChapters = deps.setCachedChapters;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
     const openProgramExplorer = deps.openProgramExplorer;
+    const confirmSubscriptionPreview = deps.confirmSubscriptionPreview || (async () => true);
 
     const KEXP_STREAM_URL = "https://kexp.streamguys1.com/kexp160.aac";
     const KEXP_ARCHIVE_DAYS = 14;
@@ -1083,7 +1084,7 @@
       const extended = Boolean(options.extended);
       const hideOnPick = Boolean(options.hideOnPick);
       const preserveDiscoveryList = Boolean(options.preserveDiscoveryList);
-      listElement?.addEventListener("click", (event) => {
+      listElement?.addEventListener("click", async (event) => {
         const openUrlBtn = event.target.closest("[data-kexp-open-url]");
         if (openUrlBtn) {
           event.stopPropagation();
@@ -1099,9 +1100,14 @@
             if (!url || !window.rteDownloader?.addKexpSchedule) {
               return;
             }
+            const backfillCount = getBackfillCount();
+            const confirmed = await confirmSubscriptionPreview({ sourceType: "kexp", programUrl: url, backfillCount });
+            if (!confirmed) {
+              return;
+            }
             scheduleBtn.textContent = "Adding...";
             scheduleBtn.disabled = true;
-            window.rteDownloader.addKexpSchedule(url, { backfillCount: getBackfillCount() })
+            window.rteDownloader.addKexpSchedule(url, { backfillCount })
               .then(() => {
                 scheduleBtn.textContent = "Scheduled";
                 return refreshSchedules();
@@ -1256,9 +1262,14 @@
         if (!programUrl || !window.rteDownloader?.addKexpSchedule) {
           return;
         }
+        const backfillCount = getBackfillCount();
+        const confirmed = await confirmSubscriptionPreview({ sourceType: "kexp", programUrl, backfillCount });
+        if (!confirmed) {
+          return;
+        }
         setButtonBusy(dom.addScheduleBtn, true, "Add Scheduler", "Adding...");
         try {
-          await window.rteDownloader.addKexpSchedule(programUrl, { backfillCount: getBackfillCount() });
+          await window.rteDownloader.addKexpSchedule(programUrl, { backfillCount });
           await refreshSchedules();
         } catch (error) {
           if (dom.programMeta) {

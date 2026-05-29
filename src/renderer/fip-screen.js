@@ -42,6 +42,7 @@
     const playFromDownloadedFile = deps.playFromDownloadedFile;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
     const openProgramExplorer = deps.openProgramExplorer;
+    const confirmSubscriptionPreview = deps.confirmSubscriptionPreview || (async () => true);
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -736,13 +737,17 @@
           if (!url || !window.rteDownloader?.addFipSchedule) {
             return;
           }
-          schedBtn.textContent = "Adding...";
-          schedBtn.disabled = true;
           try {
             const backfillMode = dom.scheduleBackfillMode ? dom.scheduleBackfillMode.value : "new-only";
             const backfillCount = backfillMode === "backfill"
               ? Math.max(1, Math.min(100, Number(dom.scheduleBackfillCount?.value || 5)))
               : 0;
+            const confirmed = await confirmSubscriptionPreview({ sourceType: "fip", programUrl: url, backfillCount });
+            if (!confirmed) {
+              return;
+            }
+            schedBtn.textContent = "Adding...";
+            schedBtn.disabled = true;
             await window.rteDownloader.addFipSchedule(url, { backfillCount });
             schedBtn.textContent = "Scheduled";
             await refreshSchedules();
@@ -893,6 +898,10 @@
         const backfillCount = backfillMode === "backfill"
           ? Math.max(1, Math.min(100, Number(dom.scheduleBackfillCount?.value || 5)))
           : 0;
+        const confirmed = await confirmSubscriptionPreview({ sourceType: "fip", programUrl, backfillCount });
+        if (!confirmed) {
+          return;
+        }
         setButtonBusy(dom.addScheduleBtn, true, "Add Scheduler", "Adding...");
         try {
           await window.rteDownloader.addFipSchedule(programUrl, { backfillCount });

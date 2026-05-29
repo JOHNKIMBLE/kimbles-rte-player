@@ -1,0 +1,8 @@
+{
+  "id": 42,
+  "name": "Golden KEXP Show",
+  "description": "KEXP fixture description.",
+  "tags": "soul,jazz",
+  "image_uri": "https://example.com/kexp-golden.jpg",
+  "location_name": "Seattle, WA"
+}

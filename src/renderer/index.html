@@ -25,6 +25,7 @@
         <button id="tabFipBtn" class="secondary">FIP</button>
         <button id="tabKexpBtn" class="secondary">KEXP</button>
         <button id="tabSchedulesBtn" class="secondary">Library</button>
+        <button id="tabStatsBtn" class="secondary">Stats</button>
         <button id="tabHistoryBtn" class="secondary">History</button>
         <button id="tabSettingsBtn" class="secondary">Settings</button>
       </div>
@@ -804,6 +805,38 @@
       </section>
     </div>
 
+    <div id="statsTabContent" class="hidden">
+      <section class="panel" id="statsSection">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;">Stats</h2>
+          <button id="statsRefreshBtn" class="secondary">Refresh</button>
+        </div>
+        <div id="statsSummary" class="hint" aria-live="polite">Loading stats...</div>
+        <div id="statsMetrics" class="library-metrics-grid"></div>
+        <div id="statsSourceStatus" class="stats-source-status"></div>
+        <div class="stats-grid">
+          <div class="item">
+            <div class="item-title">Source Mix</div>
+            <div id="statsSourceChart" class="stats-chart"></div>
+          </div>
+          <div class="item">
+            <div class="item-title">Library Table</div>
+            <div id="statsSourceTable" class="stats-table-wrap"></div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="item">
+            <div class="item-title">Recent Downloads</div>
+            <div id="statsRecentDownloads" class="compact-list"></div>
+          </div>
+          <div class="item">
+            <div class="item-title">System Signals</div>
+            <div id="statsSystemSignals" class="compact-list"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <div id="historyTabContent" class="hidden">
       <section class="panel" id="subscriptionsSection" data-library-section="subscriptions" data-library-label="Subscriptions">
         <div class="row" style="justify-content:space-between;align-items:center;">
@@ -1204,6 +1237,7 @@
   <script src="./web-api-bridge.js"></script>
     <script src="./library-screen.js"></script>
     <script src="./schedules-screen.js"></script>
+    <script src="./stats-screen.js"></script>
     <script src="./settings-screen.js"></script>
     <script src="./rte-screen.js"></script>
     <script src="./bbc-screen.js"></script>

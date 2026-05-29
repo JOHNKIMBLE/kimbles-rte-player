@@ -234,13 +234,23 @@ const settingsStatus = document.getElementById("settingsStatus");
 const tabRteBtn = document.getElementById("tabRteBtn");
 const tabBbcBtn = document.getElementById("tabBbcBtn");
 const tabSchedulesBtn = document.getElementById("tabSchedulesBtn");
+const tabStatsBtn = document.getElementById("tabStatsBtn");
 const tabHistoryBtn = document.getElementById("tabHistoryBtn");
 const tabSettingsBtn = document.getElementById("tabSettingsBtn");
 const rteTabContent = document.getElementById("rteTabContent");
 const bbcTabContent = document.getElementById("bbcTabContent");
 const schedulesTabContent = document.getElementById("schedulesTabContent");
+const statsTabContent = document.getElementById("statsTabContent");
 const historyTabContent = document.getElementById("historyTabContent");
 const settingsTabContent = document.getElementById("settingsTabContent");
+const statsRefreshBtn = document.getElementById("statsRefreshBtn");
+const statsSummary = document.getElementById("statsSummary");
+const statsMetrics = document.getElementById("statsMetrics");
+const statsSourceStatus = document.getElementById("statsSourceStatus");
+const statsSourceChart = document.getElementById("statsSourceChart");
+const statsSourceTable = document.getElementById("statsSourceTable");
+const statsRecentDownloads = document.getElementById("statsRecentDownloads");
+const statsSystemSignals = document.getElementById("statsSystemSignals");
 const allSchedulesList = document.getElementById("allSchedulesList");
 const allSchedulesSummary = document.getElementById("allSchedulesSummary");
 const allSchedulesMetrics = document.getElementById("allSchedulesMetrics");
@@ -738,6 +748,65 @@ async function autoLoadVisiblePlaylists(episodes) {
 
 
 const SOURCE_LABELS = { rte: "RTE", bbc: "BBC", wwf: "WWF", nts: "NTS", fip: "FIP", kexp: "KEXP" };
+async function confirmSubscriptionPreview({ sourceType, programUrl, backfillCount = 0 } = {}) {
+  const sourceKey = String(sourceType || "").trim().toLowerCase();
+  const url = String(programUrl || "").trim();
+  if (!url || typeof window.confirm !== "function") {
+    return true;
+  }
+  const episodeMethodBySource = {
+    rte: "getProgramEpisodes",
+    bbc: "getBbcProgramEpisodes",
+    wwf: "getWwfProgramEpisodes",
+    nts: "getNtsProgramEpisodes",
+    fip: "getFipProgramEpisodes",
+    kexp: "getKexpProgramEpisodes"
+  };
+  const summaryMethodBySource = {
+    rte: "getProgramSummary",
+    wwf: "getWwfProgramSummary",
+    nts: "getNtsProgramSummary",
+    fip: "getFipProgramSummary",
+    kexp: "getKexpProgramSummary"
+  };
+  const methodName = episodeMethodBySource[sourceKey];
+  const summaryMethodName = summaryMethodBySource[sourceKey];
+  const fallback = { title: url, episodes: [] };
+  let payload;
+  try {
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(fallback), 4500));
+    const loader = async () => {
+      if (typeof window.rteDownloader?.[methodName] === "function") {
+        return window.rteDownloader[methodName](url, 1);
+      }
+      if (typeof window.rteDownloader?.[summaryMethodName] === "function") {
+        return window.rteDownloader[summaryMethodName](url);
+      }
+      return fallback;
+    };
+    payload = await Promise.race([loader(), timeout]) || fallback;
+  } catch {
+    payload = fallback;
+  }
+  const episodes = Array.isArray(payload?.episodes) ? payload.episodes : [];
+  const latest = episodes[0] || {};
+  const title = payload?.title || payload?.programTitle || payload?.showName || latest.programTitle || url;
+  const latestTitle = latest.title || latest.fullTitle || latest.episodeTitle || payload?.latestEpisodeTitle || "No episode detected";
+  const nextText = payload?.nextBroadcastTitle || payload?.nextBroadcastAt || payload?.runSchedule || payload?.cadence || "Not detected";
+  const outputDir = String(state.downloadDir || downloadDirInput?.value || "").trim() || "Default download folder";
+  const pathFormat = String(state.pathFormat || pathFormatInput?.value || "").trim() || "{radio}/{program}/{episode_short} {release_date}";
+  const label = SOURCE_LABELS[sourceKey] || sourceKey.toUpperCase() || "Source";
+  const preview = [
+    `Add ${label} subscription?`,
+    "",
+    `Program: ${title}`,
+    `Next/latest episode: ${latestTitle}`,
+    `Run schedule: ${nextText}`,
+    `Output path: ${outputDir}/${pathFormat}`,
+    `Backfill count: ${Number(backfillCount || 0)}`
+  ].join("\n");
+  return window.confirm(preview);
+}
 const libraryScreen = window.KimbleLibraryScreen.create({
   state,
   dom: {
@@ -906,6 +975,21 @@ const schedulesScreen = window.KimbleSchedulesScreen.create({
     });
   }
 });
+const statsScreen = window.KimbleStatsScreen.create({
+  dom: {
+    refreshBtn: statsRefreshBtn,
+    summary: statsSummary,
+    metrics: statsMetrics,
+    sourceStatus: statsSourceStatus,
+    sourceChart: statsSourceChart,
+    sourceTable: statsSourceTable,
+    recentDownloads: statsRecentDownloads,
+    systemSignals: statsSystemSignals
+  },
+  escapeHtml,
+  sourceLabels: SOURCE_LABELS,
+  formatLocalDateTime
+});
 const settingsScreen = window.KimbleSettingsScreen.create({
   state,
   dom: {
@@ -1008,6 +1092,7 @@ const rteScreen = window.KimbleRteScreen.create({
   setEpisodeChapters,
   setSettingsStatus,
   autoLoadVisiblePlaylists,
+  confirmSubscriptionPreview,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const bbcScreen = window.KimbleBbcScreen.create({
@@ -1066,6 +1151,7 @@ const bbcScreen = window.KimbleBbcScreen.create({
   setLiveOverlayTarget,
   buildBbcAutoplayCandidates,
   setUrlParam,
+  confirmSubscriptionPreview,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const wwfScreen = window.KimbleWwfScreen.create({
@@ -1116,6 +1202,7 @@ const wwfScreen = window.KimbleWwfScreen.create({
   playFromDownloadedFile,
   formatNtsTimeSlotLocal,
   shouldArmForceRetry,
+  confirmSubscriptionPreview,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const ntsScreen = window.KimbleNtsScreen.create({
@@ -1167,6 +1254,7 @@ const ntsScreen = window.KimbleNtsScreen.create({
   formatNtsTimeSlotLocal,
   setCachedChapters,
   shouldArmForceRetry,
+  confirmSubscriptionPreview,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const fipScreen = window.KimbleFipScreen.create({
@@ -1215,6 +1303,7 @@ const fipScreen = window.KimbleFipScreen.create({
   renderPlaylistTracks,
   playFromDownloadedFile,
   shouldArmForceRetry,
+  confirmSubscriptionPreview,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 const kexpScreen = window.KimbleKexpScreen.create({
@@ -1272,6 +1361,7 @@ const kexpScreen = window.KimbleKexpScreen.create({
   formatDurationFromSeconds,
   setCachedChapters,
   shouldArmForceRetry,
+  confirmSubscriptionPreview,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target)
 });
 playbackController = window.KimblePlaybackController.create({
@@ -1418,6 +1508,7 @@ appShell = window.KimbleAppShell.create({
     tabFipBtn,
     tabKexpBtn,
     tabSchedulesBtn,
+    tabStatsBtn,
     tabHistoryBtn,
     tabSettingsBtn,
     themeToggleBtn,
@@ -1432,6 +1523,7 @@ appShell = window.KimbleAppShell.create({
     fipTabContent,
     kexpTabContent,
     schedulesTabContent,
+    statsTabContent,
     historyTabContent,
     settingsTabContent,
     wwfStationSelect,
@@ -1461,6 +1553,7 @@ appShell = window.KimbleAppShell.create({
   actions: {
     loadFeeds: () => libraryScreen.loadFeeds(),
     loadDiagnostics: () => libraryScreen.loadDiagnostics(),
+    loadStats: () => statsScreen.loadStats(),
     refreshLibraryData: () => libraryScreen.refreshLibraryData(),
     loadHistory: () => libraryScreen.loadHistory(),
     renderAllSchedules: () => schedulesScreen.renderAllSchedules(),

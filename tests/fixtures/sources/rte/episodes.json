@@ -1,0 +1,15 @@
+{
+  "page": 1,
+  "total_items": 1,
+  "num_pages": 1,
+  "programmes": [
+    {
+      "clip_id": "rte-golden-1",
+      "url": "/radio/radio1/clips/rte-golden-1/",
+      "title": "Golden RTÉ Show - First Fixture",
+      "subtitle": "Episode fixture summary.",
+      "published_time": "2026-03-16",
+      "image": "/images/rte-episode.jpg"
+    }
+  ]
+}

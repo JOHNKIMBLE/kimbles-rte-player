@@ -9,6 +9,7 @@ const {
 const { resolveBundledAtomicParsleyBinary } = require("./tags");
 const { resolveSongrecBinary, resolveFpcalcBinary } = require("./cue");
 const { getBootstrapScriptPath } = require("./vendor-bootstrap");
+const { listParserWarnings } = require("./parser-diagnostics");
 
 function runVersion(command, args = [], options = {}) {
   try {
@@ -398,6 +399,7 @@ function collectRuntimeDiagnostics(options = {}) {
       })
     ],
     recentErrors,
+    parserWarnings: listParserWarnings(40),
     metadataHarvest,
     sourceHealth: sourceHealth.sourceHealth,
     retryHistory: sourceHealth.retryHistory
