@@ -215,7 +215,7 @@
           <div class="health-card-name"><span class="health-dot ${dotClass}"></span>${escapeHtml(name)}</div>
           <div class="health-card-meta">${count} schedule${count !== 1 ? "s" : ""}</div>
           <div class="health-card-meta">Last run: ${escapeHtml(lastRunStr)}</div>
-          ${retries > 0 ? `<div class="health-card-meta" style="color:#f1c40f;">${retries} retry${retries !== 1 ? "s" : ""} pending</div>` : ""}
+          ${retries > 0 ? `<div class="health-card-meta" style="color:#f1c40f;">${retries} retr${retries !== 1 ? "ies" : "y"} pending</div>` : ""}
         </div>`;
       }).join("");
     }

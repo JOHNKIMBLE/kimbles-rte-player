@@ -2023,7 +2023,7 @@
                     <span class="status-chip status-chip-${escapeHtml(tone)}">${row.recentFailureCount > 0 ? "Attention" : row.retryPending > 0 ? "Retrying" : "Healthy"}</span>
                     ${escapeHtml(String(row.scheduleCount || 0))} schedule(s)
                     &middot; ${escapeHtml(String(row.enabledScheduleCount || 0))} enabled
-                    &middot; ${escapeHtml(String(row.retryPending || 0))} retry pending
+                    &middot; ${escapeHtml(String(row.retryPending || 0))} retr${(row.retryPending || 0) !== 1 ? "ies" : "y"} pending
                   </div>
                   <div class="item-meta">Last schedule run: ${escapeHtml(lastRun)}</div>
                   ${row.lastFailureMessage ? `<div class="item-meta queue-entry-issue">Latest failure${lastFailureAt ? ` (${escapeHtml(lastFailureAt)})` : ""}: ${escapeHtml(String(row.lastFailureTitle || row.lastFailureMessage || ""))}${row.lastFailureTitle && row.lastFailureMessage ? ` &middot; ${escapeHtml(String(row.lastFailureMessage || ""))}` : ""}</div>` : ""}
