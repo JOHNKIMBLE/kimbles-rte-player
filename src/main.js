@@ -3238,7 +3238,7 @@ app.whenReady().then(() => {
       title: episode.title,
       programTitle: episode.programTitle,
       episodeUrl: episode.episodeUrl,
-      publishedTime: episode.publishedTime,
+      publishedTime: episode.publishedTime || episode.publishedTimeFormatted,
       artworkUrl: episode.image || "",
       description: episode.description || "",
       location: episode.location || "",
