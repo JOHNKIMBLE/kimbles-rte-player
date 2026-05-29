@@ -894,6 +894,7 @@ const schedulesScreen = window.KimbleSchedulesScreen.create({
   renderSchedulerCard,
   playFromDownloadedFile,
   sourceLabels: SOURCE_LABELS,
+  setStatus: setSettingsStatus,
   openProgramExplorer: (target) => appShell?.openProgramExplorer?.(target),
   onHealthSourceNavigate: (sourceKey) => {
     if (allSchedulesSourceFilter) {

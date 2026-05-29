@@ -299,7 +299,9 @@
     }
 
     function getLibrarySections() {
-      return Array.from(document.querySelectorAll("#schedulesTabContent [data-library-section]"));
+      return Array.from(document.querySelectorAll(
+        "#schedulesTabContent [data-library-section], #historyTabContent [data-library-section]"
+      ));
     }
 
     function ensureLibrarySectionBody(section) {
@@ -3413,7 +3415,7 @@
         }
       });
 
-      document.getElementById("schedulesTabContent")?.addEventListener("click", (event) => {
+      function handleSectionToggleClick(event) {
         const button = event.target.closest("[data-library-section-toggle]");
         if (!button) {
           return;
@@ -3422,7 +3424,9 @@
         const section = sectionId ? document.getElementById(sectionId) : null;
         const collapsed = Boolean(section?.classList.contains("library-section-collapsed"));
         setLibrarySectionCollapsed(sectionId, !collapsed);
-      });
+      }
+      document.getElementById("schedulesTabContent")?.addEventListener("click", handleSectionToggleClick);
+      document.getElementById("historyTabContent")?.addEventListener("click", handleSectionToggleClick);
     }
 
     bindEvents();
