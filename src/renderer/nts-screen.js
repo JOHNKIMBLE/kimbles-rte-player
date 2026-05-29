@@ -46,6 +46,7 @@
     const setCachedChapters = deps.setCachedChapters;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
     const openProgramExplorer = deps.openProgramExplorer;
+    const confirmSubscriptionPreview = deps.confirmSubscriptionPreview || (async () => true);
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -537,6 +538,10 @@
         dom.programUrlInput.value = url;
       }
       if (typeof scheduleBackfillCount === "number") {
+        const confirmed = await confirmSubscriptionPreview({ sourceType: "nts", programUrl: url, backfillCount: scheduleBackfillCount });
+        if (!confirmed) {
+          return;
+        }
         await window.rteDownloader.addNtsSchedule(url, { backfillCount: scheduleBackfillCount });
         await refreshSchedules();
         return;
@@ -953,6 +958,10 @@
         const backfillCount = dom.scheduleBackfillMode?.value === "backfill"
           ? Math.max(1, Math.min(100, Number(dom.scheduleBackfillCount?.value || 5)))
           : 0;
+        const confirmed = await confirmSubscriptionPreview({ sourceType: "nts", programUrl, backfillCount });
+        if (!confirmed) {
+          return;
+        }
         setButtonBusy(dom.addScheduleBtn, true, "Add Scheduler", "Adding...");
         try {
           await window.rteDownloader.addNtsSchedule(programUrl, { backfillCount });

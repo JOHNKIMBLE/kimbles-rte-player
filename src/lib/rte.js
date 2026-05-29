@@ -23,9 +23,10 @@ function configure({ diskCache } = {}) {
   _diskCache = diskCache || null;
 }
 
-const { cleanText, stripHtml, inferCadence } = require("./utils");
+const { cleanText, stripHtml, extractMetaContent, inferCadence } = require("./utils");
 const { fetchWithHostAllowlist } = require("./outbound-http");
 const { computeNextBroadcastStartUtc } = require("./scheduler");
+const { recordParserWarning } = require("./parser-diagnostics");
 
 const MS_PER_DAY = 86400000;
 
@@ -612,24 +613,18 @@ async function getProgramSummary(programUrl) {
   }
 
   const html = await fetchText(normalizedProgramUrl);
-  const title =
+  const extractedTitle =
+    extractMetaContent(html, ["programme", "DC.title"]) ||
     findFirstMatch(html, [
-      /<meta\s+name=["']programme["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']DC\.title["']\s+[^>]*content=["']([^"']+)["']/i,
       /<title>([^<]+)<\/title>/i
-    ]) || "RTÉ Program";
+    ]);
+  const title = extractedTitle || "RTÉ Program";
 
   const description =
-    findFirstMatch(html, [
-      /<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i
-    ]) || "";
+    extractMetaContent(html, ["description", "og:description"]) || "";
 
   const image =
-    findFirstMatch(html, [
-      /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']twitter:image(?::src)?["']\s+content=["']([^"']+)["']/i
-    ]) || "";
+    extractMetaContent(html, ["og:image", "twitter:image", "twitter:image:src"]) || "";
 
   const runSchedule =
     findFirstMatch(html, [
@@ -664,28 +659,35 @@ async function getProgramSummary(programUrl) {
     } catch {}
   }
   if (!genres.length) {
-    const dcSubject = findFirstMatch(html, [
-      /<meta\s+name=["']DC\.subject["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']dc\.subject["']\s+content=["']([^"']+)["']/i
-    ]);
+    const dcSubject = extractMetaContent(html, ["DC.subject", "dc.subject"]);
     if (dcSubject) {
       genres = dcSubject.split(/[,;]/).map((k) => k.trim()).filter(Boolean).slice(0, 6);
     }
   }
   if (!genres.length) {
-    const kwMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
-    if (kwMatch) {
-      genres = kwMatch[1].split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
+    const keywords = extractMetaContent(html, "keywords");
+    if (keywords) {
+      genres = keywords.split(",").map((k) => k.trim()).filter(Boolean).slice(0, 5);
     }
   }
   if (!location) {
-    location = findFirstMatch(html, [
-      /<meta\s+name=["']DC\.coverage["']\s+content=["']([^"']+)["']/i,
-      /<meta\s+name=["']dc\.coverage["']\s+content=["']([^"']+)["']/i
-    ]) || "";
+    location = extractMetaContent(html, ["DC.coverage", "dc.coverage"]) || "";
   }
 
   const rs = dublinScheduleToUtc(cleanText(runSchedule));
+  if (!extractedTitle || !description || !runSchedule) {
+    recordParserWarning({
+      sourceType: "rte",
+      code: "program_summary_incomplete",
+      message: "RTÉ program summary metadata was incomplete.",
+      url: normalizedProgramUrl,
+      detail: [
+        !extractedTitle ? "title" : "",
+        !description ? "description" : "",
+        !runSchedule ? "runSchedule" : ""
+      ].filter(Boolean).join(", ")
+    });
+  }
   const summary = {
     programUrl: normalizedProgramUrl,
     title: cleanTitle(title),

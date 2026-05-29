@@ -112,6 +112,7 @@ const {
 const { buildEntityGraph, searchEntityGraph, getEntityGraphEntity } = require("./lib/entity-graph");
 const { createCollectionsStore } = require("./lib/collections-store");
 const { createMetadataHarvestStore } = require("./lib/metadata-harvest-store");
+const { createMetadataRepairStore } = require("./lib/metadata-repair-store");
 const {
   MATERIALIZED_METADATA_SCHEMA_VERSION,
   createMaterializedMetadataStore
@@ -152,6 +153,7 @@ const { createRecentErrorsLog } = require("./lib/recent-errors-log");
 let downloadHistory = null;
 let recentErrorsLog = null;
 let metadataHarvestStore = null;
+let metadataRepairStore = null;
 let materializedMetadataStore = null;
 let collectionsStore = null;
 let materializedMetadataCache = null;
@@ -179,6 +181,40 @@ function isAllowedStreamProxyHost(url) {
   } catch {
     return false;
   }
+}
+
+function parseHttpByteRange(rangeHeader, fileSize) {
+  const header = String(rangeHeader || "").trim();
+  const match = header.match(/^bytes=(\d*)-(\d*)$/i);
+  if (!match || !Number.isSafeInteger(fileSize) || fileSize <= 0) {
+    return null;
+  }
+
+  const hasStart = match[1] !== "";
+  const hasEnd = match[2] !== "";
+  if (!hasStart && !hasEnd) {
+    return null;
+  }
+
+  let start;
+  let end;
+  if (!hasStart) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return null;
+    }
+    start = Math.max(0, fileSize - suffixLength);
+    end = fileSize - 1;
+  } else {
+    start = Number(match[1]);
+    end = hasEnd ? Number(match[2]) : fileSize - 1;
+  }
+
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= fileSize || end < start) {
+    return null;
+  }
+
+  return { start, end: Math.min(end, fileSize - 1) };
 }
 
 function createStreamProxyServer() {
@@ -227,9 +263,16 @@ function createStreamProxyServer() {
       const fileSize = stat.size;
       const range = req.headers.range;
       if (range) {
-        const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(startStr, 10);
-        const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+        const parsedRange = parseHttpByteRange(range, fileSize);
+        if (!parsedRange) {
+          res.writeHead(416, {
+            "Content-Range": `bytes */${fileSize}`,
+            "Accept-Ranges": "bytes"
+          });
+          res.end();
+          return;
+        }
+        const { start, end } = parsedRange;
         const chunkSize = end - start + 1;
         res.writeHead(206, {
           "Content-Range": `bytes ${start}-${end}/${fileSize}`,
@@ -237,14 +280,22 @@ function createStreamProxyServer() {
           "Content-Length": chunkSize,
           "Content-Type": "audio/mpeg"
         });
-        fs.createReadStream(tempEntry.path, { start, end }).pipe(res);
+        fs.createReadStream(tempEntry.path, { start, end })
+          .on("error", () => {
+            try { res.end(); } catch {}
+          })
+          .pipe(res);
       } else {
         res.writeHead(200, {
           "Content-Length": fileSize,
           "Accept-Ranges": "bytes",
           "Content-Type": "audio/mpeg"
         });
-        fs.createReadStream(tempEntry.path).pipe(res);
+        fs.createReadStream(tempEntry.path)
+          .on("error", () => {
+            try { res.end(); } catch {}
+          })
+          .pipe(res);
       }
       return;
     }
@@ -504,6 +555,19 @@ function toCanonicalBbcEpisodeUrl(inputUrl) {
     return raw;
   } catch {
     return raw;
+  }
+}
+
+function assertBbcPageUrl(inputUrl) {
+  const raw = String(inputUrl || "").trim();
+  try {
+    const parsed = new URL(raw);
+    if (!hostMatchesAnySuffix(parsed.hostname, ["bbc.co.uk", "bbc.com"])) {
+      throw new Error("Expected a BBC URL.");
+    }
+    return parsed.toString();
+  } catch {
+    throw new Error("A valid BBC page URL is required.");
   }
 }
 
@@ -1805,15 +1869,16 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
   if (!pageUrl || typeof pageUrl !== "string") {
     throw new Error("A valid BBC page URL is required.");
   }
+  const safePageUrl = assertBbcPageUrl(pageUrl);
 
   const providedTitle = String(title || "").trim();
   const providedProgramTitle = String(programTitle || "").trim();
-  const inferredTitle = providedTitle || inferTitleFromUrl(pageUrl, "bbc-audio");
-  const canonicalUrl = toCanonicalBbcEpisodeUrl(pageUrl);
-  const attemptUrls = Array.from(new Set([canonicalUrl, String(pageUrl).trim()].filter(Boolean)));
+  const inferredTitle = providedTitle || inferTitleFromUrl(safePageUrl, "bbc-audio");
+  const canonicalUrl = toCanonicalBbcEpisodeUrl(safePageUrl);
+  const attemptUrls = Array.from(new Set([canonicalUrl, safePageUrl].filter(Boolean)));
   let download = null;
   let lastError = null;
-  let usedUrl = canonicalUrl || String(pageUrl).trim();
+  let usedUrl = canonicalUrl || safePageUrl;
 
   for (let i = 0; i < attemptUrls.length; i += 1) {
     const candidate = attemptUrls[i];
@@ -1822,7 +1887,7 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
         sourceUrl: candidate,
         manifestUrl: candidate,
         title: inferredTitle,
-        programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+        programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(safePageUrl) || "BBC",
         publishedTime: publishedTime || inferredTitle,
         episodeUrl: candidate,
         sourceType: "bbc",
@@ -1840,7 +1905,7 @@ ipcMain.handle("download-bbc-url", async (event, { pageUrl, progressToken, title
           ...buildMetadata({ description, location, hosts, genres }),
           sourceType: "bbc",
           episodeTitle: inferredTitle,
-          programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(pageUrl) || "BBC",
+          programTitle: providedProgramTitle || inferProgramNameFromUrl(candidate) || inferProgramNameFromUrl(safePageUrl) || "BBC",
           publishedTime: publishedTime || inferredTitle,
           sourceUrl: candidate,
           artworkUrl: String(image || "").trim(),
@@ -2874,6 +2939,44 @@ ipcMain.handle("download-history-clear", () => {
   broadcastGlobalEvent({ type: "download.history.cleared" });
   return { ok: true };
 });
+ipcMain.handle("history-listen", (_event, payload = {}) => {
+  if (!downloadHistory) {
+    return { ok: false, updated: 0 };
+  }
+  const outputDir = String(payload?.outputDir || "").trim();
+  const fileName = String(payload?.fileName || "").trim();
+  const sourceType = String(payload?.sourceType || "").trim().toLowerCase();
+  const episodeUrl = String(payload?.episodeUrl || "").trim();
+  const listenSeconds = Math.max(0, Number(payload?.listenSeconds || 0) || 0);
+  const durationSeconds = Math.max(0, Number(payload?.durationSeconds || 0) || 0);
+  const completed = Boolean(payload?.completed);
+  const playedAt = new Date().toISOString();
+  const updated = downloadHistory.patchAll((entry) => {
+    const entryOutputDir = String(entry?.outputDir || "").trim();
+    const entryFileName = String(entry?.fileName || "").trim();
+    if (outputDir && fileName && entryOutputDir === outputDir && entryFileName === fileName) {
+      return true;
+    }
+    return Boolean(sourceType && episodeUrl
+      && String(entry?.sourceType || "").trim().toLowerCase() === sourceType
+      && String(entry?.episodeUrl || "").trim() === episodeUrl);
+  }, (entry) => {
+    const nextPlayCount = completed ? Math.max(1, Number(entry?.playCount || 0) + 1) : Math.max(1, Number(entry?.playCount || 0) || 1);
+    return {
+      playCount: nextPlayCount,
+      lastPlayedAt: playedAt,
+      listenSeconds,
+      durationSeconds: durationSeconds || Number(entry?.durationSeconds || 0) || 0,
+      playState: completed ? "completed" : (listenSeconds > 5 ? "in-progress" : String(entry?.playState || "")),
+      completedAt: completed ? playedAt : String(entry?.completedAt || "")
+    };
+  });
+  if (updated > 0) {
+    patchMaterializedHistory();
+    broadcastGlobalEvent({ type: "download.history.updated", source: sourceType });
+  }
+  return { ok: updated > 0, updated };
+});
 ipcMain.handle("program-feeds-list", () => listAllProgramFeeds());
 
 async function executeProgramFeedsRefresh() {
@@ -2969,7 +3072,14 @@ ipcMain.handle("collections-create", (_event, payload = {}) => {
   if (!collectionsStore) {
     return [];
   }
-  collectionsStore.create(String(payload.name || ""));
+  collectionsStore.create(payload || {});
+  return collectionsStore.list();
+});
+ipcMain.handle("collections-update", (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return [];
+  }
+  collectionsStore.update(String(payload.collectionId || ""), payload.patch || {});
   return collectionsStore.list();
 });
 ipcMain.handle("collections-delete", (_event, payload = {}) => {
@@ -3003,6 +3113,14 @@ ipcMain.handle("collections-remove-entry", (_event, payload = {}) => {
   collectionsStore.removeEntry(String(payload.collectionId || ""), String(payload.entryId || ""));
   return collectionsStore.list();
 });
+ipcMain.handle("collections-refresh", async (_event, payload = {}) => {
+  if (!collectionsStore) {
+    return { collection: null, collections: [] };
+  }
+  const collectionId = String(payload.collectionId || "");
+  const collection = collectionsStore.list().find((item) => item.id === collectionId) || null;
+  return { collection, collections: collectionsStore.list() };
+});
 ipcMain.handle("collections-recommendations", async (_event, payload = {}) => {
   const forceRefresh = payload?.forceRefresh === true;
   await refreshMetadataHarvestCache(forceRefresh);
@@ -3031,6 +3149,38 @@ ipcMain.handle("collections-recommendations", async (_event, payload = {}) => {
   );
 });
 ipcMain.handle("history-postprocess", async (_event, payload = {}) => rebuildDownloadedFileMetadata(payload || {}));
+ipcMain.handle("metadata-harvest-docs-list", (_event, payload = {}) => {
+  if (!metadataHarvestStore) {
+    return [];
+  }
+  const sourceType = String(payload.sourceType || "").trim().toLowerCase();
+  const title = String(payload.title || "").trim().toLowerCase();
+  const programUrl = String(payload.programUrl || "").trim();
+  const episodeUrl = String(payload.episodeUrl || "").trim();
+  return metadataHarvestStore.list()
+    .filter((row) => !sourceType || String(row?.sourceType || "").trim().toLowerCase() === sourceType)
+    .filter((row) => !programUrl || String(row?.programUrl || "").trim() === programUrl)
+    .filter((row) => !episodeUrl || String(row?.episodeUrl || "").trim() === episodeUrl)
+    .filter((row) => !title || String(row?.title || row?.programTitle || "").trim().toLowerCase() === title)
+    .slice(0, 24);
+});
+ipcMain.handle("metadata-repairs-list", () => metadataRepairStore ? metadataRepairStore.list() : []);
+ipcMain.handle("metadata-repairs-add", async (_event, payload = {}) => {
+  if (!metadataRepairStore) {
+    return [];
+  }
+  metadataRepairStore.add(payload || {});
+  await refreshMaterializedMetadataSnapshot({ forceRebuild: true });
+  return metadataRepairStore.list();
+});
+ipcMain.handle("metadata-repairs-delete", async (_event, payload = {}) => {
+  if (!metadataRepairStore) {
+    return [];
+  }
+  metadataRepairStore.remove(String(payload.ruleId || ""));
+  await refreshMaterializedMetadataSnapshot({ forceRebuild: true }).catch(() => {});
+  return metadataRepairStore.list();
+});
 ipcMain.handle("diagnostics-get", async () => {
   const settings = readSettings();
   if (process.env.NODE_ENV !== "test") {
@@ -3213,6 +3363,7 @@ app.whenReady().then(() => {
   const RECENT_ERRORS_PATH = path.join(DATA_DIR, "recent-errors.json");
   recentErrorsLog = createRecentErrorsLog(RECENT_ERRORS_PATH);
   metadataHarvestStore = createMetadataHarvestStore(path.join(DATA_DIR, "metadata-harvest.json"));
+  metadataRepairStore = createMetadataRepairStore(path.join(DATA_DIR, "metadata-repairs.json"));
   materializedMetadataStore = createMaterializedMetadataStore(path.join(DATA_DIR, "materialized-metadata.json"));
   materializedMetadataCache = getMaterializedMetadataSnapshot();
   collectionsStore = createCollectionsStore(path.join(DATA_DIR, "collections.json"));

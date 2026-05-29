@@ -10,6 +10,14 @@
     const setStatus = deps.setStatus || (() => {});
     let latestTaggedSchedules = [];
     let searchTimer = null;
+    const scheduleSources = [
+      { key: "rte", loader: () => window.rteDownloader?.listSchedules?.() },
+      { key: "bbc", loader: () => window.rteDownloader?.listBbcSchedules?.() },
+      { key: "wwf", loader: () => window.rteDownloader?.listWwfSchedules?.() },
+      { key: "nts", loader: () => window.rteDownloader?.listNtsSchedules?.() },
+      { key: "fip", loader: () => window.rteDownloader?.listFipSchedules?.() },
+      { key: "kexp", loader: () => window.rteDownloader?.listKexpSchedules?.() }
+    ];
 
     function getSourceLabel(sourceKey) {
       const key = String(sourceKey || "").trim().toLowerCase();
@@ -220,33 +228,72 @@
       }).join("");
     }
 
+    function renderScheduleLoadingState() {
+      if (!dom.allSchedulesList) {
+        return;
+      }
+      dom.allSchedulesList.innerHTML = scheduleSources.map(({ key }) => `
+        <div class="item stats-skeleton-card">
+          <div class="item-title"><span class="source-badge source-badge-${escapeHtml(key)}">${escapeHtml(getSourceLabel(key))}</span> <span class="status-chip status-chip-neutral">Fetching</span></div>
+          <div class="stats-skeleton-line"></div>
+          <div class="stats-skeleton-line short"></div>
+        </div>
+      `).join("");
+      if (dom.allSchedulesSummary) {
+        dom.allSchedulesSummary.textContent = "Checking each source...";
+      }
+    }
+
+    async function loadScheduleList(sourceKey, loader) {
+      if (typeof loader !== "function") {
+        return { sourceKey, rows: [], status: "unavailable" };
+      }
+      try {
+        const timedOut = Symbol("schedule-timeout");
+        const result = await Promise.race([
+          Promise.resolve().then(loader),
+          new Promise((resolve) => setTimeout(() => resolve(timedOut), 2500))
+        ]);
+        if (result === timedOut) {
+          return { sourceKey, rows: [], status: "timeout" };
+        }
+        return {
+          sourceKey,
+          rows: Array.isArray(result) ? result : [],
+          status: Array.isArray(result) ? "ok" : "degraded"
+        };
+      } catch (error) {
+        return { sourceKey, rows: [], status: "error", error };
+      }
+    }
+
     async function renderAllSchedules() {
       if (!dom.allSchedulesList) {
         return;
       }
-      dom.allSchedulesList.innerHTML = `<div class="item muted">Loading...</div>`;
+      renderScheduleLoadingState();
       try {
-        const [rte, bbc, wwf, nts, fip, kexp] = await Promise.all([
-          window.rteDownloader?.listSchedules?.().catch(() => []),
-          window.rteDownloader?.listBbcSchedules?.().catch(() => []),
-          window.rteDownloader?.listWwfSchedules?.().catch(() => []),
-          window.rteDownloader?.listNtsSchedules?.().catch(() => []),
-          window.rteDownloader?.listFipSchedules?.().catch(() => []),
-          window.rteDownloader?.listKexpSchedules?.().catch(() => [])
-        ]);
-        renderHealthDashboard({ rte: rte || [], bbc: bbc || [], wwf: wwf || [], nts: nts || [], fip: fip || [], kexp: kexp || [] });
+        const results = await Promise.all(scheduleSources.map(({ key, loader }) => loadScheduleList(key, loader)));
+        const schedulesMap = results.reduce((map, result) => {
+          map[result.sourceKey] = result.rows || [];
+          return map;
+        }, {});
+        renderHealthDashboard(schedulesMap);
         const tagged = [
-          ...(rte || []).map((schedule) => ({ ...schedule, _source: "rte" })),
-          ...(bbc || []).map((schedule) => ({ ...schedule, _source: "bbc" })),
-          ...(wwf || []).map((schedule) => ({ ...schedule, _source: "wwf" })),
-          ...(nts || []).map((schedule) => ({ ...schedule, _source: "nts" })),
-          ...(fip || []).map((schedule) => ({ ...schedule, _source: "fip" })),
-          ...(kexp || []).map((schedule) => ({ ...schedule, _source: "kexp" }))
+          ...(schedulesMap.rte || []).map((schedule) => ({ ...schedule, _source: "rte" })),
+          ...(schedulesMap.bbc || []).map((schedule) => ({ ...schedule, _source: "bbc" })),
+          ...(schedulesMap.wwf || []).map((schedule) => ({ ...schedule, _source: "wwf" })),
+          ...(schedulesMap.nts || []).map((schedule) => ({ ...schedule, _source: "nts" })),
+          ...(schedulesMap.fip || []).map((schedule) => ({ ...schedule, _source: "fip" })),
+          ...(schedulesMap.kexp || []).map((schedule) => ({ ...schedule, _source: "kexp" }))
         ];
+        const degraded = results.filter((result) => result.status !== "ok");
         latestTaggedSchedules = tagged;
         if (!tagged.length) {
           if (dom.allSchedulesSummary) {
-            dom.allSchedulesSummary.textContent = "No subscriptions yet across any source.";
+            dom.allSchedulesSummary.textContent = degraded.length
+              ? `No subscriptions loaded. ${degraded.length} source${degraded.length === 1 ? "" : "s"} degraded.`
+              : "No subscriptions yet across any source.";
           }
           dom.allSchedulesList.innerHTML = `<div class="item">No schedules yet across any source.</div>`;
           return;

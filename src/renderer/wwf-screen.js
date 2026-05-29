@@ -22,6 +22,7 @@
     const formatNtsTimeSlotLocal = deps.formatNtsTimeSlotLocal;
     const shouldArmForceRetry = deps.shouldArmForceRetry;
     const openProgramExplorer = deps.openProgramExplorer;
+    const confirmSubscriptionPreview = deps.confirmSubscriptionPreview || (async () => true);
 
     let searchDebounceTimer = null;
     let lastSearchRows = [];
@@ -860,6 +861,10 @@
         const backfillCount = dom.scheduleBackfillMode?.value === "backfill"
           ? Math.max(1, Math.floor(Number(dom.scheduleBackfillCount?.value || 1)))
           : 0;
+        const confirmed = await confirmSubscriptionPreview({ sourceType: "wwf", programUrl: programName, backfillCount });
+        if (!confirmed) {
+          return;
+        }
         setButtonBusy(dom.addScheduleBtn, true, "Add Scheduler", "Adding...");
         try {
           await window.rteDownloader.addWwfSchedule(programName, { backfillCount });

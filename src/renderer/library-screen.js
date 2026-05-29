@@ -1942,6 +1942,7 @@
       const binaryRows = Array.isArray(diagnostics.binaries) ? diagnostics.binaries : [];
       const writableRows = Array.isArray(diagnostics.writablePaths) ? diagnostics.writablePaths : [];
       const recentErrors = Array.isArray(diagnostics.recentErrors) ? diagnostics.recentErrors : [];
+      const parserWarnings = Array.isArray(diagnostics.parserWarnings) ? diagnostics.parserWarnings : [];
       const runtimeRows = [
         ["Platform", [runtime.platform, runtime.arch].filter(Boolean).join(" / ") || "Unknown"],
         ["Node", runtime.nodeVersion || "Unknown"],
@@ -2126,7 +2127,21 @@
         </div>
       ` : `<div class="item"><div class="item-title">Recent Failures</div><div class="item-meta">No recent extractor failures recorded.</div></div>`;
 
-      dom.diagnosticsBinaries.innerHTML = `${writableHtml}${binaryHtml}${recentErrorsHtml}`;
+      const parserWarningsHtml = parserWarnings.length ? `
+        <div class="item">
+          <div class="item-title">Parser Warnings</div>
+          ${parserWarnings.slice(0, 8).map((entry) => `
+            <div class="item-meta">
+              <span class="source-badge source-badge-${escapeHtml(String(entry.sourceType || ""))}">${escapeHtml(getSourceLabel(entry.sourceType || ""))}</span>
+              ${escapeHtml(String(entry.message || entry.code || "Parser warning"))}
+            </div>
+            ${entry.detail ? `<div class="item-meta">${escapeHtml(String(entry.detail || ""))}</div>` : ""}
+            ${entry.url ? `<div class="item-meta diagnostics-path">${escapeHtml(String(entry.url || ""))}</div>` : ""}
+          `).join("")}
+        </div>
+      ` : `<div class="item"><div class="item-title">Parser Warnings</div><div class="item-meta">No parser fallback warnings recorded.</div></div>`;
+
+      dom.diagnosticsBinaries.innerHTML = `${writableHtml}${binaryHtml}${parserWarningsHtml}${recentErrorsHtml}`;
     }
 
     async function loadDiagnostics() {

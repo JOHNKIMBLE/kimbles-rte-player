@@ -22,6 +22,7 @@ const { decodeHtml, cleanText, stripHtml } = require("./utils");
 const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 const { parseWwfScheduleJsonSlice } = require("./wwf-schedule-json");
 const { computeNextBroadcastStartUtc } = require("./scheduler");
+const { recordParserWarning } = require("./parser-diagnostics");
 
 const WWF_FETCH_SUFFIXES = ["worldwidefm.net", "mixcloud.com", "cosmicjs.com", "radiocult.fm"];
 
@@ -479,13 +480,84 @@ function normalizeWwfDisplayList(values) {
     .filter(Boolean))];
 }
 
+function extractEscapedJsonArray(html, startIdx) {
+  const source = String(html || "");
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = startIdx; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        if (next === "\"") {
+          inString = false;
+          i += 1;
+        } else {
+          escaped = true;
+        }
+      }
+      continue;
+    }
+
+    if (ch === "\\" && next === "\"") {
+      inString = true;
+      i += 1;
+      continue;
+    }
+    if (ch === "[") {
+      depth += 1;
+      continue;
+    }
+    if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(startIdx, i + 1);
+      }
+      if (depth < 0) {
+        return "";
+      }
+    }
+  }
+
+  return "";
+}
+
 /** Parse schedule array from WWF schedule page HTML (embedded JSON with escaped quotes). Times are GMT. */
 function parseWwfScheduleFromHtml(html) {
   const startIdx = html.indexOf("[{\\\"show_key\\\"");
-  if (startIdx < 0) return [];
-  const endIdx = html.indexOf("}]", startIdx);
-  if (endIdx <= startIdx) return [];
-  return parseWwfScheduleJsonSlice(html.slice(startIdx, endIdx + 2));
+  if (startIdx < 0) {
+    recordParserWarning({
+      sourceType: "wwf",
+      code: "schedule_json_missing",
+      message: "Worldwide FM schedule JSON payload was not found."
+    });
+    return [];
+  }
+  const slice = extractEscapedJsonArray(html, startIdx);
+  if (!slice) {
+    recordParserWarning({
+      sourceType: "wwf",
+      code: "schedule_json_unbalanced",
+      message: "Worldwide FM schedule JSON payload could not be balanced."
+    });
+    return [];
+  }
+  const parsed = parseWwfScheduleJsonSlice(slice);
+  if (!parsed.length) {
+    recordParserWarning({
+      sourceType: "wwf",
+      code: "schedule_json_empty",
+      message: "Worldwide FM schedule JSON payload parsed to zero rows."
+    });
+  }
+  return parsed;
 }
 
 const scheduleEpisodesCache = { fetchedAt: 0, episodes: [], TTL_MS: 1000 * 60 * 5 };

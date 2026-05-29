@@ -169,7 +169,7 @@
     }
 
     function setActiveTab(tabName) {
-      const valid = ["rte", "bbc", "wwf", "nts", "fip", "kexp", "schedules", "history", "settings"];
+      const valid = ["rte", "bbc", "wwf", "nts", "fip", "kexp", "schedules", "stats", "history", "settings"];
       state.activeTab = valid.includes(tabName) ? tabName : "rte";
       if (["rte", "bbc", "wwf", "nts", "fip", "kexp"].includes(state.activeTab)) {
         state.lastSourceTab = state.activeTab;
@@ -182,6 +182,7 @@
       const isFip = state.activeTab === "fip";
       const isKexp = state.activeTab === "kexp";
       const isSchedules = state.activeTab === "schedules";
+      const isStats = state.activeTab === "stats";
       const isHistory = state.activeTab === "history";
       const isSettings = state.activeTab === "settings";
 
@@ -192,6 +193,7 @@
       dom.fipTabContent?.classList.toggle("hidden", !isFip);
       dom.kexpTabContent?.classList.toggle("hidden", !isKexp);
       dom.schedulesTabContent?.classList.toggle("hidden", !isSchedules);
+      dom.statsTabContent?.classList.toggle("hidden", !isStats);
       dom.historyTabContent?.classList.toggle("hidden", !isHistory);
       dom.settingsTabContent?.classList.toggle("hidden", !isSettings);
 
@@ -202,6 +204,7 @@
       dom.tabFipBtn?.classList.toggle("active-tab", isFip);
       dom.tabKexpBtn?.classList.toggle("active-tab", isKexp);
       dom.tabSchedulesBtn?.classList.toggle("active-tab", isSchedules);
+      dom.tabStatsBtn?.classList.toggle("active-tab", isStats);
       dom.tabHistoryBtn?.classList.toggle("active-tab", isHistory);
       dom.tabSettingsBtn?.classList.toggle("active-tab", isSettings);
 
@@ -222,6 +225,10 @@
       if (isHistory) {
         actions.loadHistory?.().catch(() => {});
         actions.renderAllSchedules?.().catch(() => {});
+      }
+
+      if (isStats) {
+        actions.loadStats?.().catch(() => {});
       }
 
       if (isSettings) {
@@ -422,6 +429,7 @@
       dom.tabFipBtn?.addEventListener("click", () => setActiveTab("fip"));
       dom.tabKexpBtn?.addEventListener("click", () => setActiveTab("kexp"));
       dom.tabSchedulesBtn?.addEventListener("click", () => setActiveTab("schedules"));
+      dom.tabStatsBtn?.addEventListener("click", () => setActiveTab("stats"));
       dom.tabHistoryBtn?.addEventListener("click", () => setActiveTab("history"));
       dom.tabSettingsBtn?.addEventListener("click", () => setActiveTab("settings"));
 

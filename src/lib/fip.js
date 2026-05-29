@@ -190,6 +190,7 @@ const { cleanText, stripHtml } = require("./utils");
 const { assertUrlHostSuffixes } = require("./url-safety");
 const { fetchWithHostAllowlist, httpGetWithHostAllowlist } = require("./outbound-http");
 const { computeNextBroadcastStartUtc } = require("./scheduler");
+const { recordParserWarning } = require("./parser-diagnostics");
 
 const FIP_FETCH_SUFFIXES = ["radiofrance.fr"];
 
@@ -888,6 +889,12 @@ async function getFipProgramSummary(showUrl) {
       airtime: meta.airtimeEn || meta.airtime || ""
     };
   } catch {
+    recordParserWarning({
+      sourceType: "fip",
+      code: "program_summary_fallback",
+      message: "FIP program summary fell back to slug metadata.",
+      url
+    });
     return { source: "fip", programUrl: url, title: slug.replace(/-/g, " "), description: "", image: "", uuid: "", runSchedule: "", cadence: "irregular", nextBroadcastAt: "", nextBroadcastTitle: "", genres: [], hosts: [] };
   }
 }
