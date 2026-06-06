@@ -64,6 +64,7 @@ const fipLiveAudioWrap = document.getElementById("fipLiveAudioWrap");
 const fipUrlInput = document.getElementById("fipUrlInput");
 const fipDownloadBtn = document.getElementById("fipDownloadBtn");
 const fipResult = document.getElementById("fipResult");
+const fipLog = document.getElementById("fipLog");
 const fipProgramUrlInput = document.getElementById("fipProgramUrlInput");
 const fipLoadProgramBtn = document.getElementById("fipLoadProgramBtn");
 const fipProgramMeta = document.getElementById("fipProgramMeta");
@@ -1268,7 +1269,7 @@ const fipScreen = window.KimbleFipScreen.create({
     urlInput: fipUrlInput,
     downloadBtn: fipDownloadBtn,
     result: fipResult,
-    log: document.createElement("pre"),
+    log: fipLog,
     programUrlInput: fipProgramUrlInput,
     loadProgramBtn: fipLoadProgramBtn,
     programMeta: fipProgramMeta,
