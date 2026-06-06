@@ -2198,6 +2198,7 @@ const fipScheduler = createSchedulerStore({
       episodeUrl: episode.episodeUrl,
       title: episode.title || episode.fullTitle,
       programTitle: episode.programTitle || "FIP",
+      programUrl: episode.programUrl || "",
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
       description: episode.description || "",
@@ -2581,7 +2582,10 @@ app.get("/api/fip/episode/tracklist", async (req, res) => {
 
 app.post("/api/download/fip/url", async (req, res) => {
   try {
-    const pageUrl = assertBbcPageUrl(req.body.pageUrl || "");
+    const pageUrl = String(req.body.pageUrl || "").trim();
+    if (!pageUrl) {
+      throw new Error("A valid FIP page URL is required.");
+    }
     const progressToken = String(req.body.progressToken || "");
     const forceDownload = Boolean(req.body.forceDownload);
     const providedTitle = String(req.body.title || "").trim();

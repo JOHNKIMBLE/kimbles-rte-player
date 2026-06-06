@@ -1245,7 +1245,7 @@
       });
       renderEntityProfile();
       if (!options.skipFocus) {
-        focusLibrarySection("entityProfileSection");
+        focusLibrarySection("libraryEntityProfileSection");
       }
     }
 

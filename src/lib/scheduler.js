@@ -244,7 +244,13 @@ function toRetryItem(episode, error, attempts = 1) {
     clipId,
     title,
     episodeUrl: String(episode?.episodeUrl || "").trim(),
+    programUrl: String(episode?.programUrl || "").trim(),
     publishedTime,
+    image: String(episode?.image || "").trim(),
+    description: String(episode?.description || "").trim(),
+    location: String(episode?.location || "").trim(),
+    hosts: Array.isArray(episode?.hosts) ? episode.hosts : [],
+    genres: Array.isArray(episode?.genres) ? episode.genres : [],
     attempts,
     lastError: String(error?.message || error || "Download failed"),
     nextRetryAt: toIsoAfterMinutes(backoffMinutes)
@@ -416,7 +422,13 @@ function createSchedulerStore({
         clipId: String(item?.clipId || "").trim(),
         title: String(item?.title || "").trim(),
         episodeUrl: String(item?.episodeUrl || "").trim(),
+        programUrl: String(item?.programUrl || "").trim(),
         publishedTime: String(item?.publishedTime || "").trim(),
+        image: String(item?.image || "").trim(),
+        description: String(item?.description || "").trim(),
+        location: String(item?.location || "").trim(),
+        hosts: normalizeMetadataList(item?.hosts),
+        genres: normalizeMetadataList(item?.genres),
         attempts: Math.max(1, Number(item?.attempts || 1)),
         lastError: String(item?.lastError || ""),
         nextRetryAt: String(item?.nextRetryAt || "")
@@ -527,7 +539,8 @@ function createSchedulerStore({
         const result = await runEpisodeDownloadWithRecovery({
           ...episode,
           title: String(episode.fullTitle || episode.title || ""),
-          programTitle: summary.title
+          programTitle: summary.title,
+          programUrl: episode.programUrl || summary.programUrl || schedule.programUrl || ""
         });
         completed += 1;
         known.add(String(episode.clipId));
@@ -699,9 +712,19 @@ function createSchedulerStore({
       return { scheduleId: schedule.id, status: "Skipped (paused)", downloaded: [] };
     }
 
+    normalizeRetryQueue(schedule);
+    const precheckNowMs = Date.now();
+    const hasDueRetries = schedule.retryQueue.some((item) => {
+      if (force) {
+        return true;
+      }
+      const retryAtMs = Date.parse(item.nextRetryAt || "");
+      return !item.nextRetryAt || !Number.isFinite(retryAtMs) || retryAtMs <= precheckNowMs;
+    });
+
     if (!force) {
       const due = shouldRunInScheduleWindow(schedule);
-      if (due.shouldRun === false) {
+      if (due.shouldRun === false && !hasDueRetries) {
         return { scheduleId: schedule.id, status: due.reason, downloaded: [] };
       }
 
@@ -710,7 +733,7 @@ function createSchedulerStore({
         const cadence = schedule.cadence || "unknown";
         const minHoursBetweenChecks = cadence === "daily" ? 6 : cadence === "weekly" ? 24 : cadence === "biweekly" ? 48 : cadence === "monthly" ? 72 : 12;
         const elapsedMs = now - Date.parse(schedule.lastCheckedAt);
-        if (elapsedMs < minHoursBetweenChecks * 60 * 60 * 1000) {
+        if (elapsedMs < minHoursBetweenChecks * 60 * 60 * 1000 && !hasDueRetries) {
           return { scheduleId: schedule.id, status: "Skipped (too soon)", downloaded: [] };
         }
       }
@@ -754,8 +777,14 @@ function createSchedulerStore({
           clipId: retry.clipId,
           title: retry.title,
           episodeUrl: retry.episodeUrl,
+          programUrl: retry.programUrl || schedule.programUrl || "",
           publishedTime: retry.publishedTime,
-          programTitle: schedule.title
+          programTitle: schedule.title,
+          image: retry.image || schedule.latestEpisodeImage || schedule.image || "",
+          description: retry.description || schedule.latestEpisodeDescription || schedule.description || "",
+          location: retry.location || schedule.latestEpisodeLocation || schedule.location || "",
+          hosts: retry.hosts?.length ? retry.hosts : schedule.latestEpisodeHosts || schedule.hosts || [],
+          genres: retry.genres?.length ? retry.genres : schedule.latestEpisodeGenres || schedule.genres || []
         });
         downloaded.push({
           clipId: retry.clipId,
@@ -807,6 +836,7 @@ function createSchedulerStore({
           ...episode,
           title: String(episode.fullTitle || episode.title || ""),
           programTitle: schedule.title,
+          programUrl: episode.programUrl || latest.programUrl || schedule.programUrl || "",
           // If the API returned no date, fall back to today's date — this is a
           // scheduled run so we're downloading the current broadcast.
           publishedTime: episode.publishedTime || episode.publishedTimeFormatted || new Date().toISOString().slice(0, 10)
