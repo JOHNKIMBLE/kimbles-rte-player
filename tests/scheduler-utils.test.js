@@ -118,6 +118,60 @@ describe("scheduler schedule window behavior", () => {
     expect(list2[0].lastStatus).toMatch(/Downloaded|No new/i);
   });
 
+  test("due retries run outside the normal schedule window", async () => {
+    let downloadCallCount = 0;
+    let episodeCallCount = 0;
+    const store = makeStore({
+      runSchedule: "Sun • 00:00 - 01:00",
+      getProgramEpisodes: async () => {
+        episodeCallCount++;
+        if (episodeCallCount === 1) {
+          return {
+            episodes: [{ clipId: "baseline", title: "Baseline", publishedTime: "2024-03-14" }],
+            cadence: "weekly",
+            averageDaysBetween: 7,
+            runSchedule: "Sun • 00:00 - 01:00"
+          };
+        }
+        return {
+          episodes: [
+            {
+              clipId: "retry-me",
+              title: "Retry Me",
+              episodeUrl: "https://example.com/retry-me",
+              programUrl: "https://example.com/show",
+              publishedTime: "2024-03-21"
+            },
+            { clipId: "baseline", title: "Baseline", publishedTime: "2024-03-14" }
+          ],
+          cadence: "weekly",
+          averageDaysBetween: 7,
+          runSchedule: "Sun • 00:00 - 01:00"
+        };
+      },
+      runEpisodeDownload: async () => {
+        downloadCallCount++;
+        if (downloadCallCount === 1) {
+          throw new Error("Temporary failure");
+        }
+        return { outputDir: "/out", fileName: "retry-me.mp3" };
+      }
+    });
+
+    const sched = await store.add("https://example.com/show");
+    await store.checkOne(sched.id);
+    const failed = store.list()[0];
+    expect(failed.retryQueue).toHaveLength(1);
+    failed.retryQueue[0].nextRetryAt = "2000-01-01T00:00:00.000Z";
+
+    await store.runAll();
+
+    const retried = store.list()[0];
+    expect(downloadCallCount).toBe(2);
+    expect(retried.retryQueue).toHaveLength(0);
+    expect(retried.lastStatus).toContain("Downloaded");
+  });
+
   test("already-known episodes are not re-downloaded", async () => {
     const downloadedIds = [];
     const store = makeStore({

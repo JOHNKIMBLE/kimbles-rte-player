@@ -2295,6 +2295,7 @@ async function downloadFipEpisode({
   episodeUrl,
   title,
   programTitle,
+  programUrl = "",
   publishedTime,
   artworkUrl = "",
   description = "",
@@ -2307,6 +2308,7 @@ async function downloadFipEpisode({
   const sourceUrl = String(episodeUrl || "").trim();
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const resolvedProgramUrl = String(programUrl || "").trim();
   const metadata = buildMetadata({ description, location, hosts, genres });
   const download = await downloadFromManifest({
     sourceUrl,
@@ -2324,6 +2326,7 @@ async function downloadFipEpisode({
       sourceType: "fip",
       episodeTitle: resolvedTitle,
       programTitle: programTitle || "FIP",
+      programUrl: resolvedProgramUrl,
       publishedTime: publishedTime || resolvedTitle,
       sourceUrl,
       artworkUrl: String(artworkUrl || "").trim(),
@@ -2593,7 +2596,7 @@ ipcMain.handle("kexp-scheduler-check-one", async (_event, { scheduleId }) => {
   return data;
 });
 
-ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, title, programTitle, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload }) => {
+ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, title, programTitle, programUrl, publishedTime, image, description = "", location = "", hosts = [], genres = [], forceDownload }) => {
   const onProgress = progressToken
     ? (payload) => {
         const win = BrowserWindow.getAllWindows()[0];
@@ -2604,6 +2607,7 @@ ipcMain.handle("download-fip-url", async (_event, { pageUrl, progressToken, titl
     episodeUrl: String(pageUrl || ""),
     title: String(title || "").trim(),
     programTitle: String(programTitle || "").trim(),
+    programUrl: String(programUrl || "").trim(),
     publishedTime: String(publishedTime || "").trim(),
     artworkUrl: String(image || "").trim(),
     description,
@@ -3485,6 +3489,7 @@ app.whenReady().then(() => {
         episodeUrl: episode.episodeUrl,
       title: episode.title || episode.fullTitle,
       programTitle: episode.programTitle || "FIP",
+      programUrl: episode.programUrl || "",
       publishedTime: episode.publishedTime,
       artworkUrl: episode.image || "",
       description: episode.description || "",

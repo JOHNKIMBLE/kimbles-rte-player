@@ -32,7 +32,7 @@
     </header>
 
     <div id="rteTabContent">
-    <section class="panel" id="rteExplorerSection">
+    <section class="panel">
       <h2>Live Stations</h2>
       <div class="row">
         <select id="stationSelect"></select>
@@ -55,7 +55,7 @@
       <pre id="quickLog" class="log"></pre>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="rteExplorerSection">
       <h2>Program Explorer</h2>
 
       <div class="subheading">Search Programs</div>
@@ -112,7 +112,7 @@
     </div>
 
     <div id="bbcTabContent" class="hidden">
-      <section class="panel" id="bbcExplorerSection">
+      <section class="panel">
         <h2>BBC Live Stations</h2>
         <div class="row">
           <select id="bbcStationSelect"></select>
@@ -125,7 +125,7 @@
         </div>
       </section>
 
-      <section class="panel" id="wwfExplorerSection">
+      <section class="panel">
         <h2>BBC Quick Download</h2>
         <div class="row">
           <input id="bbcUrlInput" type="url" placeholder="https://www.bbc.co.uk/sounds/..." />
@@ -135,7 +135,7 @@
         <pre id="bbcLog" class="log"></pre>
       </section>
 
-      <section class="panel" id="ntsExplorerSection">
+      <section class="panel" id="bbcExplorerSection">
         <h2>BBC Explorer</h2>
         <div class="subheading">Search Programs</div>
         <div class="search-box">
@@ -174,14 +174,14 @@
         <div id="bbcEpisodesResult" class="list"></div>
       </section>
 
-      <section class="panel" id="fipExplorerSection">
+      <section class="panel">
         <h2>BBC Discovery</h2>
         <p class="hint">Discover random BBC shows. Click a card to explore, or add directly to the scheduler.</p>
         <button id="bbcDiscoverBtn" class="secondary">Discover Shows</button>
         <div id="bbcDiscoveryResult" class="list" style="margin-top:0.75rem;"></div>
       </section>
 
-      <section class="panel" id="kexpExplorerSection">
+      <section class="panel">
         <h2>BBC Schedulers</h2>
         <p class="hint">Scheduler checks for new BBC episodes in background and auto-downloads unseen ones.</p>
         <div id="bbcScheduleList" class="list"></div>
@@ -189,7 +189,7 @@
     </div>
 
     <div id="wwfTabContent" class="hidden">
-      <section class="panel" id="collectionsSection">
+      <section class="panel">
         <h2>Worldwide FM Live</h2>
         <div class="row">
           <select id="wwfStationSelect"></select>
@@ -203,7 +203,7 @@
         </div>
       </section>
 
-      <section class="panel" id="entityGraphSection">
+      <section class="panel">
         <h2>Worldwide FM Quick Download</h2>
         <div class="row">
           <input id="wwfUrlInput" type="url" placeholder="https://www.worldwidefm.net/episode/..." />
@@ -213,7 +213,7 @@
         <pre id="wwfLog" class="log"></pre>
       </section>
 
-      <section class="panel" id="entityProfileSection">
+      <section class="panel" id="wwfExplorerSection">
         <h2>Worldwide FM Explorer</h2>
         <div class="subheading">Search Shows / Programs</div>
         <div class="search-box">
@@ -252,7 +252,7 @@
         <div id="wwfEpisodesResult" class="list"></div>
       </section>
 
-      <section class="panel" id="metadataExplorerSection">
+      <section class="panel">
         <h2>Worldwide FM Discovery</h2>
         <p class="hint">Discover random Worldwide FM shows. Click a card to explore, or add directly to the scheduler.</p>
         <button id="wwfDiscoverBtn" class="secondary">Discover Shows</button>
@@ -294,7 +294,7 @@
         <pre id="ntsLog" class="log"></pre>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="ntsExplorerSection">
         <h2>NTS Explorer</h2>
         <div class="subheading">Search Shows</div>
         <div class="search-box">
@@ -372,7 +372,7 @@
         <pre id="fipLog" class="log"></pre>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="fipExplorerSection">
         <h2>FIP Explorer</h2>
         <div class="row">
           <input id="fipProgramSearchInput" type="text" placeholder="e.g. Certains l'aiment FIP" />
@@ -441,7 +441,7 @@
         <div id="kexpResult" class="status muted">Idle</div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="kexpExplorerSection">
         <h2>KEXP Program Explorer</h2>
         <div class="row">
           <input id="kexpProgramSearchInput" type="text" placeholder="Search by show name, genre, description…" />
