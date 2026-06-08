@@ -41,6 +41,11 @@ describe("extractReleaseDate", () => {
     expect(extractReleaseDate("2024-03-15")).toBe("2024-03-15");
   });
 
+  test("parses ISO datetime", () => {
+    expect(extractReleaseDate("2026-06-07T21:00:00")).toBe("2026-06-07");
+    expect(extractReleaseDate("2026-06-07T21:00:00Z")).toBe("2026-06-07");
+  });
+
   test("parses ISO date embedded in text", () => {
     expect(extractReleaseDate("Episode from 2024-01-05 broadcast")).toBe("2024-01-05");
   });
@@ -129,6 +134,16 @@ describe("buildDownloadTarget", () => {
     });
     expect(result.tokens.program_slug).toBe("the-late-debate");
     expect(result.outputDir).toMatch(/2024/);
+  });
+
+  test("trims dangling separators when optional date tokens are empty", () => {
+    const result = buildDownloadTarget({
+      ...baseArgs,
+      pathFormat: "{radio}/{program}/{episode} - {release_date}",
+      episodeTitle: "2FM Greene Room with Jenny Greene",
+      publishedTime: ""
+    });
+    expect(result.fileStem).toBe("2FM Greene Room with Jenny Greene");
   });
 
   test("supports host-aware path tokens", () => {

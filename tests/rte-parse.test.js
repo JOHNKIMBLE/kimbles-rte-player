@@ -170,6 +170,45 @@ describe("getProgramSummary", () => {
     expect(payload.episodes[0].genres).toEqual(["Soul", "Jazz"]);
     expect(payload.episodes[0].location).toBe("Dublin");
   });
+
+  test("uses RTÉ published fallback date when published_time is absent", async () => {
+    global.fetch = jest.fn(async (url) => {
+      if (String(url).includes("/episodes/json/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            page: 1,
+            total_items: 1,
+            num_pages: 1,
+            programmes: [
+              {
+                clip_id: "11800521",
+                url: "/radio/2fm/2fm-greene-room-with-jenny-greene/episodes/11800521/",
+                title: "2FM Greene Room with Jenny Greene",
+                subtitle: "Episode • 2 Hr 0 Mins • 07 JUN • 2FM Greene Room with Jenny Greene",
+                published: "2026-06-07T21:00:00Z",
+                published_time_formatted: "07 JUN"
+              }
+            ]
+          })
+        };
+      }
+      return {
+        ok: true,
+        text: async () => `
+          <html>
+            <head>
+              <meta name="programme" content="2FM Greene Room with Jenny Greene" />
+            </head>
+            <body></body>
+          </html>
+        `
+      };
+    });
+
+    const payload = await getProgramEpisodes("https://www.rte.ie/radio/2fm/2fm-greene-room-with-jenny-greene/", 1);
+    expect(payload.episodes[0].publishedTime).toBe("2026-06-07T21:00:00Z");
+  });
 });
 
 describe("searchPrograms", () => {
