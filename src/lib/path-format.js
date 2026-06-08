@@ -42,9 +42,9 @@ function extractReleaseDate(input) {
     return "";
   }
 
-  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  const iso = text.match(/(^|[^\d])(\d{4})-(\d{2})-(\d{2})(?=$|[^\d])/);
   if (iso) {
-    return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    return `${iso[2]}-${iso[3]}-${iso[4]}`;
   }
 
   const dmy = text.match(/\b(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\b/);
@@ -103,6 +103,13 @@ function pickSourceId({ clipId, episodeUrl }) {
   return "";
 }
 
+function trimDanglingSeparators(input) {
+  return String(input || "")
+    .replace(/\s+(?:[-|:]\s*)+$/g, "")
+    .replace(/^(?:[-|:]\s*)+\s+/g, "")
+    .trim();
+}
+
 function buildDownloadTarget({
   baseDownloadDir,
   pathFormat,
@@ -154,7 +161,8 @@ function buildDownloadTarget({
     .replace(/[\\/]+/g, "/");
 
   const parts = relativeResolved.split("/").map(sanitizePathSegment).filter(Boolean);
-  const filePart = parts.length ? parts[parts.length - 1] : `${tokens.episode_short} ${tokens.release_date}`.trim();
+  const filePartRaw = parts.length ? parts[parts.length - 1] : `${tokens.episode_short} ${tokens.release_date}`.trim();
+  const filePart = trimDanglingSeparators(filePartRaw);
   const stem = sanitizePathSegment(filePart.replace(/\.mp3$/i, "")) || "episode";
   const dirParts = parts.slice(0, -1);
   const outputDir = path.join(baseDownloadDir, ...dirParts);
