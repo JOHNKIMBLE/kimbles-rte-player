@@ -163,6 +163,14 @@ function inferRteHostsFromProgramTitle(title = "") {
   ).slice(0, 6);
 }
 
+function isoFromUnixSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  return new Date(seconds * 1000).toISOString();
+}
+
 function collectRtePeople(value, bucket) {
   if (!value) {
     return;
@@ -521,13 +529,24 @@ function mapEpisodeItem(item) {
   const image = item?.image || item?.thumbnail || item?.thumb || "";
   const fullTitle = cleanText(item.title || item.show_title || "Untitled");
   const description = cleanText(item.description || item.summary || item.standfirst || item.synopsis || item.subtitle || "");
+  const publishedTime = item.published_time
+    || item.published
+    || item.originalbroadcastdate
+    || item.broadcast_date
+    || item.first_broadcast
+    || item.contextdate
+    || item.date
+    || item.aired_date
+    || item.air_date
+    || isoFromUnixSeconds(item.PublishedUnixTime)
+    || isoFromUnixSeconds(item.BroadcastDateUnixTime);
 
   return {
     title: cleanTitle(item.title || item.show_title || "Untitled"),
     fullTitle,
     subtitle: cleanText(item.subtitle || ""),
     description,
-    publishedTime: item.published_time || item.broadcast_date || item.first_broadcast || item.date || item.aired_date || item.air_date || "",
+    publishedTime,
     publishedTimeFormatted: cleanText(item.published_time_formatted || item.first_broadcast_formatted || item.date_formatted || ""),
     durationString: cleanText(item.duration_string || ""),
     clipId,
