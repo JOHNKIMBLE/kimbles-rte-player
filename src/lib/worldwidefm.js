@@ -995,31 +995,206 @@ async function fetchRecentEpisodes(useCache = true) {
   return episodes;
 }
 
-/** Extract Mixcloud URL from episode page, or build from slug (worldwidefm mirrors to mixcloud.com/worldwidefm/). */
-function parseMixcloudUrlFromEpisodeHtml(html, episodeUrl) {
+/**
+ * Extract a *real* embedded Mixcloud URL from an episode page.
+ * WWF episode pages historically carried the Mixcloud link in a `player_url`
+ * field, but as of 2026 that field is empty (`"player":""`, `"url":""`). We no
+ * longer construct a Mixcloud slug from the WWF slug — the WWF page slug does not
+ * match the Mixcloud slug (2-digit year, accents, extra descriptors), so a
+ * constructed URL 404s ("Track not found"). Resolution now goes through the
+ * Mixcloud channel API — see resolveMixcloudUrlFromApi(). Returns "" when the
+ * page has no genuine embedded Mixcloud link.
+ */
+function parseMixcloudUrlFromEpisodeHtml(html) {
+  const source = String(html || "");
   // Try plain URL match first
-  const mixcloudMatch = html.match(/https?:\/\/[^"'\s]*mixcloud\.com\/worldwidefm\/[^"'\s)]+/i);
+  const mixcloudMatch = source.match(/https?:\/\/[^"'\s]*mixcloud\.com\/worldwidefm\/[^"'\s)]+/i);
   if (mixcloudMatch) {
     const raw = mixcloudMatch[0].replace(/&amp;/g, "&").split(/["'\s)]/)[0];
     if (raw) return raw;
   }
   // Try RSC/JSON escaped URL (e.g. "player_url":"https:\/\/www.mixcloud.com\/worldwidefm\/...")
-  const escapedMatch = html.match(/"player_url"\s*:\s*"(https:[^"]*mixcloud\.com[^"]*)"/i);
+  const escapedMatch = source.match(/"player_url"\s*:\s*"(https:[^"]*mixcloud\.com[^"]*)"/i);
   if (escapedMatch) {
     return escapedMatch[1].replace(/\\\//g, "/");
   }
-  const slug = (episodeUrl || "").split("/episode/")[1] || "";
-  if (!slug) return "";
-  // Use the slug as-is for Mixcloud (don't mangle the year)
-  return `https://www.mixcloud.com/worldwidefm/${slug}/`;
+  return "";
+}
+
+// ── Mixcloud channel resolution ───────────────────────────────────────────────
+// WWF mirrors episodes to mixcloud.com/worldwidefm/ but no longer links them from
+// the episode page, and the Mixcloud slug differs from the WWF slug. We resolve
+// the correct cloudcast by listing the channel via Mixcloud's public JSON API and
+// matching on broadcast date + title. Uploads lag broadcast by hours-to-days, so
+// a just-aired episode may not be present yet — in that case we return "" and the
+// scheduler retries on a later pass.
+
+const MIXCLOUD_CLOUDCASTS_API = "https://api.mixcloud.com/worldwidefm/cloudcasts/";
+const mixcloudCloudcastsCache = { fetchedAt: 0, items: [], TTL_MS: 1000 * 60 * 15 };
+
+/** Fetch (and cache) recent cloudcasts from the WWF Mixcloud channel. */
+async function fetchMixcloudCloudcasts(useCache = true, maxPages = 3) {
+  const now = Date.now();
+  if (useCache && mixcloudCloudcastsCache.items.length && now - mixcloudCloudcastsCache.fetchedAt < mixcloudCloudcastsCache.TTL_MS) {
+    return mixcloudCloudcastsCache.items;
+  }
+  const items = [];
+  let nextUrl = `${MIXCLOUD_CLOUDCASTS_API}?limit=100`;
+  for (let page = 0; page < maxPages && nextUrl; page += 1) {
+    let json;
+    try {
+      json = JSON.parse(await fetchText(nextUrl));
+    } catch {
+      break;
+    }
+    const data = Array.isArray(json?.data) ? json.data : [];
+    for (const c of data) {
+      items.push({
+        key: String(c?.key || ""),
+        slug: String(c?.slug || ""),
+        name: String(c?.name || ""),
+        url: String(c?.url || ""),
+        createdTime: String(c?.created_time || "")
+      });
+    }
+    nextUrl = String(json?.paging?.next || "");
+  }
+  if (items.length) {
+    mixcloudCloudcastsCache.items = items;
+    mixcloudCloudcastsCache.fetchedAt = now;
+    return items;
+  }
+  return mixcloudCloudcastsCache.items;
+}
+
+/** Normalize text for fuzzy matching: lowercase, strip accents + punctuation. */
+function normalizeWwfMatchText(value) {
+  return decodeHtml(String(value || ""))
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Extract trailing YYYY-MM-DD (as-is) or build it from a WWF slug's -DD-MM-YYYY suffix. */
+function wwfEpisodeYmd(episode) {
+  const published = (String(episode?.publishedTime || "").match(/\d{4}-\d{2}-\d{2}/) || [""])[0];
+  if (published) return published;
+  const slug = String(episode?.slug || "");
+  const m = slug.match(/-(\d{2})-(\d{2})-(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : "";
+}
+
+/** DD-MM-YY and DD-MM-YYYY date tokens for a YYYY-MM-DD date (Mixcloud slug formats). */
+function mixcloudDateTokens(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  if (!m) return [];
+  const [, yyyy, mm, dd] = m;
+  return [`${dd}-${mm}-${yyyy.slice(2)}`, `${dd}-${mm}-${yyyy}`];
+}
+
+function ymdToUtcMs(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : NaN;
+}
+
+/**
+ * Pick the best-matching Mixcloud cloudcast for a WWF episode, or null.
+ * Requires a confident match so a not-yet-uploaded episode resolves to null
+ * (clean retry) rather than the wrong show.
+ */
+function pickBestMixcloudMatch(episode, cloudcasts) {
+  const list = Array.isArray(cloudcasts) ? cloudcasts : [];
+  if (!list.length) return null;
+  const broadcastYmd = wwfEpisodeYmd(episode);
+  const dateTokens = mixcloudDateTokens(broadcastYmd);
+  const titleSource = [episode?.showName, episode?.episodeName || episode?.title]
+    .filter(Boolean)
+    .join(" ") || String(episode?.fullTitle || episode?.slug || "");
+  const words = [...new Set(
+    normalizeWwfMatchText(titleSource)
+      .split(" ")
+      .filter((w) => w.length >= 2 && !/^\d+$/.test(w))
+  )];
+  if (!words.length) return null;
+  const broadcastMs = ymdToUtcMs(broadcastYmd);
+
+  let best = null;
+  for (const c of list) {
+    const hay = normalizeWwfMatchText(`${c.name} ${c.slug}`);
+    const overlap = words.filter((w) => hay.includes(w)).length / words.length;
+    const createdYmd = String(c.createdTime || "").slice(0, 10);
+    const createdMs = ymdToUtcMs(createdYmd);
+    const slugHasToken = dateTokens.some((tok) => c.slug.includes(tok));
+    const exactDate = broadcastYmd && createdYmd === broadcastYmd;
+    const closeDate = Number.isFinite(broadcastMs) && Number.isFinite(createdMs)
+      && Math.abs(broadcastMs - createdMs) <= 24 * 60 * 60 * 1000;
+    const dateMatch = slugHasToken || exactDate;
+
+    // Require a date signal: recurring shows reuse the same title across editions,
+    // so title overlap alone would match the wrong dated episode. The Mixcloud slug
+    // encodes the broadcast date, so slugHasToken stays reliable despite upload lag.
+    let accept;
+    if (dateMatch) {
+      accept = words.length <= 2 ? overlap >= 0.99 : overlap >= 0.6;
+    } else if (closeDate) {
+      accept = overlap >= 0.75;
+    } else {
+      accept = false;
+    }
+    if (!accept) continue;
+
+    const score = overlap + (dateMatch ? 1 : 0.5);
+    if (!best || score > best.score) {
+      best = { cloudcast: c, score };
+    }
+  }
+  return best ? best.cloudcast : null;
+}
+
+/** Build an episode-shaped object (title/date) for matching from a page + URL. */
+function deriveWwfEpisodeForMatch(html, url) {
+  const slug = (String(url || "").split("/episode/")[1] || "").replace(/\/+$/, "");
+  if (html) {
+    const detail = parseRscEpisodeDetail(html);
+    if (detail) {
+      const mapped = mapCosmicEpisode(detail);
+      return { ...mapped, slug: mapped.clipId || slug };
+    }
+  }
+  const dm = slug.match(/-(\d{2})-(\d{2})-(\d{4})$/);
+  const publishedTime = dm ? `${dm[3]}-${dm[2]}-${dm[1]}` : "";
+  const titlePart = slug.replace(/-(\d{2})-(\d{2})-(\d{4})$/, "").replace(/-/g, " ");
+  const { showName, episodeName } = parseTitleParts(titlePart);
+  return { slug, publishedTime, fullTitle: titlePart, showName, episodeName, title: episodeName || titlePart };
+}
+
+/** Resolve a WWF episode to its real Mixcloud URL via the channel API, or "". */
+async function resolveMixcloudUrlFromApi(episode) {
+  if (!episode) return "";
+  const cloudcasts = await fetchMixcloudCloudcasts(true).catch(() => []);
+  const match = pickBestMixcloudMatch(episode, cloudcasts);
+  if (!match) return "";
+  return match.url || (match.key ? `https://www.mixcloud.com${match.key}` : "");
 }
 
 /** Get Mixcloud URL for a WWF episode (for play/download; yt-dlp supports Mixcloud). */
 async function getWwfEpisodeMixcloudUrl(episodeUrl) {
   const url = normalizeEpisodeUrl(episodeUrl);
   if (!url) return "";
-  const html = await fetchText(url);
-  return parseMixcloudUrlFromEpisodeHtml(html, url).trim() || "";
+  let html = "";
+  try {
+    html = await fetchText(url);
+  } catch {
+    // Page fetch failed — fall through and resolve from the slug alone.
+  }
+  // 1. Prefer a genuine embedded Mixcloud link if WWF ever ships one again.
+  const embedded = parseMixcloudUrlFromEpisodeHtml(html).trim();
+  if (embedded) return embedded;
+  // 2. Otherwise match against the Mixcloud channel listing by date + title.
+  const episode = deriveWwfEpisodeForMatch(html, url);
+  return (await resolveMixcloudUrlFromApi(episode).catch(() => "")) || "";
 }
 
 async function getWwfEpisodeInfo(episodeUrl) {
@@ -1032,7 +1207,9 @@ async function getWwfEpisodeInfo(episodeUrl) {
   const epDetail = parseRscEpisodeDetail(html);
   if (epDetail) {
     const mapped = mapCosmicEpisode(epDetail);
-    const mixcloudUrl = mapped.playerUrl || parseMixcloudUrlFromEpisodeHtml(html, url);
+    const mixcloudUrl = mapped.playerUrl
+      || parseMixcloudUrlFromEpisodeHtml(html)
+      || await resolveMixcloudUrlFromApi(mapped).catch(() => "");
     return {
       episodeUrl: url,
       title: mapped.fullTitle || mapped.title,
@@ -1060,7 +1237,8 @@ async function getWwfEpisodeInfo(episodeUrl) {
   const image = imgMatch ? cleanText(imgMatch[1]) : "";
   const slug = url.split("/episode/")[1] || "";
   const { showName, episodeName } = parseTitleParts(title);
-  const mixcloudUrl = parseMixcloudUrlFromEpisodeHtml(html, url);
+  const mixcloudUrl = parseMixcloudUrlFromEpisodeHtml(html)
+    || await resolveMixcloudUrlFromApi({ slug, publishedTime: "", fullTitle: title, showName, episodeName, title }).catch(() => "");
   return {
     episodeUrl: url,
     title: title || slug,
@@ -2216,6 +2394,9 @@ module.exports = {
   LIVE_STATIONS,
   getWwfEpisodeInfo,
   getWwfEpisodeMixcloudUrl,
+  pickBestMixcloudMatch,
+  mixcloudDateTokens,
+  fetchMixcloudCloudcasts,
   getWwfProgramSummary,
   getWwfProgramEpisodes,
   searchWwfPrograms,

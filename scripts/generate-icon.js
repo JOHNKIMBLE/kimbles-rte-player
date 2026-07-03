@@ -1,6 +1,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const pngToIco = require("png-to-ico");
+const pngToIcoModule = require("png-to-ico");
+// png-to-ico ships as an ESM-interop CJS module ({ __esModule, default }); the
+// callable lives on .default. Fall back to the module itself for older shapes.
+const pngToIco = pngToIcoModule.default || pngToIcoModule;
 const sharp = require("sharp");
 
 async function main() {
