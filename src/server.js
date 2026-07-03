@@ -1616,7 +1616,13 @@ async function downloadWwfEpisode({
   if (!sourceUrl) throw new Error("episodeUrl is required.");
   const info = await getWwfEpisodeInfo(sourceUrl).catch(() => ({}));
   const resolvedTitle = String(title || info.title || "").trim() || inferTitleFromUrl(sourceUrl, "wwf-episode");
-  const ytDlpUrl = (info.mixcloudUrl && info.mixcloudUrl.trim()) || (await getWwfEpisodeMixcloudUrl(sourceUrl).catch(() => "")) || sourceUrl;
+  const ytDlpUrl = (info.mixcloudUrl && info.mixcloudUrl.trim()) || (await getWwfEpisodeMixcloudUrl(sourceUrl).catch(() => "")) || "";
+  if (!/mixcloud\.com\//i.test(ytDlpUrl)) {
+    // WWF mirrors episodes to Mixcloud with a lag; a just-aired episode may not be
+    // uploaded yet. Fail cleanly so the scheduler retries on a later pass instead
+    // of handing yt-dlp an unresolvable URL.
+    throw new Error("Worldwide FM episode is not yet available on Mixcloud (mirror pending).");
+  }
   const metadata = buildMetadata({
     description: description || info.description,
     location: location || info.location,
