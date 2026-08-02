@@ -28,7 +28,7 @@ RUN cargo install \
     --no-default-features \
     --features ffmpeg
 
-FROM node:20-trixie-slim
+FROM node:25-trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
