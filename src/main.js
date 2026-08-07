@@ -1259,6 +1259,7 @@ async function downloadFromManifest({
     episodeUrl: episodeUrl || sourceUrl || manifestUrl
   });
   const outputDir = target.outputDir;
+  const outputDirExisted = fs.existsSync(outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
   const persistedPayload = createPersistentDownloadPayload({
     job: {
@@ -1287,34 +1288,49 @@ async function downloadFromManifest({
       clipId: postProcess?.clipId || clipId
     }
   });
-  const result = await downloadQueue.run(
-    (queueTask) => runYtDlpDownload({
-      manifestUrl,
-      sourceUrl,
-      title: target.fileStem,
-      outputDir,
-      archivePath: getDownloadArchivePath(),
-      registerCancel: queueTask?.registerCancel,
-      onProgress,
-      forceDownload,
-      audioFormat: settings.outputFormat,
-      audioQuality: settings.outputQuality,
-      normalizeLoudness: settings.normalizeLoudness,
-      dedupeMode: settings.dedupeMode,
-      fetchThumbnail: Boolean(settings.id3Tagging)
-    }),
-    {
-      label: target.fileStem,
-      sourceType,
-      programTitle: postProcess?.programTitle || programTitle || "",
-      episodeUrl: episodeUrl || sourceUrl || manifestUrl || "",
-      description: postProcess?.description || "",
-      location: postProcess?.location || "",
-      hosts: normalizeMetadataList(postProcess?.hosts),
-      genres: normalizeMetadataList(postProcess?.genres),
-      persisted: persistedPayload
+  let result;
+  try {
+    result = await downloadQueue.run(
+      (queueTask) => runYtDlpDownload({
+        manifestUrl,
+        sourceUrl,
+        title: target.fileStem,
+        outputDir,
+        archivePath: getDownloadArchivePath(),
+        registerCancel: queueTask?.registerCancel,
+        onProgress,
+        forceDownload,
+        audioFormat: settings.outputFormat,
+        audioQuality: settings.outputQuality,
+        normalizeLoudness: settings.normalizeLoudness,
+        dedupeMode: settings.dedupeMode,
+        fetchThumbnail: Boolean(settings.id3Tagging)
+      }),
+      {
+        label: target.fileStem,
+        sourceType,
+        programTitle: postProcess?.programTitle || programTitle || "",
+        episodeUrl: episodeUrl || sourceUrl || manifestUrl || "",
+        description: postProcess?.description || "",
+        location: postProcess?.location || "",
+        hosts: normalizeMetadataList(postProcess?.hosts),
+        genres: normalizeMetadataList(postProcess?.genres),
+        persisted: persistedPayload
+      }
+    );
+  } catch (error) {
+    // If the download produced nothing, remove a program folder we just created
+    // so failed/unavailable episodes don't leave empty dirs (and churn folder
+    // mtimes). Only touch a folder we created and only if it's empty.
+    if (!outputDirExisted) {
+      try {
+        if (fs.readdirSync(outputDir).length === 0) {
+          fs.rmdirSync(outputDir);
+        }
+      } catch {}
     }
-  );
+    throw error;
+  }
   appendDownloadHistoryFromPayload(persistedPayload, result);
 
   return {

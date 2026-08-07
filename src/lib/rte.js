@@ -442,16 +442,30 @@ async function getPlaylist(clipId) {
   const show = payload?.shows?.[0];
   const mediaGroup = show?.["media:group"]?.[0];
 
-  if (!mediaGroup?.hls_server || !mediaGroup?.hls_url) {
+  if (mediaGroup?.hls_server && mediaGroup?.hls_url) {
+    const server = String(mediaGroup.hls_server).replace(/\/+$/, "");
+    const streamPath = String(mediaGroup.hls_url).replace(/^\/+/, "");
+
+    return {
+      apiUrl,
+      m3u8Url: `${server}/${streamPath}`
+    };
+  }
+
+  // RTÉ has moved some radio episodes (e.g. Omny.fm-backed shows) off the HLS
+  // playlist system: the response instead carries a direct audio URL at the
+  // top level with no media:group.
+  const directUrl = show?.url && String(show.medium || "").toLowerCase() === "audio"
+    ? String(show.url).trim()
+    : "";
+
+  if (!directUrl) {
     throw new Error("Could not find HLS stream details in RTÉ playlist response.");
   }
 
-  const server = String(mediaGroup.hls_server).replace(/\/+$/, "");
-  const streamPath = String(mediaGroup.hls_url).replace(/^\/+/, "");
-
   return {
     apiUrl,
-    m3u8Url: `${server}/${streamPath}`
+    m3u8Url: directUrl
   };
 }
 
