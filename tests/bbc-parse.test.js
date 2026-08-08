@@ -1,7 +1,7 @@
 /**
  * Unit tests for pure parsing functions in src/lib/bbc.js
  */
-const { normalizeBbcUrl, normalizeBbcProgramUrl, getBbcProgramSummary, getBbcProgramEpisodes, searchBbcPrograms } = require("../src/lib/bbc");
+const { normalizeBbcUrl, normalizeBbcProgramUrl, getBbcLiveStations, getBbcProgramSummary, getBbcProgramEpisodes, searchBbcPrograms } = require("../src/lib/bbc");
 
 describe("normalizeBbcUrl", () => {
   test("accepts a valid BBC URL", () => {
@@ -26,6 +26,15 @@ describe("normalizeBbcUrl", () => {
     const result = normalizeBbcUrl("https://www.bbc.co.uk/programmes/b01cqx2b?page=2");
     expect(result).toContain("b01cqx2b");
     expect(result).toContain("page=2");
+  });
+});
+
+describe("getBbcLiveStations", () => {
+  test("uses BBC's canonical live player URLs when extraction is unavailable", async () => {
+    const stations = await getBbcLiveStations();
+    expect(stations.find((station) => station.id === "bbc_radio_one")).toMatchObject({
+      liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_one"
+    });
   });
 });
 

@@ -1,11 +1,11 @@
 const BBC_LIVE_STATIONS_FALLBACK = [
-  { id: "bbc_radio_one", name: "BBC Radio 1", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_one" },
-  { id: "bbc_radio_two", name: "BBC Radio 2", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_two" },
-  { id: "bbc_radio_three", name: "BBC Radio 3", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_three" },
-  { id: "bbc_radio_five_live", name: "BBC Radio 5 Live", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_five_live" },
-  { id: "bbc_6music", name: "BBC Radio 6 Music", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_6music" },
-  { id: "bbc_1xtra", name: "BBC Radio 1Xtra", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_1xtra" },
-  { id: "bbc_asian_network", name: "BBC Asian Network", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_asian_network" }
+  { id: "bbc_radio_one", name: "BBC Radio 1", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_one" },
+  { id: "bbc_radio_two", name: "BBC Radio 2", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_two" },
+  { id: "bbc_radio_three", name: "BBC Radio 3", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_three" },
+  { id: "bbc_radio_five_live", name: "BBC Radio 5 Live", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_five_live" },
+  { id: "bbc_6music", name: "BBC Radio 6 Music", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_6music" },
+  { id: "bbc_1xtra", name: "BBC Radio 1Xtra", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_1xtra" },
+  { id: "bbc_asian_network", name: "BBC Asian Network", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_asian_network" }
 ];
 const DISABLED_BBC_STATION_IDS = new Set(["bbc_5live_sportsextra", "bbc_radio_fourfm", "bbc_world_service"]);
 const bbcEpisodeDateCache = new Map();
