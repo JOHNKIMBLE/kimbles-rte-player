@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN cargo install \
     --locked \
-    --version 0.6.6 \
+    --version 0.7.4 \
     --root /songrec-root \
     songrec \
     --no-default-features \
