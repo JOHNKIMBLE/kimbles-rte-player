@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libasound2-dev \
     libglib2.0-dev \
+    libpipewire-0.3-dev \
     libsoup-3.0-dev \
     libssl-dev \
     libclang-dev \
@@ -39,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libasound2 \
     libglib2.0-0 \
+    libpipewire-0.3-0 \
     libsoup-3.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
