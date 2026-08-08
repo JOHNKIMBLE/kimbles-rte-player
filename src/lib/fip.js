@@ -1192,6 +1192,16 @@ async function getFipEpisodeStream(episodeUrl, runYtDlpJson) {
       for (const node of nodes) {
         const arr = Array.isArray(node?.data) ? node.data : [];
         for (const v of arr) {
+          // Radio France now exposes the audio as a standalone indexed record.
+          // Keep the older Expression.manifestations traversal below for past pages.
+          if (v && typeof v === "object" && !Array.isArray(v)) {
+            const resolveRef = (value) => (typeof value === "number" ? arr[value] : value);
+            const type = String(resolveRef(v.__typename) || resolveRef(v.model) || "");
+            const audioUrl = String(resolveRef(v.url) || "").trim();
+            if (type === "ManifestationAudio" && /^https?:\/\//i.test(audioUrl)) {
+              return { episodeUrl: url, streamUrl: audioUrl, title: "", image: "" };
+            }
+          }
           if (v && typeof v === "object" && Array.isArray(v.manifestations)) {
             const mf = v.manifestations.map((m) => (typeof m === "number" ? arr[m] : m));
             const audio = mf.find((m) => m?.model === "ManifestationAudio") || mf[0];

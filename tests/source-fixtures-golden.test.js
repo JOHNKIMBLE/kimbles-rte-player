@@ -3,9 +3,9 @@ const path = require("path");
 
 const { getProgramEpisodes: getRteProgramEpisodes } = require("../src/lib/rte");
 const { getBbcProgramEpisodes } = require("../src/lib/bbc");
-const { getWwfEpisodeInfo } = require("../src/lib/worldwidefm");
+const { getWwfEpisodeInfo, getWwfEpisodePlaylist } = require("../src/lib/worldwidefm");
 const { getNtsEpisodeInfo } = require("../src/lib/nts");
-const { getFipProgramSummary } = require("../src/lib/fip");
+const { getFipProgramSummary, getFipEpisodeStream } = require("../src/lib/fip");
 const { getKexpProgramSummary } = require("../src/lib/kexp");
 
 const FIXTURES_DIR = path.join(__dirname, "fixtures", "sources");
@@ -120,6 +120,38 @@ describe("source golden fixtures", () => {
     expect(info.mixcloudUrl).toBe("https://www.mixcloud.com/worldwidefm/golden-worldwide-morning-fixture/");
   });
 
+  test("Worldwide FM trims escaped characters from an embedded Mixcloud URL", async () => {
+    installFetchRouter([
+      {
+        match: (href) => href === "https://www.worldwidefm.net/episode/golden-mixcloud",
+        response: () => textResponse(`
+          <meta property="og:title" content="Golden Worldwide : Mixcloud Fixture">
+          <script>const player_url = "https://www.mixcloud.com/worldwidefm/golden-mixcloud/\\\\";</script>
+        `)
+      }
+    ]);
+
+    const info = await getWwfEpisodeInfo("https://www.worldwidefm.net/episode/golden-mixcloud");
+
+    expect(info.mixcloudUrl).toBe("https://www.mixcloud.com/worldwidefm/golden-mixcloud/");
+  });
+
+  test("Worldwide FM parses a tracklist streamed as a standalone RSC payload", async () => {
+    installFetchRouter([
+      {
+        match: (href) => href === "https://www.worldwidefm.net/episode/golden-rsc-tracklist",
+        response: () => textResponse('self.__next_f.push([1,"\\u003cp\\u003eGolden Artist - Golden Song\\u003c/p\\u003e\\u003cp\\u003eSecond Artist - Second Song\\u003c/p\\u003e"])')
+      }
+    ]);
+
+    const playlist = await getWwfEpisodePlaylist("https://www.worldwidefm.net/episode/golden-rsc-tracklist");
+
+    expect(playlist.tracks).toEqual([
+      { artist: "Golden Artist", title: "Golden Song", image: "" },
+      { artist: "Second Artist", title: "Second Song", image: "" }
+    ]);
+  });
+
   test("NTS episode fixture keeps expected metadata shape", async () => {
     installFetchRouter([
       {
@@ -157,6 +189,30 @@ describe("source golden fixtures", () => {
     expect(summary.hosts).toEqual(["FIP Host"]);
     expect(summary.genres).toEqual(["Jazz"]);
     expect(summary.cadence).toBe("daily");
+  });
+
+  test("FIP episode stream resolves the current standalone ManifestationAudio record", async () => {
+    installFetchRouter([
+      {
+        match: (href) => href === "https://www.radiofrance.fr/fip/podcasts/golden-fip-show/golden-episode/__data.json",
+        response: () => jsonResponse({
+          nodes: [
+            {
+              data: [
+                "ManifestationAudio",
+                "https://media.radiofrance-podcast.net/golden-episode.m4a",
+                { __typename: 0, url: 1, duration: 3600 }
+              ]
+            }
+          ]
+        })
+      }
+    ]);
+
+    await expect(getFipEpisodeStream("https://www.radiofrance.fr/fip/podcasts/golden-fip-show/golden-episode"))
+      .resolves.toEqual(expect.objectContaining({
+        streamUrl: "https://media.radiofrance-podcast.net/golden-episode.m4a"
+      }));
   });
 
   test("KEXP program fixture keeps expected metadata shape", async () => {
