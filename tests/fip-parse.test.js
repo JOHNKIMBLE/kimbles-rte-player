@@ -1,7 +1,7 @@
 /**
  * Unit tests for pure parsing functions in src/lib/fip.js
  */
-const { normalizeFipProgramUrl, parseFipAirtime, parseFipFrenchPublishedDate, LIVE_STATIONS, searchFipPrograms } = require("../src/lib/fip");
+const { normalizeFipProgramUrl, parseFipAirtime, parseFipFrenchPublishedDate, LIVE_STATIONS, searchFipPrograms, getFipDiscoverySampleSize } = require("../src/lib/fip");
 
 // ── LIVE_STATIONS ─────────────────────────────────────────────────────────────
 
@@ -219,5 +219,13 @@ describe("searchFipPrograms", () => {
     expect(results[0].title).toBe("Morning Smoke");
     expect(results[0].hosts).toEqual(["Benji B"]);
     expect(results[0].genres).toContain("Electronic");
+  });
+});
+
+describe("getFipDiscovery", () => {
+  test("checks a broad bounded pool for small recommendation sets", () => {
+    expect(getFipDiscoverySampleSize(50, 1)).toBe(12);
+    expect(getFipDiscoverySampleSize(50, 5)).toBe(30);
+    expect(getFipDiscoverySampleSize(4, 1)).toBe(4);
   });
 });

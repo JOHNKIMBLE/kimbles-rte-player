@@ -1,7 +1,7 @@
 /**
  * Unit tests for pure parsing functions in src/lib/rte.js
  */
-const { normalizeProgramUrl, LIVE_STATIONS, getProgramSummary, getProgramEpisodes, searchPrograms } = require("../src/lib/rte");
+const { normalizeProgramUrl, LIVE_STATIONS, extractRteInfo, getProgramSummary, getProgramEpisodes, searchPrograms } = require("../src/lib/rte");
 
 describe("LIVE_STATIONS", () => {
   test("is a non-empty array", () => {
@@ -208,6 +208,48 @@ describe("getProgramSummary", () => {
 
     const payload = await getProgramEpisodes("https://www.rte.ie/radio/2fm/2fm-greene-room-with-jenny-greene/", 1);
     expect(payload.episodes[0].publishedTime).toBe("2026-06-07T21:00:00Z");
+  });
+});
+
+describe("extractRteInfo", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  test("resolves current UUID episode URLs without a legacy clip_id meta tag", async () => {
+    const episodeUrl = "https://www.rte.ie/radio/2fm/greene-room/episodes/d11c16d5-4d7e-4fae-acff-b49e016ea0f0/";
+    global.fetch = jest.fn(async (url) => {
+      const href = String(url);
+      if (href === episodeUrl) {
+        return {
+          ok: true,
+          text: async () => `
+            <html><head>
+              <meta property="og:title" content="Greene Room - Current Episode" />
+              <meta property="og:image" content="https://example.com/greene.jpg" />
+            </head></html>
+          `
+        };
+      }
+      if (href.includes("/rteavgen/getplaylist/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            shows: [{ url: "https://cdn.example.test/greene.mp3", medium: "audio" }]
+          })
+        };
+      }
+      throw new Error(`Unexpected URL ${href}`);
+    });
+
+    const info = await extractRteInfo(episodeUrl);
+    expect(info).toMatchObject({
+      clipId: "d11c16d5-4d7e-4fae-acff-b49e016ea0f0",
+      m3u8Url: "https://cdn.example.test/greene.mp3",
+      image: "https://example.com/greene.jpg"
+    });
   });
 });
 
