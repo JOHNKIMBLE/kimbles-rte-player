@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gettext \
     intltool \
     ca-certificates \
-    && curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain 1.87.0 \
+    && curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain 1.88.0 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN cargo install \
