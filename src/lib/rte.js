@@ -511,9 +511,9 @@ async function extractRteInfo(pageUrl) {
   const title = cleanTitle(titleRaw);
 
   const clipId = findFirstMatch(html, [
-    /<meta\s+name=["']clip_id["']\s+content=["'](\d+)["']/i,
-    /[?&]clipid=(\d+)/i
-  ]);
+    /<meta\s+name=["']clip_id["']\s+content=["']([a-z0-9-]+)["']/i,
+    /[?&]clipid=([a-z0-9-]+)/i
+  ]) || String(pageUrl || "").match(/\/episodes\/([a-z0-9-]{8,})(?:[/?#]|$)/i)?.[1] || "";
 
   if (!clipId) {
     throw new Error("Could not find clip ID on the RTÉ page.");

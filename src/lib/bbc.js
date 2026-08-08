@@ -1,11 +1,11 @@
 const BBC_LIVE_STATIONS_FALLBACK = [
-  { id: "bbc_radio_one", name: "BBC Radio 1", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_one" },
-  { id: "bbc_radio_two", name: "BBC Radio 2", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_two" },
-  { id: "bbc_radio_three", name: "BBC Radio 3", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_three" },
-  { id: "bbc_radio_five_live", name: "BBC Radio 5 Live", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_radio_five_live" },
-  { id: "bbc_6music", name: "BBC Radio 6 Music", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_6music" },
-  { id: "bbc_1xtra", name: "BBC Radio 1Xtra", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_1xtra" },
-  { id: "bbc_asian_network", name: "BBC Asian Network", liveUrl: "https://www.bbc.co.uk/sounds/play/live:bbc_asian_network" }
+  { id: "bbc_radio_one", name: "BBC Radio 1", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_one" },
+  { id: "bbc_radio_two", name: "BBC Radio 2", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_two" },
+  { id: "bbc_radio_three", name: "BBC Radio 3", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_three" },
+  { id: "bbc_radio_five_live", name: "BBC Radio 5 Live", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_five_live" },
+  { id: "bbc_6music", name: "BBC Radio 6 Music", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_6music" },
+  { id: "bbc_1xtra", name: "BBC Radio 1Xtra", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_1xtra" },
+  { id: "bbc_asian_network", name: "BBC Asian Network", liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_asian_network" }
 ];
 const DISABLED_BBC_STATION_IDS = new Set(["bbc_5live_sportsextra", "bbc_radio_fourfm", "bbc_world_service"]);
 const bbcEpisodeDateCache = new Map();
@@ -116,6 +116,23 @@ async function fetchJson(url) {
 
   if (!response.ok) {
     throw new Error(`Failed to load BBC JSON: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+async function fetchBbcSearchJson(query) {
+  const url = new URL("https://search.api.bbci.co.uk/formula/domestic-web-suggest");
+  url.searchParams.set("q", query);
+
+  const response = await fetchWithHostAllowlist(url, ["search.api.bbci.co.uk"], "BBC search", {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load BBC search results: ${response.status} ${response.statusText}`);
   }
 
   return response.json();
@@ -1240,38 +1257,75 @@ async function getBbcLiveStations(runYtDlpJson) {
   }
 }
 
+function getBbcProgramUrlFromSearchResult(result) {
+  const candidates = [result?.group_uri, result?.uri, result?.url];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    const urnMatch = value.match(/^urn:bbc:programmes:([a-z0-9]+)$/i);
+    if (urnMatch?.[1]) {
+      return `https://www.bbc.co.uk/programmes/${urnMatch[1]}`;
+    }
+    try {
+      return normalizeBbcProgramUrl(value);
+    } catch {}
+  }
+  return "";
+}
+
+function extractBbcProgramUrlsFromSearchHtml(html) {
+  const seen = new Set();
+  const urls = [];
+  const pattern = /href=["'](\/programmes\/[a-z0-9]{8}(?:\/episodes\/player)?|\/sounds\/brand\/[a-z0-9]+|https?:\/\/www\.bbc\.co\.uk\/programmes\/[a-z0-9]{8}(?:\/episodes\/player)?|https?:\/\/www\.bbc\.co\.uk\/sounds\/brand\/[a-z0-9]+)["']/gi;
+
+  for (const match of String(html || "").matchAll(pattern)) {
+    const href = String(match[1] || "").trim();
+    if (!href) {
+      continue;
+    }
+    const absolute = href.startsWith("http") ? href : `https://www.bbc.co.uk${href}`;
+    try {
+      const normalized = normalizeBbcProgramUrl(absolute);
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        urls.push(normalized);
+      }
+    } catch {}
+  }
+
+  return urls;
+}
+
 async function searchBbcPrograms(query, runYtDlpJson) {
   const q = cleanText(query || "");
   if (q.length < 2) {
     return [];
   }
 
-  const searchUrl = `https://www.bbc.co.uk/search?q=${encodeURIComponent(q)}`;
-  const html = await fetchText(searchUrl);
-  const seen = new Set();
-  const urls = [];
-  const pattern = /href=["'](\/programmes\/[a-z0-9]{8}(?:\/episodes\/player)?|\/sounds\/brand\/[a-z0-9]+|https?:\/\/www\.bbc\.co\.uk\/programmes\/[a-z0-9]{8}(?:\/episodes\/player)?|https?:\/\/www\.bbc\.co\.uk\/sounds\/brand\/[a-z0-9]+)["']/gi;
+  let urls = [];
+  try {
+    const payload = await fetchBbcSearchJson(q);
+    const seen = new Set();
+    for (const result of Array.isArray(payload?.results) ? payload.results : []) {
+      // BBC search includes video and article results; only keep BBC Sounds audio programmes.
+      if (!Array.isArray(result?.media_type) || !result.media_type.includes("audio")) {
+        continue;
+      }
+      const programUrl = getBbcProgramUrlFromSearchResult(result);
+      if (programUrl && !seen.has(programUrl)) {
+        seen.add(programUrl);
+        urls.push(programUrl);
+      }
+      if (urls.length >= 25) {
+        break;
+      }
+    }
+  } catch {}
 
-  for (const match of html.matchAll(pattern)) {
-    const href = String(match[1] || "").trim();
-    if (!href) {
-      continue;
-    }
-    const absolute = href.startsWith("http") ? href : `https://www.bbc.co.uk${href}`;
-    let normalized;
-    try {
-      normalized = normalizeBbcProgramUrl(absolute);
-    } catch {
-      continue;
-    }
-    if (seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    urls.push(normalized);
-    if (urls.length >= 25) {
-      break;
-    }
+  // The BBC's legacy page remains a useful fallback if the public search API is unavailable.
+  if (!urls.length) {
+    const searchUrl = `https://www.bbc.co.uk/search?q=${encodeURIComponent(q)}`;
+    const html = await fetchText(searchUrl);
+    urls = extractBbcProgramUrlsFromSearchHtml(html).slice(0, 25);
   }
 
   const summaries = await Promise.all(urls.map(async (programUrl) => {

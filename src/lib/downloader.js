@@ -495,6 +495,33 @@ function runFfmpegAudioPostprocess({
   });
 }
 
+function verifyAudioFile(filePath) {
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile() || stat.size < 1024) {
+    throw new Error("Downloaded audio is empty or too small to be valid.");
+  }
+  const ffmpegDir = resolveBundledFfmpegDir();
+  const ffmpegExe = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const ffmpegPath = path.join(ffmpegDir || "", ffmpegExe);
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegPath, ["-v", "error", "-t", "1", "-i", filePath, "-f", "null", "-"], {
+      cwd: ffmpegDir || process.cwd()
+    });
+    let log = "";
+    child.stderr.on("data", (chunk) => {
+      log += chunk.toString();
+    });
+    child.on("error", (error) => reject(new Error(`Audio validation could not start: ${error.message}`)));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`Downloaded audio did not pass validation: ${log.trim() || `ffmpeg exited with code ${code}`}`));
+        return;
+      }
+      resolve({ bytes: stat.size });
+    });
+  });
+}
+
 function runYtDlpDownload({
   manifestUrl,
   sourceUrl,
@@ -694,6 +721,7 @@ function runYtDlpDownload({
         normalizeLoudness,
         onProgress
       });
+      const validation = await verifyAudioFile(processedPath);
 
       const finalPath = makeUniquePath(outputDir, safeTitle, outputExt);
       let stagedArtworkPath = "";
@@ -716,6 +744,7 @@ function runYtDlpDownload({
       resolve({
         fileName: path.basename(finalPath),
         artworkPath: stagedArtworkPath,
+        validation,
         log: [log.trim(), postprocess.log].filter(Boolean).join("\n")
       });
       };
@@ -861,6 +890,7 @@ module.exports = {
   resolveBundledFfmpegDir,
   resolveYtDlpCommand,
   runYtDlpDownload,
+  verifyAudioFile,
   runYtDlpGetUrl,
   runYtDlpJson,
   spawnYtDlpPipe

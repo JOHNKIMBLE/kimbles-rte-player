@@ -131,6 +131,8 @@ const {
 } = require("./lib/app-settings");
 const { collectRuntimeDiagnostics } = require("./lib/runtime-diagnostics");
 const { runVendorBootstrap } = require("./lib/vendor-bootstrap");
+const { createSourceHealthCheckStore } = require("./lib/source-health-check-store");
+const { runSourceCanaries, shouldRunSourceCanaries } = require("./lib/source-canary");
 
 let scheduler;
 let bbcScheduler;
@@ -156,10 +158,12 @@ let metadataHarvestStore = null;
 let metadataRepairStore = null;
 let materializedMetadataStore = null;
 let collectionsStore = null;
+let sourceHealthCheckStore = null;
 let materializedMetadataCache = null;
 let materializedMetadataDirty = true;
 let materializedMetadataRefreshPromise = null;
 let metadataHarvestRefreshPromise = null;
+let sourceCanaryRefreshPromise = null;
 const METADATA_HARVEST_POLL_MS = 1000 * 60 * 5;
 
 const streamProxyTokens = new Map();
@@ -979,6 +983,82 @@ function getMetadataHarvestSources() {
       maxEpisodePages: 3
     }
   ];
+}
+
+function getSourceCanaryProviders() {
+  const sources = new Map(getMetadataHarvestSources().map((source) => [source.sourceType, source]));
+  return [
+    {
+      sourceType: "rte",
+      getDiscovery: () => getRteDiscovery(1),
+      getProgramSummary: (url) => sources.get("rte").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("rte").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getLiveStationNow(LIVE_STATIONS[0]?.id || "rte-radio-1")
+    },
+    {
+      sourceType: "bbc",
+      getDiscovery: () => getBbcDiscovery(1),
+      getProgramSummary: (url) => sources.get("bbc").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("bbc").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getBbcEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getBbcLiveStations(runYtDlpJson)
+    },
+    {
+      sourceType: "wwf",
+      getDiscovery: () => getWwfDiscovery(1),
+      getProgramSummary: (url) => sources.get("wwf").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("wwf").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getWwfEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getWwfLiveNow()
+    },
+    {
+      sourceType: "nts",
+      getDiscovery: () => getNtsDiscovery(1),
+      getProgramSummary: (url) => sources.get("nts").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("nts").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getNtsEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getNtsLiveNow("")
+    },
+    {
+      sourceType: "fip",
+      getDiscovery: () => getFipDiscovery(1),
+      getProgramSummary: (url) => sources.get("fip").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("fip").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getFipEpisodeTracklist(episode.episodeUrl),
+      getLive: () => getFipNowPlaying(FIP_LIVE_STATIONS[0]?.id || "fip")
+    },
+    {
+      sourceType: "kexp",
+      getDiscovery: () => getKexpDiscovery(1),
+      getProgramSummary: (url) => sources.get("kexp").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("kexp").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getKexpEpisodeTracklist(episode.episodeUrl),
+      getLive: () => getKexpNowPlaying()
+    }
+  ];
+}
+
+async function refreshSourceCanaries(force = false) {
+  if (!sourceHealthCheckStore) {
+    return [];
+  }
+  if (sourceCanaryRefreshPromise) {
+    return sourceCanaryRefreshPromise;
+  }
+  const providers = getSourceCanaryProviders();
+  const existing = sourceHealthCheckStore.list();
+  if (!force && !shouldRunSourceCanaries(existing, {
+    requiredSources: providers.map((provider) => provider.sourceType)
+  })) {
+    return existing;
+  }
+  sourceCanaryRefreshPromise = runSourceCanaries(providers)
+    .then((checks) => sourceHealthCheckStore.replace(checks))
+    .finally(() => {
+      sourceCanaryRefreshPromise = null;
+    });
+  return sourceCanaryRefreshPromise;
 }
 
 async function refreshMetadataHarvestCache(force = false) {
@@ -3212,6 +3292,9 @@ ipcMain.handle("diagnostics-get", async () => {
   if (process.env.NODE_ENV !== "test") {
     await refreshMetadataHarvestCache(false);
   }
+  const sourceCanaries = process.env.NODE_ENV !== "test"
+    ? await refreshSourceCanaries(false)
+    : (sourceHealthCheckStore?.list?.() || []);
   const snapshot = await ensureMaterializedMetadata();
   return collectRuntimeDiagnostics({
     dataDir: app.getPath("userData"),
@@ -3225,9 +3308,11 @@ ipcMain.handle("diagnostics-get", async () => {
     harvestState: metadataHarvestStore?.getState?.() || { sources: {} },
     harvestedItems: metadataHarvestStore?.list?.() || [],
     metadataIndex: snapshot.index,
-    entityGraph: snapshot.graph
+    entityGraph: snapshot.graph,
+    sourceCanaries
   });
 });
+ipcMain.handle("diagnostics-run-source-checks", async () => refreshSourceCanaries(true));
 ipcMain.handle("diagnostics-repair", async () => runVendorBootstrap({
   projectRoot: path.join(__dirname, "..")
 }));
@@ -3388,11 +3473,16 @@ app.whenReady().then(() => {
   downloadHistory = createDownloadHistory(DOWNLOAD_HISTORY_PATH);
   const RECENT_ERRORS_PATH = path.join(DATA_DIR, "recent-errors.json");
   recentErrorsLog = createRecentErrorsLog(RECENT_ERRORS_PATH);
+  sourceHealthCheckStore = createSourceHealthCheckStore(path.join(DATA_DIR, "source-health-checks.json"));
   metadataHarvestStore = createMetadataHarvestStore(path.join(DATA_DIR, "metadata-harvest.json"));
   metadataRepairStore = createMetadataRepairStore(path.join(DATA_DIR, "metadata-repairs.json"));
   materializedMetadataStore = createMaterializedMetadataStore(path.join(DATA_DIR, "materialized-metadata.json"));
   materializedMetadataCache = getMaterializedMetadataSnapshot();
   collectionsStore = createCollectionsStore(path.join(DATA_DIR, "collections.json"));
+  void refreshSourceCanaries(false).catch(() => {});
+  setInterval(() => {
+    void refreshSourceCanaries(false).catch(() => {});
+  }, 1000 * 60 * 30);
   const restoredQueueItems = downloadQueue.restorePending();
   if (restoredQueueItems > 0) {
     broadcastGlobalEvent({
