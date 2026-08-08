@@ -328,6 +328,8 @@ const metadataIndexHostFilter = document.getElementById("metadataIndexHostFilter
 const metadataIndexGenreFilter = document.getElementById("metadataIndexGenreFilter");
 const metadataIndexLocationFilter = document.getElementById("metadataIndexLocationFilter");
 const diagnosticsRefreshBtn = document.getElementById("diagnosticsRefreshBtn");
+const diagnosticsRunChecksBtn = document.getElementById("diagnosticsRunChecksBtn");
+const diagnosticsExportBtn = document.getElementById("diagnosticsExportBtn");
 const diagnosticsRepairBtn = document.getElementById("diagnosticsRepairBtn");
 const diagnosticsOpenDownloadDirBtn = document.getElementById("diagnosticsOpenDownloadDirBtn");
 const diagnosticsOpenDataDirBtn = document.getElementById("diagnosticsOpenDataDirBtn");
@@ -576,7 +578,7 @@ const {
 
 function renderPlaylistTracks(tracks) {
   if (!tracks.length) {
-    return `<div class="playlist-note">No tracks found.</div>`;
+    return `<div class="playlist-note">This source did not publish a tracklist for this episode.</div>`;
   }
 
   return `
@@ -913,6 +915,8 @@ const libraryScreen = window.KimbleLibraryScreen.create({
     historyShowMoreBtn,
     historyClearBtn,
     diagnosticsRefreshBtn,
+    diagnosticsRunChecksBtn,
+    diagnosticsExportBtn,
     diagnosticsRepairBtn,
     diagnosticsOpenDownloadDirBtn,
     diagnosticsOpenDataDirBtn,

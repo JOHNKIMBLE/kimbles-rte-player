@@ -277,15 +277,20 @@ function buildSourceHealth(options = {}) {
   const harvestSourceStats = Array.isArray(options.metadataHarvest?.sourceStats) ? options.metadataHarvest.sourceStats : [];
   const recentErrors = Array.isArray(options.recentErrors) ? options.recentErrors : [];
   const queueRecent = Array.isArray(options.queueRecent) ? options.queueRecent : [];
+  const sourceCanaries = Array.isArray(options.sourceCanaries) ? options.sourceCanaries : [];
 
   const harvestBySource = new Map(
     harvestSourceStats.map((row) => [String(row?.sourceType || "").trim().toLowerCase(), row])
+  );
+  const canaryBySource = new Map(
+    sourceCanaries.map((row) => [String(row?.sourceType || "").trim().toLowerCase(), row])
   );
   const sourceKeys = new Set([
     ...Object.keys(schedulesBySource || {}),
     ...harvestBySource.keys(),
     ...recentErrors.map((entry) => String(entry?.sourceType || "").trim().toLowerCase()).filter(Boolean),
-    ...queueRecent.map((entry) => String(entry?.sourceType || "").trim().toLowerCase()).filter(Boolean)
+    ...queueRecent.map((entry) => String(entry?.sourceType || "").trim().toLowerCase()).filter(Boolean),
+    ...canaryBySource.keys()
   ]);
 
   const retryHistory = [];
@@ -295,6 +300,7 @@ function buildSourceHealth(options = {}) {
     .map((sourceType) => {
       const schedules = Array.isArray(schedulesBySource[sourceType]) ? schedulesBySource[sourceType] : [];
       const harvest = harvestBySource.get(sourceType) || {};
+      const canary = canaryBySource.get(sourceType) || {};
       const sourceErrors = recentErrors.filter((entry) => String(entry?.sourceType || "").trim().toLowerCase() === sourceType);
       const queueFailures = queueRecent.filter((entry) => {
         const status = String(entry?.status || "").trim().toLowerCase();
@@ -333,7 +339,13 @@ function buildSourceHealth(options = {}) {
           .pop() || "",
         thinReasons: Array.isArray(harvest?.thinReasons) ? harvest.thinReasons : [],
         due: Boolean(harvest?.due),
-        harvestedCount: Number(harvest?.harvestedCount || 0)
+        harvestedCount: Number(harvest?.harvestedCount || 0),
+        canaryStatus: String(canary?.status || "not-checked").trim(),
+        canaryCheckedAt: String(canary?.checkedAt || "").trim(),
+        canaryFailureCount: Number(canary?.failureCount || 0),
+        canaryCapabilities: Array.isArray(canary?.capabilities) ? canary.capabilities : [],
+        canaryProgramTitle: String(canary?.programTitle || "").trim(),
+        canaryEpisodeTitle: String(canary?.episodeTitle || "").trim()
       };
     });
 
@@ -363,7 +375,8 @@ function collectRuntimeDiagnostics(options = {}) {
     schedulesBySource: options.schedulesBySource || {},
     metadataHarvest,
     recentErrors: Array.isArray(options.recentErrors) ? options.recentErrors : [],
-    queueRecent: Array.isArray(queueSnapshot?.recent) ? queueSnapshot.recent : []
+    queueRecent: Array.isArray(queueSnapshot?.recent) ? queueSnapshot.recent : [],
+    sourceCanaries: options.sourceCanaries
   });
 
   return {

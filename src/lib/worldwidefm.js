@@ -314,6 +314,19 @@ function parseTracklistHtml(tracklistHtml) {
   return tracks;
 }
 
+function parseTracklistFromRscPayloads(html) {
+  let best = [];
+  for (const payload of extractRscPayloads(html)) {
+    // Current WWF pages stream the tracklist as its own escaped RSC payload,
+    // without a $N reference that can be mapped back from episode metadata.
+    const decoded = payload.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    if (!/<p[\s>]/i.test(decoded)) continue;
+    const tracks = parseTracklistHtml(decoded);
+    if (tracks.length > best.length) best = tracks;
+  }
+  return best;
+}
+
 function normalizeEpisodeUrl(inputUrl) {
   const raw = String(inputUrl || "").trim();
   if (!raw) {
@@ -1010,15 +1023,24 @@ function parseMixcloudUrlFromEpisodeHtml(html) {
   // Try plain URL match first
   const mixcloudMatch = source.match(/https?:\/\/[^"'\s]*mixcloud\.com\/worldwidefm\/[^"'\s)]+/i);
   if (mixcloudMatch) {
-    const raw = mixcloudMatch[0].replace(/&amp;/g, "&").split(/["'\s)]/)[0];
+    const raw = normalizeMixcloudUrl(mixcloudMatch[0]);
     if (raw) return raw;
   }
   // Try RSC/JSON escaped URL (e.g. "player_url":"https:\/\/www.mixcloud.com\/worldwidefm\/...")
   const escapedMatch = source.match(/"player_url"\s*:\s*"(https:[^"]*mixcloud\.com[^"]*)"/i);
   if (escapedMatch) {
-    return escapedMatch[1].replace(/\\\//g, "/");
+    return normalizeMixcloudUrl(escapedMatch[1]);
   }
   return "";
+}
+
+function normalizeMixcloudUrl(value) {
+  const url = String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/\\\//g, "/")
+    .replace(/[\\"'\s]+$/g, "")
+    .trim();
+  return /^https?:\/\/(?:www\.)?mixcloud\.com\/worldwidefm\//i.test(url) ? url : "";
 }
 
 // ── Mixcloud channel resolution ───────────────────────────────────────────────
@@ -1176,7 +1198,7 @@ async function resolveMixcloudUrlFromApi(episode) {
   const cloudcasts = await fetchMixcloudCloudcasts(true).catch(() => []);
   const match = pickBestMixcloudMatch(episode, cloudcasts);
   if (!match) return "";
-  return match.url || (match.key ? `https://www.mixcloud.com${match.key}` : "");
+  return normalizeMixcloudUrl(match.url || (match.key ? `https://www.mixcloud.com${match.key}` : ""));
 }
 
 /** Get Mixcloud URL for a WWF episode (for play/download; yt-dlp supports Mixcloud). */
@@ -1977,6 +1999,8 @@ async function getWwfEpisodePlaylist(episodeUrl) {
     const tracks = parseTracklistHtml(tracklistHtml);
     if (tracks.length) return { episodeUrl: url, tracks };
   }
+  const rscTracks = parseTracklistFromRscPayloads(html);
+  if (rscTracks.length) return { episodeUrl: url, tracks: rscTracks };
   // Fallback: old <li> parsing — only match <li> elements that look like
   // actual tracklist entries (have track/artist classes). Skip generic nav <li>.
   const tracks = [];
