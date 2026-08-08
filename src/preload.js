@@ -176,6 +176,7 @@ contextBridge.exposeInMainWorld("rteDownloader", {
   postprocessHistoryEntry: (payload = {}) => ipcRenderer.invoke("history-postprocess", payload || {}),
   reportListenProgress: (payload = {}) => ipcRenderer.invoke("history-listen", payload || {}),
   getDiagnostics: () => ipcRenderer.invoke("diagnostics-get"),
+  runSourceCanaries: () => ipcRenderer.invoke("diagnostics-run-source-checks"),
   repairBinaries: () => ipcRenderer.invoke("diagnostics-repair"),
   openPath: (targetPath) => ipcRenderer.invoke("open-path", targetPath),
   generateCue: (payload) => ipcRenderer.invoke("cue-generate", payload || {}),

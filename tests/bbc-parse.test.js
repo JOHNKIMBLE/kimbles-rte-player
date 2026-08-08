@@ -227,7 +227,11 @@ describe("searchBbcPrograms", () => {
   test("uses BBC's current public search API for Sounds programmes", async () => {
     global.fetch = jest.fn(async (url) => {
       const href = String(url);
-      if (href.includes("https://search.api.bbci.co.uk/formula/domestic-web-suggest")) {
+      const parsed = new URL(href);
+      if (
+        parsed.origin === "https://search.api.bbci.co.uk" &&
+        parsed.pathname === "/formula/domestic-web-suggest"
+      ) {
         return {
           ok: true,
           json: async () => ({

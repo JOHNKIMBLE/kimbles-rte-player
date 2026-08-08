@@ -138,6 +138,8 @@ const {
 } = require("./lib/app-settings");
 const { collectRuntimeDiagnostics } = require("./lib/runtime-diagnostics");
 const { runVendorBootstrap } = require("./lib/vendor-bootstrap");
+const { createSourceHealthCheckStore } = require("./lib/source-health-check-store");
+const { runSourceCanaries, shouldRunSourceCanaries } = require("./lib/source-canary");
 
 const app = express();
 app.use(createGlobalRateLimiter({ windowMs: 60_000, maxRequests: 5000 }));
@@ -183,6 +185,7 @@ const DOWNLOAD_HISTORY_PATH = path.join(DATA_DIR, "download-history.json");
 const downloadHistory = createDownloadHistory(DOWNLOAD_HISTORY_PATH);
 const RECENT_ERRORS_PATH = path.join(DATA_DIR, "recent-errors.json");
 const recentErrorsLog = createRecentErrorsLog(RECENT_ERRORS_PATH);
+const sourceHealthCheckStore = createSourceHealthCheckStore(path.join(DATA_DIR, "source-health-checks.json"));
 const metadataHarvestStore = createMetadataHarvestStore(path.join(DATA_DIR, "metadata-harvest.json"));
 const materializedMetadataStore = createMaterializedMetadataStore(path.join(DATA_DIR, "materialized-metadata.json"));
 let materializedMetadataCache = null;
@@ -858,6 +861,80 @@ function getMetadataHarvestSources() {
       maxEpisodePages: 3
     }
   ];
+}
+
+function getSourceCanaryProviders() {
+  const sources = new Map(getMetadataHarvestSources().map((source) => [source.sourceType, source]));
+  return [
+    {
+      sourceType: "rte",
+      getDiscovery: () => getRteDiscovery(1),
+      getProgramSummary: (url) => sources.get("rte").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("rte").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getLiveStationNow(LIVE_STATIONS[0]?.id || "rte-radio-1")
+    },
+    {
+      sourceType: "bbc",
+      getDiscovery: () => getBbcDiscovery(1),
+      getProgramSummary: (url) => sources.get("bbc").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("bbc").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getBbcEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getBbcLiveStations(runYtDlpJson)
+    },
+    {
+      sourceType: "wwf",
+      getDiscovery: () => getWwfDiscovery(1),
+      getProgramSummary: (url) => sources.get("wwf").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("wwf").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getWwfEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getWwfLiveNow()
+    },
+    {
+      sourceType: "nts",
+      getDiscovery: () => getNtsDiscovery(1),
+      getProgramSummary: (url) => sources.get("nts").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("nts").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getNtsEpisodePlaylist(episode.episodeUrl),
+      getLive: () => getNtsLiveNow("")
+    },
+    {
+      sourceType: "fip",
+      getDiscovery: () => getFipDiscovery(1),
+      getProgramSummary: (url) => sources.get("fip").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("fip").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getFipEpisodeTracklist(episode.episodeUrl),
+      getLive: () => getFipNowPlaying(FIP_LIVE_STATIONS[0]?.id || "fip")
+    },
+    {
+      sourceType: "kexp",
+      getDiscovery: () => getKexpDiscovery(1),
+      getProgramSummary: (url) => sources.get("kexp").getSummary(url),
+      getProgramEpisodes: (url) => sources.get("kexp").getEpisodes(url, 1),
+      getEpisodePlaylist: (episode) => getKexpEpisodeTracklist(episode.episodeUrl),
+      getLive: () => getKexpNowPlaying()
+    }
+  ];
+}
+
+let sourceCanaryRefreshPromise = null;
+async function refreshSourceCanaries(force = false) {
+  if (sourceCanaryRefreshPromise) {
+    return sourceCanaryRefreshPromise;
+  }
+  const providers = getSourceCanaryProviders();
+  const existing = sourceHealthCheckStore.list();
+  if (!force && !shouldRunSourceCanaries(existing, {
+    requiredSources: providers.map((provider) => provider.sourceType)
+  })) {
+    return existing;
+  }
+  sourceCanaryRefreshPromise = runSourceCanaries(providers)
+    .then((checks) => sourceHealthCheckStore.replace(checks))
+    .finally(() => {
+      sourceCanaryRefreshPromise = null;
+    });
+  return sourceCanaryRefreshPromise;
 }
 
 async function refreshMetadataHarvestCache(force = false) {
@@ -3499,6 +3576,9 @@ app.get("/api/diagnostics", async (_req, res) => {
     if (process.env.NODE_ENV !== "test") {
       await refreshMetadataHarvestCache(false);
     }
+    const sourceCanaries = process.env.NODE_ENV !== "test"
+      ? await refreshSourceCanaries(false)
+      : sourceHealthCheckStore.list();
     const snapshot = await ensureMaterializedMetadata();
     res.json(collectRuntimeDiagnostics({
       dataDir: DATA_DIR,
@@ -3512,10 +3592,19 @@ app.get("/api/diagnostics", async (_req, res) => {
       harvestState: metadataHarvestStore.getState(),
       harvestedItems: metadataHarvestStore.list(),
       metadataIndex: snapshot.index,
-      entityGraph: snapshot.graph
+      entityGraph: snapshot.graph,
+      sourceCanaries
     }));
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/diagnostics/source-checks", async (_req, res) => {
+  try {
+    res.json({ checks: await refreshSourceCanaries(true) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -4119,6 +4208,10 @@ app.use((err, _req, res, _next) => {
 });
 
 if (require.main === module) {
+  void refreshSourceCanaries(false).catch((error) => console.error("[HEALTH] initial source checks failed:", error?.message || error));
+  setInterval(() => {
+    void refreshSourceCanaries(false).catch((error) => console.error("[HEALTH] source checks failed:", error?.message || error));
+  }, 1000 * 60 * 30);
   scheduler.start();
   scheduler.runAll().catch((e) => console.error("[SCHED:rte] runAll failed:", e?.message || e));
   bbcScheduler.start();
