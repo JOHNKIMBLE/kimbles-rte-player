@@ -764,6 +764,7 @@
     postprocessHistoryEntry: (payload = {}) => API.sendJson("/api/history/postprocess", "POST", payload || {}),
     reportListenProgress: (payload = {}) => API.sendJson("/api/history/listen", "POST", payload || {}),
     getDiagnostics: () => API.getJson("/api/diagnostics"),
+    runSourceCanaries: () => API.sendJson("/api/diagnostics/source-checks", "POST").then((body) => body?.checks || []),
     repairBinaries: () => API.sendJson("/api/diagnostics/repair", "POST"),
     connectGlobalEvents: (handler) => {
       const source = new EventSource("/api/events");

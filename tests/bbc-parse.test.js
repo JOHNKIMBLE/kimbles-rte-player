@@ -1,7 +1,7 @@
 /**
  * Unit tests for pure parsing functions in src/lib/bbc.js
  */
-const { normalizeBbcUrl, normalizeBbcProgramUrl, getBbcProgramSummary, getBbcProgramEpisodes, searchBbcPrograms } = require("../src/lib/bbc");
+const { normalizeBbcUrl, normalizeBbcProgramUrl, getBbcLiveStations, getBbcProgramSummary, getBbcProgramEpisodes, searchBbcPrograms } = require("../src/lib/bbc");
 
 describe("normalizeBbcUrl", () => {
   test("accepts a valid BBC URL", () => {
@@ -26,6 +26,15 @@ describe("normalizeBbcUrl", () => {
     const result = normalizeBbcUrl("https://www.bbc.co.uk/programmes/b01cqx2b?page=2");
     expect(result).toContain("b01cqx2b");
     expect(result).toContain("page=2");
+  });
+});
+
+describe("getBbcLiveStations", () => {
+  test("uses BBC's canonical live player URLs when extraction is unavailable", async () => {
+    const stations = await getBbcLiveStations();
+    expect(stations.find((station) => station.id === "bbc_radio_one")).toMatchObject({
+      liveUrl: "https://www.bbc.co.uk/sounds/play/live/bbc_radio_one"
+    });
   });
 });
 
@@ -213,6 +222,57 @@ describe("searchBbcPrograms", () => {
     expect(results[0].title).toBe("Night Shift");
     expect(results[0].hosts).toEqual(["Benji B"]);
     expect(results[0].genres).toContain("Electronic");
+  });
+
+  test("uses BBC's current public search API for Sounds programmes", async () => {
+    global.fetch = jest.fn(async (url) => {
+      const href = String(url);
+      const parsed = new URL(href);
+      if (
+        parsed.origin === "https://search.api.bbci.co.uk" &&
+        parsed.pathname === "/formula/domestic-web-suggest"
+      ) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                uri: "urn:bbc:programmes:b00v4tv3",
+                url: "https://www.bbc.co.uk/sounds/brand/b00v4tv3",
+                media_type: ["audio"],
+                title: "Benji B"
+              },
+              {
+                uri: "urn:bbc:programmes:m0009tgy",
+                media_type: ["video"],
+                title: "Bing"
+              }
+            ]
+          })
+        };
+      }
+      if (href === "https://www.bbc.co.uk/programmes/b00v4tv3") {
+        return {
+          ok: true,
+          text: async () => `
+            <html><head>
+              <meta property="og:title" content="BBC Radio 1 - Benji B" />
+              <meta property="og:description" content="Exploring future beats." />
+              <meta property="og:image" content="https://example.com/benji.jpg" />
+              <meta name="parsely-author" content="Benji B" />
+            </head></html>
+          `
+        };
+      }
+      throw new Error(`Unexpected URL ${href}`);
+    });
+
+    const results = await searchBbcPrograms("Benji B");
+    expect(results).toEqual([expect.objectContaining({
+      title: "BBC Radio 1 - Benji B",
+      programUrl: "https://www.bbc.co.uk/programmes/b00v4tv3",
+      hosts: ["Benji B"]
+    })]);
   });
 });
 

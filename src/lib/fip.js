@@ -1511,11 +1511,20 @@ function pickFipDiscoveryResults(items, count) {
   return selected;
 }
 
+function getFipDiscoverySampleSize(showCount, desiredCount) {
+  const available = Math.max(0, Number(showCount) || 0);
+  const wanted = Math.max(1, Number(desiredCount) || 1);
+  return Math.min(available, Math.max(12, wanted * 6));
+}
+
 async function getFipDiscovery(count = 12) {
+  const desiredCount = Math.max(1, Number(count) || 12);
   const shows = await fetchFipShowList(true).catch(() => []);
-  // Sample more than needed to account for failures and dedup
+  // Radio France's catalogue includes stub pages. Inspect a bounded larger pool so
+  // a small discovery request cannot randomly return no usable programmes.
   const shuffled = [...shows].sort(() => Math.random() - 0.5);
-  const sample = shuffled.slice(0, Math.min(count * 3, shuffled.length));
+  const sampleSize = getFipDiscoverySampleSize(shuffled.length, desiredCount);
+  const sample = shuffled.slice(0, sampleSize);
 
   const results = [];
   const seenTitles = new Set();
@@ -1549,7 +1558,7 @@ async function getFipDiscovery(count = 12) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, sample.length)) }, () => worker()));
-  return pickFipDiscoveryResults(results, count);
+  return pickFipDiscoveryResults(results, desiredCount);
 }
 
 module.exports = {
@@ -1558,6 +1567,7 @@ module.exports = {
   getFipNowPlaying,
   searchFipPrograms,
   getFipDiscovery,
+  getFipDiscoverySampleSize,
   getFipProgramSummary,
   getFipProgramEpisodes,
   getFipEpisodeStream,
