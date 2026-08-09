@@ -2407,9 +2407,10 @@ async function downloadFipEpisode({
   onProgress,
   forceDownload = false
 }) {
-  const sourceUrl = String(episodeUrl || "").trim();
-  if (!sourceUrl) throw new Error("episodeUrl is required.");
-  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(sourceUrl, "fip-episode");
+  const episodePageUrl = String(episodeUrl || "").trim();
+  if (!episodePageUrl) throw new Error("episodeUrl is required.");
+  const sourceUrl = (await getFipEpisodeStream(episodePageUrl, runYtDlpJson)).streamUrl;
+  const resolvedTitle = String(title || "").trim() || inferTitleFromUrl(episodePageUrl, "fip-episode");
   const resolvedProgramUrl = String(programUrl || "").trim();
   const metadata = buildMetadata({ description, location, hosts, genres });
   const download = await downloadFromManifest({
@@ -2418,8 +2419,8 @@ async function downloadFipEpisode({
     title: resolvedTitle,
     programTitle: programTitle || "FIP",
     publishedTime: publishedTime || resolvedTitle,
-    episodeUrl: sourceUrl,
-    clipId: sourceUrl,
+    episodeUrl: episodePageUrl,
+    clipId: episodePageUrl,
     onProgress,
     sourceType: "fip",
     forceDownload,
@@ -2432,15 +2433,15 @@ async function downloadFipEpisode({
       publishedTime: publishedTime || resolvedTitle,
       sourceUrl,
       artworkUrl: String(artworkUrl || "").trim(),
-      episodeUrl: sourceUrl,
-      clipId: sourceUrl
+      episodeUrl: episodePageUrl,
+      clipId: episodePageUrl
     }
   });
   const resolvedArtwork = String(artworkUrl || "").trim();
   const cue = await maybeGenerateCue({
     downloadResult: download,
     sourceType: "fip",
-    episodeUrl: sourceUrl,
+    episodeUrl: episodePageUrl,
     episodeTitle: resolvedTitle,
     programTitle: programTitle || "FIP",
     onProgress
@@ -2453,15 +2454,15 @@ async function downloadFipEpisode({
     publishedTime: publishedTime || resolvedTitle,
     sourceUrl,
     artworkUrl: resolvedArtwork,
-    episodeUrl: sourceUrl,
-    clipId: sourceUrl,
+    episodeUrl: episodePageUrl,
+    clipId: episodePageUrl,
     description: metadata.description,
     location: metadata.location,
     hosts: metadata.hosts,
     genres: metadata.genres,
     cue
   });
-  return { episodeUrl: sourceUrl, title: resolvedTitle, ...download, tags, cue };
+  return { episodeUrl: episodePageUrl, title: resolvedTitle, ...download, tags, cue };
 }
 
 // ── KEXP IPC handlers ─────────────────────────────────────────────────────────

@@ -1,7 +1,15 @@
 /**
  * Unit tests for pure parsing functions in src/lib/fip.js
  */
-const { normalizeFipProgramUrl, parseFipAirtime, parseFipFrenchPublishedDate, LIVE_STATIONS, searchFipPrograms, getFipDiscoverySampleSize } = require("../src/lib/fip");
+const {
+  normalizeFipProgramUrl,
+  parseFipAirtime,
+  parseFipFrenchPublishedDate,
+  LIVE_STATIONS,
+  searchFipPrograms,
+  getFipEpisodeStream,
+  getFipDiscoverySampleSize
+} = require("../src/lib/fip");
 
 // ── LIVE_STATIONS ─────────────────────────────────────────────────────────────
 
@@ -219,6 +227,41 @@ describe("searchFipPrograms", () => {
     expect(results[0].title).toBe("Morning Smoke");
     expect(results[0].hosts).toEqual(["Benji B"]);
     expect(results[0].genres).toContain("Electronic");
+  });
+});
+
+describe("getFipEpisodeStream", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  test("resolves current indexed ManifestationAudio records", async () => {
+    const episodeUrl = "https://www.radiofrance.fr/fip/podcasts/transe-fip-express/transe-fip-express-143-5480426";
+    const streamUrl = "https://media.radiofrance-podcast.net/podcast09/trance-fip-express-143.m4a";
+    global.fetch = jest.fn(async (url) => {
+      expect(String(url)).toBe(`${episodeUrl}/__data.json`);
+      return {
+        ok: true,
+        json: async () => ({
+          nodes: [{
+            data: [
+              "ManifestationAudio",
+              "audio-143",
+              streamUrl,
+              10705,
+              { __typename: 0, id: 1, url: 2, duration: 3 }
+            ]
+          }]
+        })
+      };
+    });
+
+    await expect(getFipEpisodeStream(episodeUrl)).resolves.toMatchObject({
+      episodeUrl,
+      streamUrl
+    });
   });
 });
 

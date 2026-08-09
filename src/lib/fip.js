@@ -1167,6 +1167,40 @@ async function searchFipPrograms(query) {
  * Resolve a playable stream URL for an episode.
  * Tries direct URL from manifestations first, falls back to yt-dlp.
  */
+function resolveFipDataReference(value, values) {
+  if (typeof value === "number" && Array.isArray(values)) {
+    return values[value];
+  }
+  return value;
+}
+
+function findFipAudioManifest(values) {
+  const data = Array.isArray(values) ? values : [];
+  for (const value of data) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const manifestations = Array.isArray(value.manifestations)
+      ? value.manifestations.map((item) => resolveFipDataReference(item, data))
+      : [value];
+    for (const manifestation of manifestations) {
+      if (!manifestation || typeof manifestation !== "object") {
+        continue;
+      }
+      const type = String(
+        resolveFipDataReference(manifestation.model, data)
+        || resolveFipDataReference(manifestation.__typename, data)
+        || ""
+      );
+      const streamUrl = String(resolveFipDataReference(manifestation.url, data) || "").trim();
+      if (type === "ManifestationAudio" && /^https?:\/\//i.test(streamUrl)) {
+        return streamUrl;
+      }
+    }
+  }
+  return "";
+}
+
 async function getFipEpisodeStream(episodeUrl, runYtDlpJson) {
   const url = String(episodeUrl || "").trim();
   if (!url) throw new Error("episodeUrl is required.");
@@ -1191,22 +1225,9 @@ async function getFipEpisodeStream(episodeUrl, runYtDlpJson) {
       const nodes = Array.isArray(json?.nodes) ? json.nodes : [];
       for (const node of nodes) {
         const arr = Array.isArray(node?.data) ? node.data : [];
-        for (const v of arr) {
-          // Radio France now exposes the audio as a standalone indexed record.
-          // Keep the older Expression.manifestations traversal below for past pages.
-          if (v && typeof v === "object" && !Array.isArray(v)) {
-            const resolveRef = (value) => (typeof value === "number" ? arr[value] : value);
-            const type = String(resolveRef(v.__typename) || resolveRef(v.model) || "");
-            const audioUrl = String(resolveRef(v.url) || "").trim();
-            if (type === "ManifestationAudio" && /^https?:\/\//i.test(audioUrl)) {
-              return { episodeUrl: url, streamUrl: audioUrl, title: "", image: "" };
-            }
-          }
-          if (v && typeof v === "object" && Array.isArray(v.manifestations)) {
-            const mf = v.manifestations.map((m) => (typeof m === "number" ? arr[m] : m));
-            const audio = mf.find((m) => m?.model === "ManifestationAudio") || mf[0];
-            if (audio?.url) return { episodeUrl: url, streamUrl: String(audio.url), title: "", image: "" };
-          }
+        const streamUrl = findFipAudioManifest(arr);
+        if (streamUrl) {
+          return { episodeUrl: url, streamUrl, title: "", image: "" };
         }
       }
     } catch {}
