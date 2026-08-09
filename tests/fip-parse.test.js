@@ -7,7 +7,8 @@ const {
   parseFipFrenchPublishedDate,
   LIVE_STATIONS,
   searchFipPrograms,
-  getFipEpisodeStream
+  getFipEpisodeStream,
+  getFipDiscoverySampleSize
 } = require("../src/lib/fip");
 
 // ── LIVE_STATIONS ─────────────────────────────────────────────────────────────
@@ -261,5 +262,13 @@ describe("getFipEpisodeStream", () => {
       episodeUrl,
       streamUrl
     });
+  });
+});
+
+describe("getFipDiscovery", () => {
+  test("checks a broad bounded pool for small recommendation sets", () => {
+    expect(getFipDiscoverySampleSize(50, 1)).toBe(12);
+    expect(getFipDiscoverySampleSize(50, 5)).toBe(30);
+    expect(getFipDiscoverySampleSize(4, 1)).toBe(4);
   });
 });

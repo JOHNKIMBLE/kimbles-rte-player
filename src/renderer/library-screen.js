@@ -652,6 +652,17 @@
       dom.diagnosticsStatus.style.color = isError ? "#e74c3c" : "var(--muted)";
     }
 
+    function exportDiagnosticsReport() {
+      const payload = JSON.stringify(state.diagnostics || {}, null, 2);
+      const blob = new Blob([payload], { type: "application/json" });
+      const link = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      link.href = URL.createObjectURL(blob);
+      link.download = `kimble-diagnostics-${stamp}.json`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
     function getMetadataSearchFilters() {
       return {
         query: String(dom.metadataIndexSearchInput?.value || "").trim(),
@@ -2010,9 +2021,20 @@
         const rows = Array.isArray(diagnostics.sourceHealth) ? diagnostics.sourceHealth : [];
         dom.diagnosticsSourceHealth.innerHTML = rows.length
           ? rows.map((row) => {
-            const tone = row.recentFailureCount > 0 ? "danger" : (row.retryPending > 0 || row.thinReasons?.length ? "warn" : "ok");
+            const canaryStatus = normalizeStatus(row.canaryStatus, "not-checked");
+            const tone = canaryStatus === "failed" || row.recentFailureCount > 0
+              ? "danger"
+              : (canaryStatus === "degraded" || row.retryPending > 0 || row.thinReasons?.length ? "warn" : "ok");
             const lastRun = formatLocalDateTime(row.lastScheduleRunAt || "") || "No schedule run yet";
             const lastFailureAt = formatLocalDateTime(row.lastFailureAt || "");
+            const checkedAt = formatLocalDateTime(row.canaryCheckedAt || "") || "Not checked yet";
+            const capabilities = Array.isArray(row.canaryCapabilities) ? row.canaryCapabilities : [];
+            const capabilitySummary = capabilities.length
+              ? capabilities.map((entry) => `${entry.ok ? "OK" : "Fail"}: ${entry.key}${entry.detail ? ` (${entry.detail})` : ""}`).join(" | ")
+              : "Run source checks to verify discovery, episodes, tracklists, and live metadata.";
+            const healthLabel = canaryStatus === "not-checked"
+              ? "Awaiting Check"
+              : (canaryStatus === "healthy" ? "Healthy" : canaryStatus[0].toUpperCase() + canaryStatus.slice(1));
             return `
               <div class="item feed-entry diagnostics-entry">
                 <div class="feed-entry-main">
@@ -2021,12 +2043,14 @@
                     Source Health
                   </div>
                   <div class="item-meta">
-                    <span class="status-chip status-chip-${escapeHtml(tone)}">${row.recentFailureCount > 0 ? "Attention" : row.retryPending > 0 ? "Retrying" : "Healthy"}</span>
+                    <span class="status-chip status-chip-${escapeHtml(tone)}">${escapeHtml(healthLabel)}</span>
                     ${escapeHtml(String(row.scheduleCount || 0))} schedule(s)
                     &middot; ${escapeHtml(String(row.enabledScheduleCount || 0))} enabled
                     &middot; ${escapeHtml(String(row.retryPending || 0))} retr${(row.retryPending || 0) !== 1 ? "ies" : "y"} pending
                   </div>
                   <div class="item-meta">Last schedule run: ${escapeHtml(lastRun)}</div>
+                  <div class="item-meta">Provider check: ${escapeHtml(checkedAt)}${row.canaryProgramTitle ? ` &middot; ${escapeHtml(String(row.canaryProgramTitle))}` : ""}${row.canaryEpisodeTitle ? ` &middot; ${escapeHtml(String(row.canaryEpisodeTitle))}` : ""}</div>
+                  <div class="item-meta">${escapeHtml(capabilitySummary)}</div>
                   ${row.lastFailureMessage ? `<div class="item-meta queue-entry-issue">Latest failure${lastFailureAt ? ` (${escapeHtml(lastFailureAt)})` : ""}: ${escapeHtml(String(row.lastFailureTitle || row.lastFailureMessage || ""))}${row.lastFailureTitle && row.lastFailureMessage ? ` &middot; ${escapeHtml(String(row.lastFailureMessage || ""))}` : ""}</div>` : ""}
                   ${Array.isArray(row.thinReasons) && row.thinReasons.length ? `<div class="item-meta">Metadata watch: ${escapeHtml(row.thinReasons.join(" | "))}</div>` : ""}
                 </div>
@@ -3313,6 +3337,29 @@
 
       dom.diagnosticsRefreshBtn?.addEventListener("click", () => {
         loadDiagnostics().catch(() => {});
+      });
+
+      dom.diagnosticsRunChecksBtn?.addEventListener("click", async () => {
+        if (typeof window.rteDownloader?.runSourceCanaries !== "function") {
+          setDiagnosticsStatus("Source checks are not available in this mode.", true);
+          return;
+        }
+        setDiagnosticsStatus("Checking all providers. This can take a minute...");
+        dom.diagnosticsRunChecksBtn.disabled = true;
+        try {
+          await window.rteDownloader.runSourceCanaries();
+          await loadDiagnostics();
+          setDiagnosticsStatus("Source checks completed.");
+        } catch (error) {
+          setDiagnosticsStatus(error.message, true);
+        } finally {
+          dom.diagnosticsRunChecksBtn.disabled = false;
+        }
+      });
+
+      dom.diagnosticsExportBtn?.addEventListener("click", () => {
+        exportDiagnosticsReport();
+        setDiagnosticsStatus("Diagnostics report downloaded.");
       });
 
       dom.diagnosticsRepairBtn?.addEventListener("click", async () => {
