@@ -5,8 +5,13 @@ const crypto = require("node:crypto");
 // Schedule windows are stored in UTC. The scheduler compares current UTC time
 // against these windows. Display layers convert UTC → user's local timezone.
 const RELEASE_LAG_WINDOW_MINUTES = 6 * 60;
+const MINUTES_PER_DAY = 24 * 60;
+const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
 const RETRY_BACKOFF_MINUTES = [15, 60, 180, 720, 1440, 2880];
-const RETRY_MAX_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
+// Some sources mirror an episode days or weeks after broadcast (Worldwide FM
+// relies on a Mixcloud mirror that can lag badly). Retry on an age horizon
+// rather than an attempt count so a slow mirror doesn't lose the episode.
+const RETRY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const DAY_TO_INDEX = new Map([
   ["sun", 0], ["sunday", 0], ["sundays", 0],
   ["mon", 1], ["monday", 1], ["mondays", 1],
@@ -191,6 +196,16 @@ function episodePublishedSortMillis(episode) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * Episodes published before a subscription's start line are never downloaded,
+ * so "new episodes only" stays true even though discovery keeps scanning past
+ * already-known episodes.
+ */
+function getDiscoverFromMs(schedule) {
+  const parsed = Date.parse(String(schedule?.discoverFromPublishedTime || "").trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function sortEpisodesNewestFirstForScheduler(episodes) {
   const list = (Array.isArray(episodes) ? episodes : []).filter((episode) => episode?.clipId);
   return list.sort((a, b) => episodePublishedSortMillis(b) - episodePublishedSortMillis(a));
@@ -203,12 +218,15 @@ function shouldRunInScheduleWindow(schedule, now = new Date()) {
   }
 
   const utcNow = getUtcNowParts(now);
+  const nowMinuteOfWeek = utcNow.day * MINUTES_PER_DAY + utcNow.minuteOfDay;
   const currentSlot = windows.find((window) => {
-    if (window.dueDay !== utcNow.day) {
-      return false;
-    }
-    const delta = utcNow.minuteOfDay - window.dueMinute;
-    return delta >= 0 && delta < RELEASE_LAG_WINDOW_MINUTES;
+    // A late-evening broadcast opens its window near midnight, so the lag
+    // window routinely spills into the next day (and past Saturday). Compare
+    // on a wrapped minute-of-week axis, otherwise the window is silently
+    // truncated at 23:59 on the due day.
+    const openMinuteOfWeek = window.dueDay * MINUTES_PER_DAY + window.dueMinute;
+    const elapsed = (nowMinuteOfWeek - openMinuteOfWeek + MINUTES_PER_WEEK) % MINUTES_PER_WEEK;
+    return elapsed < RELEASE_LAG_WINDOW_MINUTES;
   });
 
   if (!currentSlot) {
@@ -234,7 +252,7 @@ function getRetryBackoffMinutes(attempts) {
   return RETRY_BACKOFF_MINUTES[idx];
 }
 
-function toRetryItem(episode, error, attempts = 1) {
+function toRetryItem(episode, error, attempts = 1, firstFailedAt = "") {
   const clipId = String(episode?.clipId || "").trim();
   const publishedTime = String(episode?.publishedTime || episode?.publishedTimeFormatted || "").trim();
   const title = String(episode?.fullTitle || episode?.title || "").trim();
@@ -242,6 +260,7 @@ function toRetryItem(episode, error, attempts = 1) {
 
   return {
     clipId,
+    firstFailedAt: String(firstFailedAt || "").trim() || new Date().toISOString(),
     title,
     episodeUrl: String(episode?.episodeUrl || "").trim(),
     programUrl: String(episode?.programUrl || "").trim(),
@@ -340,6 +359,12 @@ function createSchedulerStore({
   }
 
   function normalizeScheduleMetadata(schedule) {
+    schedule.discoverFromPublishedTime = String(schedule?.discoverFromPublishedTime || "").trim();
+    if (!schedule.discoverFromPublishedTime) {
+      // Existing subscriptions predate the start line: adopt the newest episode
+      // seen so far so the upgrade never backfills an older episode.
+      schedule.discoverFromPublishedTime = String(schedule?.latestEpisodePublishedTime || "").trim();
+    }
     schedule.description = String(schedule?.description || "").trim();
     schedule.image = String(schedule?.image || "").trim();
     schedule.location = String(schedule?.location || "").trim();
@@ -415,11 +440,33 @@ function createSchedulerStore({
     normalizeScheduleMetadata(schedule);
   }
 
+  /**
+   * Adopt an upstream program rename so scheduled downloads keep landing in the
+   * same folder as manual ones (which always use the live source title).
+   */
+  function refreshScheduleTitle(schedule, latest) {
+    const nextTitle = String(latest?.title || "").trim();
+    const episodes = Array.isArray(latest?.episodes) ? latest.episodes : [];
+    // Only trust a title that arrived alongside real episodes: adapters fall
+    // back to a slug-derived placeholder when a fetch fails, and adopting that
+    // would rename the download folder to junk.
+    if (!nextTitle || !episodes.length) {
+      return;
+    }
+    const current = String(schedule.title || "").trim();
+    // Case-only drift isn't worth splitting a download folder over.
+    if (current && current.toLowerCase() === nextTitle.toLowerCase()) {
+      return;
+    }
+    schedule.title = nextTitle;
+  }
+
   function normalizeRetryQueue(schedule) {
     const raw = Array.isArray(schedule.retryQueue) ? schedule.retryQueue : [];
     schedule.retryQueue = raw
       .map((item) => ({
         clipId: String(item?.clipId || "").trim(),
+        firstFailedAt: String(item?.firstFailedAt || "").trim(),
         title: String(item?.title || "").trim(),
         episodeUrl: String(item?.episodeUrl || "").trim(),
         programUrl: String(item?.programUrl || "").trim(),
@@ -463,9 +510,11 @@ function createSchedulerStore({
 
     const existing = schedule.retryQueue.find((item) => item.clipId === clipId);
     const attempts = Math.max(1, Number(existing?.attempts || 0) + 1);
-    const next = toRetryItem({ ...episode, clipId }, error, attempts);
+    const next = toRetryItem({ ...episode, clipId }, error, attempts, existing?.firstFailedAt);
 
-    if (attempts > RETRY_MAX_ATTEMPTS) {
+    const firstFailedMs = Date.parse(next.firstFailedAt);
+    const expired = Number.isFinite(firstFailedMs) && Date.now() - firstFailedMs > RETRY_MAX_AGE_MS;
+    if (expired) {
       schedule.retryQueue = schedule.retryQueue.filter((item) => item.clipId !== clipId);
       return {
         dropped: true,
@@ -758,6 +807,7 @@ function createSchedulerStore({
     }
     schedule.lastCheckedAt = new Date().toISOString();
     setLatestEpisodeFields(schedule, latest);
+    refreshScheduleTitle(schedule, latest);
 
     const known = new Set((schedule.downloadedClipIds || []).map((id) => String(id)));
     normalizeRetryQueue(schedule);
@@ -807,17 +857,35 @@ function createSchedulerStore({
         const meta = upsertRetry(schedule, retry, error);
         if (meta?.dropped) {
           droppedRetries += 1;
+          // Giving up is terminal: without this the episode is rediscovered on
+          // the very next scan and the retention horizon never takes effect.
+          known.add(String(retry.clipId));
         }
       }
     }
 
     const newestFirst = sortEpisodesNewestFirstForScheduler(latest.episodes).slice(0, 10);
+    const discoverFromMs = getDiscoverFromMs(schedule);
+    let passedKnown = false;
     for (const episode of newestFirst) {
       if (!episode.clipId) {
         continue;
       }
       if (known.has(String(episode.clipId))) {
-        break;
+        // Keep scanning: stopping here would permanently hide an older episode
+        // that failed or was missed once a newer one lands above it.
+        passedKnown = true;
+        continue;
+      }
+      const publishedMs = episodePublishedSortMillis(episode);
+      if (!publishedMs) {
+        // Undated episode: fall back to the legacy "stop at the first known"
+        // rule so a source without dates can't backfill its whole front page.
+        if (passedKnown) {
+          continue;
+        }
+      } else if (discoverFromMs && publishedMs < discoverFromMs) {
+        continue;
       }
       unseen.push(episode);
     }
@@ -861,6 +929,7 @@ function createSchedulerStore({
         const meta = upsertRetry(schedule, episode, error);
         if (meta?.dropped) {
           droppedRetries += 1;
+          known.add(String(episode.clipId));
         } else {
           failedRetries += 1;
         }

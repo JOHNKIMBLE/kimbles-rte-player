@@ -194,6 +194,117 @@ describe("scheduler schedule window behavior", () => {
   });
 });
 
+describe("scheduler release window spans past midnight", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // "Fri • 21:00 - 23:00" is due at 23:30 UTC with a 6h lag window, so most of
+  // that window falls on Saturday. Clamping it to the due day left a ~30 minute
+  // slot and a single missed poll lost the whole week.
+  test("runs in the small hours of the following day", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick"] });
+    // Saturday 2026-08-22 02:00 UTC — 2.5h into the Friday 23:30 window.
+    jest.setSystemTime(new Date("2026-08-22T02:00:00Z"));
+
+    const downloaded = [];
+    const store = makeStore({
+      runSchedule: "Fri • 21:00 - 23:00",
+      episodes: [{ clipId: "fri-ep", title: "Friday Ep", publishedTime: "2026-08-21" }],
+      runEpisodeDownload: async (p) => {
+        downloaded.push(p.clipId);
+        return { outputDir: "/out", fileName: `${p.clipId}.m4a` };
+      }
+    });
+
+    const sched = await store.add("https://example.com/show", { backfillCount: 0 });
+    // add() seeds the newest episode as known, so introduce a genuinely new one.
+    store.list()[0].downloadedClipIds = [];
+
+    await store.runAll();
+
+    expect(store.list()[0].lastStatus).not.toMatch(/Waiting for end/i);
+    expect(downloaded).toContain("fri-ep");
+    expect(sched.id).toBeTruthy();
+  });
+
+  test("stays closed well outside the window", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick"] });
+    // Wednesday — nowhere near the Friday-night window.
+    jest.setSystemTime(new Date("2026-08-19T12:00:00Z"));
+
+    const downloaded = [];
+    const store = makeStore({
+      runSchedule: "Fri • 21:00 - 23:00",
+      episodes: [{ clipId: "fri-ep", title: "Friday Ep", publishedTime: "2026-08-21" }],
+      runEpisodeDownload: async (p) => {
+        downloaded.push(p.clipId);
+        return { outputDir: "/out", fileName: `${p.clipId}.m4a` };
+      }
+    });
+    await store.add("https://example.com/show", { backfillCount: 0 });
+    store.list()[0].downloadedClipIds = [];
+
+    await store.runAll();
+
+    // Out-of-window runs bail before touching the source at all.
+    expect(downloaded).toEqual([]);
+    expect(store.list()[0].lastCheckedAt).toBeFalsy();
+  });
+});
+
+describe("scheduler recovers episodes that appear below a known one", () => {
+  test("downloads a late-listed older episode instead of stopping at the first known", async () => {
+    const downloaded = [];
+    let call = 0;
+    const store = makeStore({
+      getProgramEpisodes: async () => {
+        call += 1;
+        const seed = { clipId: "seed", title: "Seed", publishedTime: "2026-03-14" };
+        const newer = { clipId: "newer", title: "Newer", publishedTime: "2026-03-21" };
+        const late = { clipId: "late", title: "Late arrival", publishedTime: "2026-03-20" };
+        if (call === 1) return { episodes: [seed], cadence: "weekly", averageDaysBetween: 7 };
+        if (call === 2) return { episodes: [newer, seed], cadence: "weekly", averageDaysBetween: 7 };
+        // "late" was published before "newer" but only shows up now.
+        return { episodes: [newer, late, seed], cadence: "weekly", averageDaysBetween: 7 };
+      },
+      runEpisodeDownload: async (p) => {
+        downloaded.push(p.clipId);
+        return { outputDir: "/out", fileName: `${p.clipId}.m4a` };
+      }
+    });
+
+    const sched = await store.add("https://example.com/show", { backfillCount: 0 });
+    await store.checkOne(sched.id);
+    expect(downloaded).toEqual(["newer"]);
+
+    await store.checkOne(sched.id);
+    expect(downloaded).toEqual(["newer", "late"]);
+  });
+
+  test("still ignores episodes older than the subscription start line", async () => {
+    const downloaded = [];
+    const episodes = [
+      { clipId: "newest", title: "Newest", publishedTime: "2026-03-21" },
+      { clipId: "older-1", title: "Older 1", publishedTime: "2026-03-14" },
+      { clipId: "older-2", title: "Older 2", publishedTime: "2026-03-07" }
+    ];
+    const store = makeStore({
+      episodes,
+      runEpisodeDownload: async (p) => {
+        downloaded.push(p.clipId);
+        return { outputDir: "/out", fileName: `${p.clipId}.m4a` };
+      }
+    });
+
+    const sched = await store.add("https://example.com/show", { backfillCount: 0 });
+    await store.checkOne(sched.id);
+
+    // "new episodes only" must not backfill the back catalogue.
+    expect(downloaded).toEqual([]);
+  });
+});
+
 describe("scheduler retry max attempts", () => {
   test("drops retry after max attempts", async () => {
     let callCount = 0;
@@ -215,5 +326,51 @@ describe("scheduler retry max attempts", () => {
     const list = store.list();
     // After enough attempts, the retry should be dropped
     expect(list[0].lastStatus).toMatch(/dropped|No new|retry/i);
+  });
+
+  // A mirror that lags days or weeks (Worldwide FM via Mixcloud) used to blow
+  // through the 7-attempt cap and lose the episode for good.
+  test("keeps retrying past the old attempt cap while the episode is still young", async () => {
+    const store = makeStore({
+      episodes: [{ clipId: "slow-mirror", title: "Slow mirror", publishedTime: "2026-03-14" }],
+      runEpisodeDownload: async () => {
+        throw new Error("Worldwide FM episode is not yet available on Mixcloud (mirror pending).");
+      }
+    });
+
+    const sched = await store.add("https://example.com/show", { backfillCount: 0 });
+    store.list()[0].downloadedClipIds = [];
+
+    for (let i = 0; i < 12; i += 1) {
+      await store.checkOne(sched.id);
+    }
+
+    const queue = store.list()[0].retryQueue;
+    expect(queue).toHaveLength(1);
+    expect(queue[0].clipId).toBe("slow-mirror");
+    expect(queue[0].attempts).toBeGreaterThan(7);
+    expect(store.list()[0].lastStatus).not.toMatch(/dropped/i);
+  });
+
+  test("drops a retry once it is older than the retention horizon", async () => {
+    const store = makeStore({
+      episodes: [{ clipId: "ancient", title: "Ancient", publishedTime: "2026-03-14" }],
+      runEpisodeDownload: async () => {
+        throw new Error("still failing");
+      }
+    });
+
+    const sched = await store.add("https://example.com/show", { backfillCount: 0 });
+    store.list()[0].downloadedClipIds = [];
+
+    await store.checkOne(sched.id);
+    expect(store.list()[0].retryQueue).toHaveLength(1);
+
+    // Backdate the first failure beyond the 30-day horizon.
+    store.list()[0].retryQueue[0].firstFailedAt = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+
+    await store.checkOne(sched.id);
+    expect(store.list()[0].retryQueue).toHaveLength(0);
+    expect(store.list()[0].lastStatus).toMatch(/dropped/i);
   });
 });
