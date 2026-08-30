@@ -31,10 +31,10 @@
     "@eslint/js": "^10.0.1",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
-    "eslint": "^10.8.0",
+    "eslint": "^10.9.1",
     "jest": "^30.4.2",
     "png-to-ico": "^3.0.2",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "supertest": "^7.2.2"
   },
   "jest": {
