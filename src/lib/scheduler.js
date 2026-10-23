@@ -8,6 +8,9 @@ const RELEASE_LAG_WINDOW_MINUTES = 6 * 60;
 const MINUTES_PER_DAY = 24 * 60;
 const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
 const RETRY_BACKOFF_MINUTES = [15, 60, 180, 720, 1440, 2880];
+// Re-listing a program is cheap, and a failure usually means the whole release
+// window went by unchecked, so cap the backoff well below the download retries.
+const LISTING_RETRY_BACKOFF_MINUTES = [30, 60, 120, 240, 480, 720];
 // Some sources mirror an episode days or weeks after broadcast (Worldwide FM
 // relies on a Mixcloud mirror that can lag badly). Retry on an age horizon
 // rather than an attempt count so a slow mirror doesn't lose the episode.
@@ -771,9 +774,18 @@ function createSchedulerStore({
       return !item.nextRetryAt || !Number.isFinite(retryAtMs) || retryAtMs <= precheckNowMs;
     });
 
+    // A listing failure inside the release window (the source served an empty
+    // or broken episode page) would otherwise go unretried until the next
+    // window, a week away for a weekly show. Keep re-checking on backoff.
+    const listingRetryAtMs = Date.parse(schedule.listingRetryAt || "");
+    const listingFailedAtMs = Date.parse(schedule.listingFailedAt || "");
+    const hasDueListingRetry = Number.isFinite(listingRetryAtMs)
+      && listingRetryAtMs <= precheckNowMs
+      && (!Number.isFinite(listingFailedAtMs) || precheckNowMs - listingFailedAtMs < RETRY_MAX_AGE_MS);
+
     if (!force) {
       const due = shouldRunInScheduleWindow(schedule);
-      if (due.shouldRun === false && !hasDueRetries) {
+      if (due.shouldRun === false && !hasDueRetries && !hasDueListingRetry) {
         return { scheduleId: schedule.id, status: due.reason, downloaded: [] };
       }
 
@@ -782,13 +794,16 @@ function createSchedulerStore({
         const cadence = schedule.cadence || "unknown";
         const minHoursBetweenChecks = cadence === "daily" ? 6 : cadence === "weekly" ? 24 : cadence === "biweekly" ? 48 : cadence === "monthly" ? 72 : 12;
         const elapsedMs = now - Date.parse(schedule.lastCheckedAt);
-        if (elapsedMs < minHoursBetweenChecks * 60 * 60 * 1000 && !hasDueRetries) {
+        if (elapsedMs < minHoursBetweenChecks * 60 * 60 * 1000 && !hasDueRetries && !hasDueListingRetry) {
           return { scheduleId: schedule.id, status: "Skipped (too soon)", downloaded: [] };
         }
       }
     }
 
     const latest = await getProgramEpisodes(schedule.programUrl, 1);
+    delete schedule.listingFailedAt;
+    delete schedule.listingFailures;
+    delete schedule.listingRetryAt;
     if (typeof onScheduleRefreshed === "function") {
       await onScheduleRefreshed(schedule, latest);
     }
@@ -985,6 +1000,12 @@ function createSchedulerStore({
         } catch (error) {
           schedule.lastCheckedAt = new Date().toISOString();
           schedule.lastStatus = `Error: ${error.message}`;
+          const failures = (Number(schedule.listingFailures) || 0) + 1;
+          schedule.listingFailures = failures;
+          schedule.listingFailedAt = schedule.listingFailedAt || schedule.lastCheckedAt;
+          schedule.listingRetryAt = toIsoAfterMinutes(
+            LISTING_RETRY_BACKOFF_MINUTES[Math.min(LISTING_RETRY_BACKOFF_MINUTES.length - 1, failures - 1)]
+          );
           writeStore();
           if (typeof onScheduleRunError === "function") {
             await onScheduleRunError(schedule, error);
