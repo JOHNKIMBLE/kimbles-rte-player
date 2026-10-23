@@ -374,3 +374,68 @@ describe("scheduler retry max attempts", () => {
     expect(store.list()[0].lastStatus).toMatch(/dropped/i);
   });
 });
+
+describe("scheduler re-lists after an in-window listing failure", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // BBC once served an episode page with no cards for the whole Benji B window;
+  // the window then closed and the episode wasn't looked for until next week.
+  test("keeps retrying the listing after the window closes", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick"] });
+    jest.setSystemTime(new Date("2026-10-15T12:00:00Z"));
+
+    let listing = { episodes: [{ clipId: "old-ep", title: "Old Ep", publishedTime: "2026-10-14" }] };
+    const downloaded = [];
+    const store = makeStore({
+      runSchedule: "Wed • 22:00 - 00:00",
+      getProgramEpisodes: async () => {
+        if (!listing) {
+          throw new Error("No BBC episodes were found for this program.");
+        }
+        return { ...listing, cadence: "weekly", averageDaysBetween: 7 };
+      },
+      runEpisodeDownload: async (p) => {
+        downloaded.push(p.clipId);
+        return { outputDir: "/out", fileName: `${p.clipId}.m4a` };
+      }
+    });
+    await store.add("https://example.com/show", { backfillCount: 0 });
+
+    // Thursday 01:00 UTC — inside the Wed 22:00 - 00:00 release window.
+    listing = null;
+    jest.setSystemTime(new Date("2026-10-22T01:00:00Z"));
+    await store.runAll();
+    expect(store.list()[0].lastStatus).toMatch(/No BBC episodes/);
+    expect(store.list()[0].listingRetryAt).toBeTruthy();
+
+    // Window long closed, and the source has recovered.
+    listing = { episodes: [{ clipId: "wed-ep", title: "Wed Ep", publishedTime: "2026-10-21" }] };
+    jest.setSystemTime(new Date("2026-10-22T12:00:00Z"));
+    await store.runAll();
+
+    const recovered = store.list()[0];
+    expect(downloaded).toContain("wed-ep");
+    expect(recovered.listingRetryAt).toBeUndefined();
+    expect(recovered.listingFailures).toBeUndefined();
+  });
+
+  test("does not re-list out of window without a prior failure", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick"] });
+    jest.setSystemTime(new Date("2026-10-15T12:00:00Z"));
+    let calls = 0;
+    const store = makeStore({
+      runSchedule: "Wed • 22:00 - 00:00",
+      getProgramEpisodes: async () => {
+        calls += 1;
+        return { episodes: [{ clipId: "old-ep", title: "Old", publishedTime: "2026-10-14" }], cadence: "weekly" };
+      }
+    });
+    await store.add("https://example.com/show", { backfillCount: 0 });
+    const before = calls;
+    jest.setSystemTime(new Date("2026-10-23T12:00:00Z"));
+    await store.runAll();
+    expect(calls).toBe(before);
+  });
+});
